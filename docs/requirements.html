@@ -1,0 +1,1761 @@
+<title>The Counter Hypothesis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap">
+
+<style>
+  :root {
+    --paper:      #F6F7F4;
+    --surface:    #FFFFFF;
+    --surface-2:  #EFF1EC;
+    --ink:        #191C24;
+    --ink-2:      #3B4049;
+    --muted:      #6A6E68;
+    --rule:       #DADCD4;
+    --rule-soft:  #E7E9E2;
+    --carbon:     #4B3F9E;
+    --carbon-2:   #6A5CC4;
+    --carbon-wash:#ECEAF8;
+    --risk:       #A8501E;
+    --risk-wash:  #F7EDE5;
+    --ok:         #3D6B4A;
+    --ok-wash:    #E9F0EA;
+    --shadow:     0 1px 2px rgba(25,28,36,.05), 0 8px 24px -12px rgba(25,28,36,.14);
+
+    --measure: 68ch;
+    --f-display: "Newsreader", Georgia, "Times New Roman", serif;
+    --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #14161B;
+      --surface:    #1B1E25;
+      --surface-2:  #23262E;
+      --ink:        #E9EBE4;
+      --ink-2:      #C0C4BD;
+      --muted:      #8D918A;
+      --rule:       #2E323A;
+      --rule-soft:  #262A31;
+      --carbon:     #A99AF0;
+      --carbon-2:   #8E7DE0;
+      --carbon-wash:#232135;
+      --risk:       #E0A077;
+      --risk-wash:  #2C221B;
+      --ok:         #8FBE9C;
+      --ok-wash:    #1C2620;
+      --shadow:     0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.6);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #14161B;
+    --surface:    #1B1E25;
+    --surface-2:  #23262E;
+    --ink:        #E9EBE4;
+    --ink-2:      #C0C4BD;
+    --muted:      #8D918A;
+    --rule:       #2E323A;
+    --rule-soft:  #262A31;
+    --carbon:     #A99AF0;
+    --carbon-2:   #8E7DE0;
+    --carbon-wash:#232135;
+    --risk:       #E0A077;
+    --risk-wash:  #2C221B;
+    --ok:         #8FBE9C;
+    --ok-wash:    #1C2620;
+    --shadow:     0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 16.5px;
+    line-height: 1.65;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- shell ---------- */
+  .shell {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    gap: 0;
+    max-width: 1240px;
+    margin: 0 auto;
+  }
+
+  .rail {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 40px 28px 40px 32px;
+    border-right: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 26px;
+  }
+  .rail-mark {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--carbon);
+    line-height: 1.5;
+  }
+  .rail nav { display: flex; flex-direction: column; gap: 1px; }
+  .rail nav a {
+    display: grid;
+    grid-template-columns: 24px 1fr;
+    gap: 8px;
+    align-items: baseline;
+    padding: 5px 8px 5px 0;
+    color: var(--ink-2);
+    text-decoration: none;
+    font-size: 13.5px;
+    line-height: 1.35;
+    border-radius: 4px;
+  }
+  .rail nav a span {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .rail nav a:hover { color: var(--carbon); }
+  .rail nav a:hover span { color: var(--carbon); }
+  .rail nav a:focus-visible { outline: 2px solid var(--carbon); outline-offset: 2px; }
+
+  .main { padding: 0 0 140px; min-width: 0; }
+  .wrap { padding: 0 56px; }
+  .col { max-width: var(--measure); }
+
+  /* ---------- masthead ---------- */
+  .masthead {
+    padding: 92px 56px 52px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--carbon);
+    margin: 0 0 22px;
+  }
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 500;
+    font-size: clamp(2.6rem, 5.2vw, 4rem);
+    line-height: 1.05;
+    letter-spacing: -.02em;
+    margin: 0 0 20px;
+    text-wrap: balance;
+    max-width: 18ch;
+  }
+  .standfirst {
+    font-family: var(--f-display);
+    font-size: 1.32rem;
+    line-height: 1.5;
+    color: var(--ink-2);
+    max-width: 56ch;
+    margin: 0 0 40px;
+  }
+  .standfirst em { color: var(--carbon); font-style: italic; }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 34px;
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    border-top: 1px solid var(--rule-soft);
+    padding-top: 20px;
+  }
+  .meta b { color: var(--ink-2); font-weight: 500; }
+
+  /* ---------- sections ---------- */
+  section { padding-top: 76px; }
+  .sec-head {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    gap: 14px;
+    align-items: baseline;
+    border-top: 2px solid var(--ink);
+    padding-top: 14px;
+    margin-bottom: 32px;
+  }
+  .sec-num {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    color: var(--carbon);
+    font-variant-numeric: tabular-nums;
+    padding-top: .35em;
+  }
+  h2 {
+    font-family: var(--f-display);
+    font-weight: 500;
+    font-size: clamp(1.75rem, 3vw, 2.3rem);
+    line-height: 1.15;
+    letter-spacing: -.015em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  h3 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1.28rem;
+    line-height: 1.3;
+    margin: 44px 0 14px;
+    text-wrap: balance;
+  }
+  h4 {
+    font-family: var(--f-mono);
+    font-weight: 600;
+    font-size: 11.5px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 32px 0 12px;
+  }
+  p { margin: 0 0 17px; }
+  a { color: var(--carbon); }
+  strong { font-weight: 600; }
+
+  ul, ol { margin: 0 0 18px; padding-left: 1.15em; }
+  li { margin-bottom: 9px; }
+  li::marker { color: var(--carbon); }
+
+  .lede {
+    font-family: var(--f-display);
+    font-size: 1.13rem;
+    line-height: 1.6;
+    color: var(--ink-2);
+    margin-bottom: 26px;
+  }
+
+  /* ---------- evidence chip ---------- */
+  .ev {
+    display: inline-block;
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--carbon);
+    background: var(--carbon-wash);
+    border-radius: 3px;
+    padding: 2px 6px;
+    vertical-align: 2px;
+    margin-left: 4px;
+    white-space: nowrap;
+  }
+
+  /* ---------- data figure ---------- */
+  .figs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    overflow: hidden;
+    margin: 30px 0 34px;
+  }
+  .fig { background: var(--surface); padding: 20px 18px; }
+  .fig-n {
+    font-family: var(--f-display);
+    font-size: 2.1rem;
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: -.02em;
+    color: var(--carbon);
+    font-variant-numeric: tabular-nums;
+    display: block;
+    margin-bottom: 9px;
+  }
+  .fig-t { font-size: 13px; line-height: 1.45; color: var(--ink-2); }
+  .fig-s {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 8px;
+    display: block;
+  }
+
+  /* ---------- callouts ---------- */
+  .note {
+    border-left: 3px solid var(--carbon);
+    background: var(--carbon-wash);
+    padding: 18px 20px;
+    border-radius: 0 6px 6px 0;
+    margin: 26px 0;
+    font-size: 15.5px;
+  }
+  .note p:last-child { margin-bottom: 0; }
+  .note .lbl {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+    color: var(--carbon);
+    display: block;
+    margin-bottom: 8px;
+  }
+
+  .constraint {
+    border-left: 3px solid var(--risk);
+    background: var(--risk-wash);
+    padding: 18px 20px;
+    border-radius: 0 6px 6px 0;
+    margin: 26px 0;
+    font-size: 15.5px;
+  }
+  .constraint p:last-child { margin-bottom: 0; }
+  .constraint .lbl {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+    color: var(--risk);
+    display: block;
+    margin-bottom: 8px;
+  }
+
+  /* ---------- breakout ---------- */
+  .breakout { margin: 34px 0 38px; max-width: 100%; }
+  .scroller { overflow-x: auto; border-radius: 6px; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 720px;
+    font-size: 13.5px;
+    background: var(--surface);
+  }
+  caption {
+    text-align: left;
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-bottom: 11px;
+  }
+  th {
+    text-align: left;
+    font-family: var(--f-mono);
+    font-weight: 500;
+    font-size: 10.5px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--ink);
+    vertical-align: bottom;
+    white-space: nowrap;
+  }
+  td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+    line-height: 1.5;
+  }
+  td:first-child { font-weight: 600; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: none; }
+  .num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-size: 12.5px; }
+
+  /* ---------- requirements ---------- */
+  .req {
+    display: grid;
+    grid-template-columns: 62px 1fr;
+    gap: 16px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--rule-soft);
+    align-items: start;
+  }
+  .req:last-of-type { border-bottom: none; }
+  .req-id {
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    color: var(--carbon);
+    font-variant-numeric: tabular-nums;
+    padding-top: 3px;
+  }
+  .req-body { min-width: 0; }
+  .req-body p { margin: 0; }
+  .req-body p + p { margin-top: 7px; color: var(--ink-2); font-size: 14.5px; }
+  .req-t { font-weight: 600; }
+  .pill {
+    display: inline-block;
+    font-family: var(--f-mono);
+    font-size: 9.5px;
+    letter-spacing: .08em;
+    padding: 1px 5px;
+    border-radius: 3px;
+    vertical-align: 2px;
+    margin-left: 7px;
+    border: 1px solid currentColor;
+  }
+  .p0 { color: var(--risk); }
+  .p1 { color: var(--carbon); }
+  .p2 { color: var(--muted); }
+
+  /* ---------- ladder ---------- */
+  .ladder { display: flex; flex-direction: column; gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; margin: 28px 0 32px; }
+  .rung { background: var(--surface); padding: 15px 18px; display: grid; grid-template-columns: 78px 1fr; gap: 16px; align-items: baseline; }
+  .rung-k { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--carbon); }
+  .rung-v { font-size: 14.5px; line-height: 1.5; }
+  .rung-v b { font-weight: 600; }
+
+  /* ---------- figure ---------- */
+  figure { margin: 0; }
+  figcaption {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    color: var(--muted);
+    line-height: 1.55;
+    margin-top: 12px;
+    max-width: 62ch;
+  }
+  .diagram {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 22px;
+  }
+  .diagram svg { display: block; width: 100%; height: auto; }
+
+  /* ---------- decisions ---------- */
+  .decision {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 20px 22px;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow);
+  }
+  .decision h4 { margin: 0 0 10px; color: var(--carbon); }
+  .decision p { margin: 0 0 10px; font-size: 15px; }
+  .decision p:last-child { margin-bottom: 0; }
+  .rec {
+    font-size: 14px;
+    color: var(--ink-2);
+    border-top: 1px solid var(--rule-soft);
+    padding-top: 11px;
+    margin-top: 12px;
+  }
+  .rec b { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--ok); }
+
+  /* ---------- phases ---------- */
+  .phase {
+    display: grid;
+    grid-template-columns: 118px 1fr;
+    gap: 22px;
+    padding: 22px 0;
+    border-top: 1px solid var(--rule);
+  }
+  .phase-k { }
+  .phase-k .n { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--carbon); display: block; margin-bottom: 5px; }
+  .phase-k .t { font-family: var(--f-display); font-size: 1.1rem; font-weight: 600; line-height: 1.25; }
+  .phase-b p { margin: 0 0 10px; font-size: 15px; }
+  .phase-b p:last-child { margin-bottom: 0; }
+  .phase-b .goal { color: var(--ink-2); }
+
+  footer {
+    margin-top: 90px;
+    padding: 30px 56px 0;
+    border-top: 1px solid var(--rule);
+    font-family: var(--f-mono);
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  @media (max-width: 940px) {
+    .shell { grid-template-columns: 1fr; }
+    .rail {
+      position: static; height: auto; border-right: none;
+      border-bottom: 1px solid var(--rule);
+      padding: 26px 24px;
+    }
+    .rail nav { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 2px 14px; }
+    .masthead { padding: 52px 24px 36px; }
+    .wrap { padding: 0 24px; }
+    footer { padding: 30px 24px 0; }
+    .req { grid-template-columns: 1fr; gap: 6px; }
+    .phase { grid-template-columns: 1fr; gap: 10px; }
+  }
+</style>
+
+<div class="shell">
+
+  <aside class="rail">
+    <div class="rail-mark">Product<br>Requirements<br>Draft 01</div>
+    <nav>
+      <a href="#thesis"><span>01</span>Thesis</a>
+      <a href="#market"><span>02</span>Market findings</a>
+      <a href="#gap"><span>03</span>The gap</a>
+      <a href="#operator"><span>04</span>The operator</a>
+      <a href="#principles"><span>05</span>Design principles</a>
+      <a href="#model"><span>06</span>Unified domain model</a>
+      <a href="#selling"><span>07</span>The selling surface</a>
+      <a href="#input"><span>08</span>Input &amp; confidence</a>
+      <a href="#inventory"><span>09</span>Inventory</a>
+      <a href="#knowledge"><span>10</span>Knowledge system</a>
+      <a href="#consultant"><span>11</span>The consultant</a>
+      <a href="#money"><span>12</span>Money</a>
+      <a href="#nfr"><span>13</span>Non-functional</a>
+      <a href="#devices"><span>14</span>Device platform</a>
+      <a href="#economics"><span>15</span>Unit economics</a>
+      <a href="#risks"><span>16</span>Hard constraints</a>
+      <a href="#decisions"><span>17</span>Open decisions</a>
+      <a href="#phasing"><span>18</span>Phasing</a>
+    </nav>
+  </aside>
+
+  <main class="main">
+
+    <header class="masthead">
+      <p class="eyebrow">Market research &amp; requirements</p>
+      <h1>As easy as paper. With the memory of a system.</h1>
+      <p class="standfirst">
+        A hybrid retail and F&amp;B commerce platform for the operator who is alone behind
+        the counter during the rush — built so the software is <em>the expert</em>, not the
+        person operating it.
+      </p>
+      <div class="meta">
+        <span><b>Status</b> &nbsp;Draft for review</span>
+        <span><b>Date</b> &nbsp;29 Aug 2026</span>
+        <span><b>Scope</b> &nbsp;Multi-tenant · multi-store · AI-native</span>
+      </div>
+    </header>
+
+    <div class="wrap">
+
+      <!-- 01 -->
+      <section id="thesis">
+        <div class="sec-head"><div class="sec-num">01</div><h2>Thesis</h2></div>
+        <div class="col">
+          <p class="lede">
+            Every POS on the market assumes a trained operator. That single assumption is
+            the entire market gap — and it is the one assumption that AI has recently made
+            obsolete.
+          </p>
+          <p>
+            The incumbent bargain is: pay for software, then pay again in training,
+            configuration, and data entry to make it useful. That bargain works for a chain
+            with a manager and a rota. It fails completely for a solo operator in a busy
+            shop, who has no slack in their day to become a systems administrator.
+          </p>
+          <p>
+            The evidence is unambiguous. <strong>56% of SMBs</strong> cite lack of internal
+            technical expertise as their leading adoption barrier <span class="ev">AI Business</span>,
+            <strong>33% of staff</strong> receive under an hour of training at rollout, and
+            <strong>63% stop using</strong> software they find irrelevant <span class="ev">CloudShare</span>.
+            In one field pilot with microentrepreneurs, only <strong>half</strong> were still
+            using the tool by the end of the study <span class="ev">CEGA Berkeley</span>.
+            Software does not fail these businesses at the feature list. It fails at the
+            second week.
+          </p>
+          <p>
+            Three things changed recently that make a different bargain possible. Inference
+            for GPT-4-class capability fell from roughly <strong>$20 to $0.40 per million
+            tokens</strong> between late 2022 and early 2026 <span class="ev">AI Magicx</span> —
+            so intelligence can now be spent freely on a ₹500/month customer. Local-first
+            sync matured, so a store can run entirely offline without a server in the back
+            room. And multimodal models became good enough to <em>build the catalogue for
+            you</em> from a photograph of a menu or a shelf.
+          </p>
+          <p>
+            The product this permits is not a POS with a chatbot bolted on. It is a system
+            where the operator states intent in the way they already think — and the software
+            handles the structure, the compliance, the arithmetic, and the memory. Over time,
+            having watched every transaction in that specific shop, it becomes the thing no
+            small merchant has ever been able to afford: a business advisor who knows their
+            trade <em>and</em> knows their books.
+          </p>
+        </div>
+      </section>
+
+      <!-- 02 -->
+      <section id="market">
+        <div class="sec-head"><div class="sec-num">02</div><h2>What the market research says</h2></div>
+        <div class="col">
+          <p>
+            The category is large, growing steadily, and dominated by exactly the segment we
+            are targeting — which means the demand is proven and the incumbents are already
+            fighting for it. Differentiation has to come from the operating model, not from
+            discovering an unserved niche.
+          </p>
+        </div>
+
+        <div class="figs">
+          <div class="fig">
+            <span class="fig-n">$16–32B</span>
+            <span class="fig-t">POS software market, 2026 — estimates vary widely by methodology</span>
+            <span class="fig-s">Business Research Co. / Grand View</span>
+          </div>
+          <div class="fig">
+            <span class="fig-n">60.6%</span>
+            <span class="fig-t">Share of the POS software market held by SMBs</span>
+            <span class="fig-s">Market.us, 2025</span>
+          </div>
+          <div class="fig">
+            <span class="fig-n">10.8%</span>
+            <span class="fig-t">Category CAGR — steady, not explosive</span>
+            <span class="fig-s">Business Research Co.</span>
+          </div>
+          <div class="fig">
+            <span class="fig-n">81%</span>
+            <span class="fig-t">Of quick-service restaurants globally already run a POS</span>
+            <span class="fig-s">Industry survey via Quantic</span>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="constraint">
+            <span class="lbl">Read these numbers with suspicion</span>
+            <p>
+              Much of the accessible market sizing is vendor and SEO content, and the spread
+              between reputable estimates is more than 2×. Treat every figure here as
+              directional. Before any funding conversation, at least the SMB merchant counts
+              and ARPU assumptions need primary sourcing.
+            </p>
+          </div>
+
+          <h3>The competitive landscape</h3>
+          <p>
+            The field splits cleanly into four groups, and none of them is aimed at our
+            operator.
+          </p>
+        </div>
+
+        <div class="breakout">
+          <figure>
+            <div class="scroller">
+              <table>
+                <caption>Landscape — pricing as published, 2026</caption>
+                <thead>
+                  <tr>
+                    <th>Player</th>
+                    <th>Segment</th>
+                    <th>Software cost</th>
+                    <th>Processing</th>
+                    <th>Why it fails our operator</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Toast</td>
+                    <td>F&amp;B only</td>
+                    <td class="num">$69–165 / terminal / mo</td>
+                    <td class="num">2.99% + 15¢</td>
+                    <td>Restaurant-locked, priced for staffed venues; ~$15.4k/yr all-in</td>
+                  </tr>
+                  <tr>
+                    <td>Square</td>
+                    <td>Retail + F&amp;B</td>
+                    <td class="num">Free; $60/mo verticals</td>
+                    <td class="num">2.4–2.6% + 15¢</td>
+                    <td>Broad but shallow; still assumes you configure and maintain it</td>
+                  </tr>
+                  <tr>
+                    <td>Clover</td>
+                    <td>Retail + F&amp;B</td>
+                    <td class="num">$14.95–84.95 / mo</td>
+                    <td class="num">2.3% + 10¢</td>
+                    <td>Hardware-bundled lock-in; processor-dependent pricing</td>
+                  </tr>
+                  <tr>
+                    <td>Lightspeed</td>
+                    <td>Retail + F&amp;B</td>
+                    <td class="num">Tiered</td>
+                    <td class="num">1.5% flat</td>
+                    <td>Mid-market complexity; heavy setup</td>
+                  </tr>
+                  <tr>
+                    <td>NCR Voyix</td>
+                    <td>Unified enterprise</td>
+                    <td class="num">Enterprise</td>
+                    <td>—</td>
+                    <td>Genuinely unified retail+F&amp;B, but an enterprise implementation</td>
+                  </tr>
+                  <tr>
+                    <td>Loyverse</td>
+                    <td>Micro-merchant</td>
+                    <td class="num">Free core</td>
+                    <td>Via partners</td>
+                    <td>Closest on simplicity; no intelligence, degraded offline mode</td>
+                  </tr>
+                  <tr>
+                    <td>Petpooja</td>
+                    <td>India, retail+F&amp;B</td>
+                    <td class="num">₹8,500 + GST / yr</td>
+                    <td>Via partners</td>
+                    <td>Compliance-first, dated workflow, no AI layer</td>
+                  </tr>
+                  <tr>
+                    <td>GoFrugal</td>
+                    <td>India retail</td>
+                    <td class="num">₹8,999 / yr</td>
+                    <td>Via partners</td>
+                    <td>ERP heritage; heavy for a single counter</td>
+                  </tr>
+                  <tr>
+                    <td>Vyapar / myBillBook</td>
+                    <td>India micro</td>
+                    <td class="num">₹399–6,900 / yr</td>
+                    <td>—</td>
+                    <td>Billing only; no operational depth, no advice</td>
+                  </tr>
+                  <tr>
+                    <td>Tote.ai</td>
+                    <td>Fuel &amp; c-store</td>
+                    <td class="num">Enterprise</td>
+                    <td>—</td>
+                    <td><strong>The real precedent</strong> — see below</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <figcaption>
+              Pricing is as published by vendors or aggregators and excludes hardware,
+              onboarding, and add-ons. Indian and Western pricing are not directly comparable
+              — they reflect different willingness-to-pay, not different value delivered.
+            </figcaption>
+          </figure>
+        </div>
+
+        <div class="col">
+          <h3>Tote.ai is the proof, and the warning</h3>
+          <p>
+            Tote.ai markets itself as the first AI-native POS, and it is being adopted at
+            real scale — Huck's is rolling it to <strong>135 stores</strong>, Weigel's to
+            <strong>90</strong>, plus Loop Neighborhood Markets <span class="ev">C-Store Dive</span>.
+            Their pitch is almost exactly ours: an on-screen AI assistant at the register
+            that reduces training time and guides the worker in real time.
+          </p>
+          <p>
+            Two details matter enormously. First, they installed onto the retailer's
+            <em>existing terminals</em> — validating that the value is in software and
+            intelligence, not new hardware. Second, and more importantly for us: they are
+            locked to fuel and convenience, and they sell to chains with 90+ stores. They
+            solve the training problem for an <em>employer of clerks</em>. Nobody is solving
+            it for the person who <em>is</em> the entire staff.
+          </p>
+          <p>
+            On the advisory side, Shopify's Sidekick is the closest working example of what
+            we mean by "business consultant" — merchants ask it "why were sales lower this
+            week?" and it answers against their own data, reportedly cutting repetitive admin
+            time by up to 40% <span class="ev">Shopify / Presta</span>. But Sidekick serves
+            e-commerce merchants who are already digitally fluent, sitting at a desk. It has
+            never had to work for someone with a queue in front of them.
+          </p>
+        </div>
+      </section>
+
+      <!-- 03 -->
+      <section id="gap">
+        <div class="sec-head"><div class="sec-num">03</div><h2>The gap, mapped</h2></div>
+        <div class="col">
+          <p>
+            Two axes decide this market. Horizontally: how much operator skill the system
+            presumes. Vertically: whether the system merely records what happened or actually
+            tells you what to do about it. Every incumbent sits in the lower and left
+            regions. The upper right is empty.
+          </p>
+        </div>
+
+        <div class="breakout">
+          <figure>
+            <div class="diagram">
+              <svg viewBox="0 0 780 470" role="img" aria-label="Positioning map. Horizontal axis runs from requires a trained operator to works for an untrained solo operator. Vertical axis runs from records transactions to advises the business. Incumbents cluster in the lower left and lower middle. Tote.ai sits mid-high on advice but mid on operator skill. Shopify Sidekick sits high on advice but low on operator independence. The upper right region is unoccupied and marked as the target.">
+                <defs>
+                  <pattern id="hatch" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+                    <line x1="0" y1="0" x2="0" y2="7" stroke="var(--carbon)" stroke-width="1" opacity=".22"/>
+                  </pattern>
+                </defs>
+
+                <!-- grid -->
+                <g stroke="var(--rule-soft)" stroke-width="1">
+                  <line x1="95" y1="100" x2="740" y2="100"/>
+                  <line x1="95" y1="180" x2="740" y2="180"/>
+                  <line x1="95" y1="260" x2="740" y2="260"/>
+                  <line x1="95" y1="340" x2="740" y2="340"/>
+                  <line x1="255" y1="60" x2="255" y2="410"/>
+                  <line x1="415" y1="60" x2="415" y2="410"/>
+                  <line x1="575" y1="60" x2="575" y2="410"/>
+                </g>
+
+                <!-- target zone -->
+                <rect x="530" y="72" width="205" height="132" rx="8"
+                      fill="url(#hatch)" stroke="var(--carbon)" stroke-width="1.5" stroke-dasharray="5 4"/>
+                <text x="632" y="128" text-anchor="middle" font-family="Newsreader, serif" font-size="17" font-weight="600" fill="var(--carbon)">Unoccupied</text>
+                <text x="632" y="150" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="10.5" fill="var(--carbon)">OUR TARGET</text>
+
+                <!-- axes -->
+                <line x1="95" y1="410" x2="740" y2="410" stroke="var(--ink)" stroke-width="1.5"/>
+                <line x1="95" y1="60" x2="95" y2="410" stroke="var(--ink)" stroke-width="1.5"/>
+
+                <!-- points -->
+                <g fill="var(--muted)">
+                  <circle cx="150" cy="300" r="5"/>
+                  <circle cx="195" cy="262" r="5"/>
+                  <circle cx="248" cy="322" r="5"/>
+                  <circle cx="222" cy="368" r="5"/>
+                  <circle cx="338" cy="298" r="5"/>
+                  <circle cx="308" cy="358" r="5"/>
+                  <circle cx="424" cy="376" r="5"/>
+                  <circle cx="458" cy="338" r="5"/>
+                </g>
+                <circle cx="462" cy="182" r="6.5" fill="var(--carbon)"/>
+                <circle cx="300" cy="128" r="6.5" fill="var(--carbon)"/>
+
+                <g font-family="'IBM Plex Sans', sans-serif" font-size="12" fill="var(--ink-2)">
+                  <text x="162" y="304">NCR Voyix</text>
+                  <text x="207" y="266">Lightspeed</text>
+                  <text x="260" y="326">Toast</text>
+                  <text x="234" y="372">Clover</text>
+                  <text x="350" y="302">Square</text>
+                  <text x="320" y="362">Petpooja · GoFrugal</text>
+                  <text x="436" y="380">Vyapar · myBillBook</text>
+                  <text x="470" y="342">Loyverse</text>
+                </g>
+                <g font-family="'IBM Plex Sans', sans-serif" font-size="12" font-weight="600" fill="var(--carbon)">
+                  <text x="450" y="186" text-anchor="end">Tote.ai — c-store chains</text>
+                  <text x="312" y="132">Shopify Sidekick — e-comm</text>
+                </g>
+
+                <!-- axis labels -->
+                <text x="95" y="437" font-family="'IBM Plex Mono', monospace" font-size="10.5" fill="var(--muted)">NEEDS A TRAINED OPERATOR</text>
+                <text x="740" y="437" text-anchor="end" font-family="'IBM Plex Mono', monospace" font-size="10.5" fill="var(--muted)">WORKS FOR AN UNTRAINED SOLO OPERATOR</text>
+                <text transform="translate(78,410) rotate(-90)" font-family="'IBM Plex Mono', monospace" font-size="10.5" fill="var(--muted)">RECORDS TRANSACTIONS</text>
+                <text transform="translate(78,60) rotate(-90)" text-anchor="end" font-family="'IBM Plex Mono', monospace" font-size="10.5" fill="var(--muted)">ADVISES THE BUSINESS</text>
+              </svg>
+            </div>
+            <figcaption>
+              Placement is my judgment from published capability and pricing, not measured
+              data. The useful claim is the shape of the cluster, not any single coordinate.
+            </figcaption>
+          </figure>
+        </div>
+
+        <div class="col">
+          <div class="note">
+            <span class="lbl">The defensible position</span>
+            <p>
+              Tote proved the register-side AI assistant works and enterprises will buy it.
+              Sidekick proved merchants will ask an AI about their own business. Nobody has
+              combined the two and pointed them at a single untrained person running a busy
+              shop — across both retail and food — at a price that person can pay.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 04 -->
+      <section id="operator">
+        <div class="sec-head"><div class="sec-num">04</div><h2>The operator we are building for</h2></div>
+        <div class="col">
+          <p class="lede">
+            One person. High transaction volume. No slack. No systems vocabulary. Currently
+            running on paper, memory, and a phone.
+          </p>
+          <p>
+            This person is not "non-technical" in the way a corporate user is non-technical.
+            They run a genuinely complex operation — pricing, credit, spoilage, supplier
+            relationships, seasonal demand — entirely in their head, and they are good at it.
+            What they lack is not intelligence. It is <em>spare attention</em>, and any
+            vocabulary for describing what they already do in the terms a database wants.
+          </p>
+
+          <h3>What the research says about failure</h3>
+          <p>
+            The adoption literature is consistent across geographies, and it points at
+            onboarding and week-two abandonment rather than features.
+          </p>
+          <ul>
+            <li><strong>Every added onboarding step raises abandonment.</strong> Friction during activation converts directly into churn <span class="ev">Payroc</span>.</li>
+            <li><strong>Training does not happen.</strong> A third of staff get under an hour <span class="ev">CloudShare</span>. For a solo operator, it is zero — there is nobody to train them and no shift to do it in.</li>
+            <li><strong>Change management fails at up to two-thirds of SMEs</strong> <span class="ev">Growth Shuttle</span>.</li>
+            <li><strong>Complexity of integration is the third-largest barrier</strong>, behind talent and budget <span class="ev">AI Business</span>.</li>
+          </ul>
+
+          <h3>And what already worked</h3>
+          <p>
+            Khatabook reached <strong>10 million merchants in three years</strong> by
+            digitising exactly one paper artefact — the credit ledger — with a simple
+            multilingual interface and offline sync <span class="ev">ORF / Finn&amp;Marks</span>.
+            It did not try to be an ERP. That is the adoption pattern to copy: enter through
+            one thing they already do on paper, and earn the right to more.
+          </p>
+
+          <div class="constraint">
+            <span class="lbl">The design consequence</span>
+            <p>
+              There is no training budget, no IT support, and no configuration phase. If the
+              system is not useful within about ninety seconds of first opening it, and
+              useful <em>during a rush</em> rather than after closing, it will be abandoned.
+              Onboarding is not a phase of the product. It is the product's hardest feature.
+            </p>
+          </div>
+
+          <h4>Literacy and language</h4>
+          <p>
+            HCI research on low-literacy users in India and comparable markets converges on
+            colour-coded graphical interfaces with voice annotation in the local language,
+            skeuomorphic metaphors drawn from real objects rather than software abstractions,
+            and shallow navigation <span class="ev">ACM CSCW 2021</span>. One finding deserves
+            emphasis because it cuts against the obvious plan: <strong>voice alone is not
+            sufficient</strong>, and lack of <em>digital</em> literacy is harder to overcome
+            than lack of textual literacy. A talking interface does not rescue a confusing
+            mental model.
+          </p>
+        </div>
+      </section>
+
+      <!-- 05 -->
+      <section id="principles">
+        <div class="sec-head"><div class="sec-num">05</div><h2>Design principles</h2></div>
+        <div class="col">
+          <p>
+            Seven rules, each traceable to something in the research above. These are meant
+            to settle arguments later, so they are written to be falsifiable.
+          </p>
+        </div>
+
+        <div class="ladder">
+          <div class="rung"><div class="rung-k">One</div><div class="rung-v"><b>Never block a sale.</b> No missing field, failed sync, absent network, unconfigured tax rule, or unrecognised item may prevent money changing hands. Everything unknown is captured and resolved later.</div></div>
+          <div class="rung"><div class="rung-k">Two</div><div class="rung-v"><b>Structure is the system's job.</b> The operator states intent in their own words. Categorisation, tax treatment, units, and ledger entries are inferred — never demanded up front.</div></div>
+          <div class="rung"><div class="rung-k">Three</div><div class="rung-v"><b>Earn data, don't demand it.</b> Every field the system asks for at setup is a reason to quit. The catalogue is built from photographs, invoices, and observed sales — not from a data-entry session.</div></div>
+          <div class="rung"><div class="rung-k">Four</div><div class="rung-v"><b>Confidence is visible and graded.</b> AI output is never silently authoritative. High confidence acts; medium confirms in one tap; low asks plainly. See §08.</div></div>
+          <div class="rung"><div class="rung-k">Five</div><div class="rung-v"><b>Advice arrives where the decision is made.</b> Insight surfaced in a dashboard nobody opens is worthless. It appears at the moment of ordering, pricing, or closing.</div></div>
+          <div class="rung"><div class="rung-k">Six</div><div class="rung-v"><b>The record is immutable; the interpretation is not.</b> An append-only event log is the source of truth. Corrections are new events. This makes offline sync tractable and gives the advisor a real history.</div></div>
+          <div class="rung"><div class="rung-k">Seven</div><div class="rung-v"><b>Degrade, never fail.</b> No network, no printer, no scanner, dead phone — each has a defined fallback that still completes the sale and preserves the record.</div></div>
+        </div>
+      </section>
+
+      <!-- 06 -->
+      <section id="model">
+        <div class="sec-head"><div class="sec-num">06</div><h2>The unified domain model</h2></div>
+        <div class="col">
+          <p class="lede">
+            Retail and F&amp;B are usually separate products because their data models look
+            different. They are not actually different — they are the same model at
+            different settings.
+          </p>
+          <p>
+            Retail needs variants, batches, expiry, weight-based pricing, and barcodes. F&amp;B
+            needs modifiers, recipes that deplete ingredients, courses, tables, and kitchen
+            routing. A hybrid business — the bakery with a café, the grocer with a hot
+            counter, the sweet shop — needs both simultaneously, on the same bill. Forcing
+            them into a retail model loses the kitchen; forcing them into a restaurant model
+            loses batch and expiry tracking.
+          </p>
+
+          <h3>The resolution</h3>
+          <p>
+            Model one <strong>sellable</strong> entity with optional capability facets, rather
+            than two product types. A facet is present or absent; nothing is nulled out or
+            shoehorned.
+          </p>
+        </div>
+
+        <div class="req">
+          <div class="req-id">F-01</div>
+          <div class="req-body">
+            <p class="req-t">Sellable with composable facets<span class="pill p0">P0</span></p>
+            <p>Facets: <em>Stocked</em> (units, batches, expiry) · <em>Weighed</em> (scale integration, price per unit mass) · <em>Made</em> (recipe/BOM depleting component stock) · <em>Configured</em> (modifier groups with price deltas) · <em>Routed</em> (fires to a kitchen or prep station) · <em>Timed</em> (prep duration, course sequencing). A packet of biscuits carries Stocked. A sandwich carries Made + Configured + Routed. Loose rice carries Stocked + Weighed. All three sit on one bill.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-02</div>
+          <div class="req-body">
+            <p class="req-t">Order lifecycle as a state machine, not a mode<span class="pill p0">P0</span></p>
+            <p>A retail sale is the degenerate case of a restaurant order: open → committed → fulfilled → settled, where retail collapses the middle states. One code path, no "retail mode" versus "restaurant mode" toggle. This is what makes the hybrid business work rather than a compromise.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-03</div>
+          <div class="req-body">
+            <p class="req-t">Vertical packs configure, they don't fork<span class="pill p1">P1</span></p>
+            <p>A vertical pack (bakery, pharmacy, café, hardware, salon) is data: default facets, catalogue seeds, tax defaults, KPI definitions, and advisory rules. Adding a vertical must never require a code branch. This is the scalability mechanism for the domain-knowledge layer in §10.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-04</div>
+          <div class="req-body">
+            <p class="req-t">Append-only event ledger per tenant<span class="pill p0">P0</span></p>
+            <p>Every business fact is an immutable event. Current state is a projection. Required for offline sync correctness (§13), audit and tax retention (§13), and for giving the advisor a genuine time series rather than a mutable snapshot.</p>
+          </div>
+        </div>
+
+        <div class="col">
+          <h3>Where hybrids currently break</h3>
+          <p>
+            Worth naming the trap explicitly: inventory accuracy. Spreadsheet-driven
+            operations run at <strong>63–83% inventory accuracy</strong>
+            <span class="ev">Netstock</span>, and the dominant failure mode is not a single
+            catastrophe but the slow accumulation of small unrecorded movements. In a hybrid
+            business this is worse, because a bag of flour is simultaneously retail stock and
+            a recipe input. The Made facet must deplete the same ledger the Stocked facet
+            sells from, or the two views diverge within a week.
+          </p>
+        </div>
+      </section>
+
+      <!-- 07 -->
+      <section id="selling">
+        <div class="sec-head"><div class="sec-num">07</div><h2>The selling surface</h2></div>
+        <div class="col">
+          <p>
+            This screen is the product. Everything else is justified by it. The operator is
+            standing, possibly holding something, with people waiting.
+          </p>
+          <p>
+            Speed has measurable commercial value: Forrester found a one-minute reduction in
+            average checkout time can lift customer retention by up to
+            <strong>10%</strong>, and tap-to-pay completes in 10–15 seconds versus roughly
+            double for alternatives <span class="ev">GoFTX / Forrester</span>.
+          </p>
+        </div>
+
+        <div class="req">
+          <div class="req-id">F-05</div>
+          <div class="req-body">
+            <p class="req-t">Three-second common sale<span class="pill p0">P0</span></p>
+            <p>The most frequent transaction shape for that specific store must complete in three interactions or fewer. The system learns what is frequent and reorders the surface accordingly — a tea shop's morning screen is not its evening screen.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-06</div>
+          <div class="req-body">
+            <p class="req-t">Predictive basket assembly<span class="pill p1">P1</span></p>
+            <p>Given time of day, recent sales, and any recognised customer, pre-stage the likely basket. The operator subtracts rather than builds. Must be trivially dismissible — a wrong prediction that costs a tap to clear is worse than no prediction.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-07</div>
+          <div class="req-body">
+            <p class="req-t">Unknown items never block<span class="pill p0">P0</span></p>
+            <p>An unrecognised item is added by price alone with a free-text or spoken label, the sale completes, and the system resolves it into the catalogue afterwards — asking the operator only when it genuinely cannot infer. This single behaviour is what makes day-one usage possible with an empty catalogue.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-08</div>
+          <div class="req-body">
+            <p class="req-t">Interruptible, concurrent orders<span class="pill p0">P0</span></p>
+            <p>A solo operator is constantly interrupted — a phone order mid-walk-in, a customer who forgot something. Parking and resuming an order must be one gesture, with any number of orders open, and must survive an app crash or dead battery.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-09</div>
+          <div class="req-body">
+            <p class="req-t">Single-handed operation<span class="pill p1">P1</span></p>
+            <p>Every critical control reachable by thumb on a phone held in one hand. The other hand is holding goods, cash, or a bag. This is a hard layout constraint, not a nicety.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 08 -->
+      <section id="input">
+        <div class="sec-head"><div class="sec-num">08</div><h2>Input modalities and the confidence ladder</h2></div>
+        <div class="col">
+          <p class="lede">
+            The research is emphatic that voice cannot be trusted as the primary billing
+            path. The architecture has to reflect that honestly.
+          </p>
+          <p>
+            Production voice AI reports 93–95% order accuracy on simple orders, but
+            independent field testing put standalone voice at about <strong>83%</strong>
+            versus 87–89% for humans — rising to ~95% only when a person supervises. At
+            65+ dB ambient noise, accuracy falls to <strong>78–83%</strong>
+            <span class="ev">Kea AI</span>. For Indian code-mixed speech it is worse: Hinglish
+            word error rates span <strong>27% to 70%</strong> across models on identical audio
+            <span class="ev">Deepgram / HiACC</span>.
+          </p>
+          <p>
+            A busy shop is exactly the 65+ dB, code-mixed, accented environment where these
+            systems are weakest. So: voice is an accelerator with mandatory confirmation, never
+            an unattended path to a committed bill.
+          </p>
+
+          <h3>The confidence ladder</h3>
+          <p>
+            Every AI-derived input — speech, image, scan, prediction — carries a confidence
+            score, and the interaction is determined by which band it falls in. This is the
+            single most important safety mechanism in the product.
+          </p>
+        </div>
+
+        <div class="ladder">
+          <div class="rung"><div class="rung-k">High</div><div class="rung-v"><b>Act silently, show the result.</b> Item added, visibly, reversible with one tap. No confirmation dialogue.</div></div>
+          <div class="rung"><div class="rung-k">Medium</div><div class="rung-v"><b>Act, but flag.</b> Applied with a visual marker and a one-tap correction affordance. Never a modal — modals stop the queue.</div></div>
+          <div class="rung"><div class="rung-k">Low</div><div class="rung-v"><b>Ask, with a best guess pre-selected.</b> Two or three options, largest tap targets, plain language, no jargon.</div></div>
+          <div class="rung"><div class="rung-k">Money</div><div class="rung-v"><b>Always explicit.</b> Any AI inference that changes an amount the customer pays requires human confirmation regardless of confidence. Non-negotiable.</div></div>
+        </div>
+
+        <div class="req">
+          <div class="req-id">F-10</div>
+          <div class="req-body">
+            <p class="req-t">Modality parity<span class="pill p0">P0</span></p>
+            <p>Barcode scan, camera recognition, voice, typed search, and tap-a-tile all resolve to the same order-line operation. No feature may exist in only one modality — the operator switches constantly depending on what their hands are doing.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-11</div>
+          <div class="req-body">
+            <p class="req-t">Camera as a first-class scanner<span class="pill p1">P1</span></p>
+            <p>Product recognition systems reach 90%+ accuracy on catalogues past 3.5M SKUs <span class="ev">Width.ai</span>, though visually similar products remain the hard case and fresh produce may need spectral sensing. Ship it inside the confidence ladder: recognition proposes, the ladder decides how loudly to ask.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-12</div>
+          <div class="req-body">
+            <p class="req-t">Language and code-mixing as a baseline<span class="pill p0">P0</span></p>
+            <p>Interface and voice must handle the operator's actual speech, including code-mixed. Evaluate AI4Bharat IndicConformer (22 languages, open) and Sarvam Saaras V3 (1M+ hours) against a purpose-built noisy in-store test set before committing. Do not accept vendor benchmarks recorded in quiet conditions.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-13</div>
+          <div class="req-body">
+            <p class="req-t">Photo-to-catalogue onboarding<span class="pill p0">P0</span></p>
+            <p>Menu OCR pipelines already cut restaurant onboarding from weeks to hours <span class="ev">Veryfi</span>. Photograph a menu board, price list, shelf, or supplier invoice and the catalogue populates. This is the single highest-leverage feature in the product — it converts the abandonment-driving setup phase into a thirty-second act.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 09 -->
+      <section id="inventory">
+        <div class="sec-head"><div class="sec-num">09</div><h2>Inventory without data entry</h2></div>
+        <div class="col">
+          <p>
+            Inventory is where small-merchant POS deployments go to die. The cost is real —
+            stockouts, overstocking, shrinkage and reconciliation labour run
+            <strong>$5,000–15,000 a year</strong> for a small retailer
+            <span class="ev">NRS / Netstock</span> — but the fix that every incumbent proposes
+            is disciplined manual entry, which is precisely what a solo operator cannot
+            sustain.
+          </p>
+          <p>
+            So the requirement is not "inventory management." It is <em>inventory that stays
+            roughly right without anyone maintaining it</em>, and that is honest about its own
+            uncertainty.
+          </p>
+        </div>
+
+        <div class="req">
+          <div class="req-id">F-14</div>
+          <div class="req-body">
+            <p class="req-t">Inbound stock from documents<span class="pill p0">P0</span></p>
+            <p>Photograph a supplier invoice or delivery note; the system extracts lines, matches them to catalogue entries, learns supplier-specific naming conventions, and posts the receipt. Manual stock-in is a fallback, never the primary path.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-15</div>
+          <div class="req-body">
+            <p class="req-t">Probabilistic stock with declared confidence<span class="pill p1">P1</span></p>
+            <p>Hold stock as an estimate with an error band that widens as unreconciled time passes, rather than as a false precise integer. Show "about 12, last confirmed Tuesday" instead of "12." Honest uncertainty is more useful and more trusted than a number the operator knows is wrong.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-16</div>
+          <div class="req-body">
+            <p class="req-t">Targeted micro-counts<span class="pill p1">P1</span></p>
+            <p>Never ask for a full stocktake. When the error band on a high-value or fast-moving line exceeds a threshold, ask the operator to count <em>that one thing</em> during a quiet moment. Amortise reconciliation into seconds instead of an evening.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-17</div>
+          <div class="req-body">
+            <p class="req-t">Recipe depletion shared with retail stock<span class="pill p1">P1</span></p>
+            <p>The Made facet consumes from the identical stock ledger the Stocked facet sells from. One flour balance, whether it left as a bag or as bread. Divergence here is the classic hybrid-POS failure.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 10 -->
+      <section id="knowledge">
+        <div class="sec-head"><div class="sec-num">10</div><h2>The two-layer knowledge system</h2></div>
+        <div class="col">
+          <p class="lede">
+            Domain expertise that applies to every bakery, plus learned knowledge specific to
+            <em>this</em> bakery. Keeping these separate is what allows a new tenant to be
+            useful on day one and irreplaceable by month six.
+          </p>
+
+          <h4>Layer one — vertical domain knowledge</h4>
+          <p>
+            Curated, versioned, shared across all tenants in a vertical. What margins are
+            normal, what spoils and how fast, what the seasonal shape looks like, what
+            regulatory obligations attach, what the standard operating rhythms are. This is
+            authored and reviewed, not learned from tenant data — which keeps it auditable
+            and prevents one tenant's practices leaking into another's advice.
+          </p>
+
+          <h4>Layer two — tenant and store knowledge</h4>
+          <p>
+            Derived exclusively from that tenant's own event ledger, and never shared. Their
+            actual demand curves, their customers' credit behaviour, their supplier
+            reliability, their staffing rhythm, their pricing latitude. Store-level, because
+            two branches of the same business genuinely differ.
+          </p>
+
+          <div class="constraint">
+            <span class="lbl">Isolation is a security requirement, not a preference</span>
+            <p>
+              OWASP added <strong>LLM08:2025</strong> specifically for multi-tenant vector and
+              embedding weaknesses. The tenant filter must be enforced at the vector store
+              query layer, driven by a signed JWT claim — never in application code, where a
+              single missed filter leaks one merchant's business to a competitor
+              <span class="ev">Truto / Zylos</span>. Cross-tenant leakage in this product is
+              existential, because our tenants' neighbours <em>are</em> their competitors.
+            </p>
+          </div>
+        </div>
+
+        <div class="req">
+          <div class="req-id">F-18</div>
+          <div class="req-body">
+            <p class="req-t">Pool isolation with namespace enforcement<span class="pill p0">P0</span></p>
+            <p>Shared index with mandatory tenant-ID namespace filtering, enforced below the application layer. Silo (dedicated index) available for large tenants who require it contractually. Pool-by-default is what keeps per-tenant cost viable at our price point.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-19</div>
+          <div class="req-body">
+            <p class="req-t">Structured data beats retrieval for numbers<span class="pill p0">P0</span></p>
+            <p>Financial and operational questions must be answered by generated queries against the ledger, not by embedding similarity. RAG handles knowledge and explanation; SQL handles arithmetic. An advisor that hallucinates a revenue figure is destroyed on first contact with a merchant who knows their own takings.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-20</div>
+          <div class="req-body">
+            <p class="req-t">Every claim traceable<span class="pill p1">P1</span></p>
+            <p>Any assertion the advisor makes must be expandable to the underlying transactions. Trust with this user is built by showing the receipts — literally.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 11 -->
+      <section id="consultant">
+        <div class="sec-head"><div class="sec-num">11</div><h2>The consultant</h2></div>
+        <div class="col">
+          <p>
+            The advisory layer is the reason this is a platform rather than a billing app,
+            and it is also the retention mechanism — a merchant can switch POS in an
+            afternoon, but not a system that knows two years of their trading history.
+          </p>
+          <p>
+            The failure mode to avoid is the dashboard. Our operator will not open a
+            dashboard. Sidekick's reported 40% reduction in admin time comes from the
+            assistant surfacing things <em>proactively</em>, not from merchants querying it
+            <span class="ev">Presta</span>.
+          </p>
+        </div>
+
+        <div class="req">
+          <div class="req-id">F-21</div>
+          <div class="req-body">
+            <p class="req-t">Ask anything, in any language, any time<span class="pill p0">P0</span></p>
+            <p>"Did I make money this week?" "Should I buy more mangoes?" "Which customer owes me the most?" Answered conversationally against the tenant's ledger and the vertical pack, in the operator's language, by voice or text.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-22</div>
+          <div class="req-body">
+            <p class="req-t">Proactive interventions at decision points<span class="pill p0">P0</span></p>
+            <p>Not a feed of insights. A small number of high-value interruptions timed to when they are actionable: at closing, before a supplier order, when a margin silently inverts, when a reliable customer's credit drifts. Cap the frequency — an advisor that speaks constantly gets muted, and a muted advisor is a churned customer.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-23</div>
+          <div class="req-body">
+            <p class="req-t">Advice states its own confidence and reasoning<span class="pill p1">P1</span></p>
+            <p>"Sales are down 12% versus the last four Tuesdays; two of those were holidays, so treat this cautiously." A consultant that hedges appropriately is trusted longer than one that is confidently wrong once.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-24</div>
+          <div class="req-body">
+            <p class="req-t">Advisory memory<span class="pill p2">P2</span></p>
+            <p>Track what was suggested, whether it was taken, and what happened. Both to improve, and to demonstrate accumulated value: "the six suggestions you acted on are associated with ₹X." This is the renewal conversation, pre-written.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 12 -->
+      <section id="money">
+        <div class="sec-head"><div class="sec-num">12</div><h2>Money — payments and credit</h2></div>
+        <div class="col">
+          <p>
+            Two things matter disproportionately here: accepting payment without forcing
+            hardware purchase, and handling informal credit, which is the single most
+            important unmet need in the research.
+          </p>
+          <p>
+            SoftPOS turns any NFC Android phone into a card terminal with zero hardware
+            investment, and NPCI is developing offline UPI over NFC for payments up to
+            <strong>₹2,000</strong>, with terminal certification beginning in 2026
+            <span class="ev">Worldline / Medianama</span>. That combination means a merchant
+            can start with nothing but the phone in their pocket.
+          </p>
+          <p>
+            On credit: the research is blunt that the credit backlog is the defining pain —
+            customers pay later, and the merchant themselves buys from wholesalers on credit,
+            with both sides tracked on paper <span class="ev">ORF</span>. Khatabook's 10
+            million merchants are the proof of demand. Critically, credit is <em>bidirectional</em>,
+            and most POS products model only the receivable side.
+          </p>
+        </div>
+
+        <div class="req">
+          <div class="req-id">F-25</div>
+          <div class="req-body">
+            <p class="req-t">Zero-hardware payment acceptance<span class="pill p0">P0</span></p>
+            <p>SoftPOS / tap-to-phone plus UPI QR as the default. Hardware terminals supported but never required.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-26</div>
+          <div class="req-body">
+            <p class="req-t">Bidirectional credit ledger<span class="pill p0">P0</span></p>
+            <p>Customer receivables and supplier payables in one view, with reminders. This is the Khatabook wedge — and plausibly a better entry point into a merchant than billing, because it digitises a paper artefact they already maintain.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-27</div>
+          <div class="req-body">
+            <p class="req-t">Split and partial settlement<span class="pill p1">P1</span></p>
+            <p>Part cash, part UPI, part on credit — routine in these businesses, awkward in most POS software.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">F-28</div>
+          <div class="req-body">
+            <p class="req-t">Cash is a first-class citizen<span class="pill p0">P0</span></p>
+            <p>Fast denomination entry, change calculation, drawer reconciliation, and detection of the divergence between recorded and actual cash. Products that treat cash as legacy fail in these markets.</p>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="note">
+            <span class="lbl">A strategic option worth naming early</span>
+            <p>
+              An accurate, verified transaction history is the raw material for merchant
+              credit underwriting — there is active research on using digital sales and
+              inventory data for creditworthiness assessment
+              <span class="ev">CEGA Berkeley</span>. That is a much larger business than POS
+              subscriptions, and it is the reason the affordability constraint in §15 may not
+              have to be solved with subscription revenue at all. It also changes the data
+              model requirements, so it should be a deliberate decision now rather than a
+              retrofit later.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 13 -->
+      <section id="nfr">
+        <div class="sec-head"><div class="sec-num">13</div><h2>Non-functional requirements</h2></div>
+
+        <div class="col"><h3>Performance budgets</h3></div>
+        <div class="req">
+          <div class="req-id">N-01</div>
+          <div class="req-body">
+            <p class="req-t">Local-first latency targets<span class="pill p0">P0</span></p>
+            <p>Item add to visual confirmation under 100 ms. Sale completion under 400 ms. Cold start to sellable under 2 s. All measured on a low-end Android device on the slowest network the target market has, not on a developer's laptop.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">N-02</div>
+          <div class="req-body">
+            <p class="req-t">No AI call on the critical path<span class="pill p0">P0</span></p>
+            <p>Model latency must never sit between the operator and a completed sale. Inference runs speculatively, in parallel, or after the fact. If a model is slow or unreachable, the sale still completes — the enrichment lands later.</p>
+          </div>
+        </div>
+
+        <div class="col"><h3>Offline-first and sync</h3>
+          <p>
+            Loyverse — the closest thing to a competitor on simplicity — restricts refunds,
+            customer registration, and item creation while offline. That is the standard to
+            beat, and beating it is a genuine differentiator in markets with unreliable
+            connectivity.
+          </p>
+        </div>
+        <div class="req">
+          <div class="req-id">N-03</div>
+          <div class="req-body">
+            <p class="req-t">Full capability offline, indefinitely<span class="pill p0">P0</span></p>
+            <p>The local database is the primary store, not a cache. Every operation available online is available offline, including item creation, refunds, and customer registration. Only inherently networked actions (card authorisation, aggregator sync) may degrade, and each has a defined fallback.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">N-04</div>
+          <div class="req-body">
+            <p class="req-t">Convergent multi-device sync<span class="pill p0">P0</span></p>
+            <p>CRDT-based merge for concurrent edits across devices in a store. Evaluate PowerSync (Postgres ↔ SQLite with declarative sync rules), Ditto (peer-to-peer, no server required — significant for a store whose uplink is down but whose devices can see each other), and Automerge 3.0. Monetary events are append-only and therefore commutative; the hard cases are catalogue edits and stock levels.</p>
+          </div>
+        </div>
+
+        <div class="col"><h3>Multi-tenancy and scale</h3></div>
+        <div class="req">
+          <div class="req-id">N-05</div>
+          <div class="req-body">
+            <p class="req-t">Shared schema, tenant_id everywhere, RLS as backstop<span class="pill p0">P0</span></p>
+            <p>The 2026 consensus default, and the only model whose per-tenant cost supports our price point. Row-level security is the safety net, not the mechanism — tenant context must propagate through application code, connection pools, background workers, caches, and analytics pipelines. Each of those is a documented leak vector.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">N-06</div>
+          <div class="req-body">
+            <p class="req-t">Escape hatch to silo<span class="pill p1">P1</span></p>
+            <p>Large or regulated tenants get a dedicated database without a rewrite. Design the data access layer for this on day one; retrofitting it is expensive.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">N-07</div>
+          <div class="req-body">
+            <p class="req-t">Noisy-neighbour governance<span class="pill p1">P1</span></p>
+            <p>Per-tenant rate and cost budgets on inference. One high-volume tenant must not be able to degrade service or margin for others.</p>
+          </div>
+        </div>
+
+        <div class="col"><h3>Security, privacy, compliance</h3></div>
+        <div class="req">
+          <div class="req-id">N-08</div>
+          <div class="req-body">
+            <p class="req-t">Never touch a PAN<span class="pill p0">P0</span></p>
+            <p>Tokenisation and processor redirection so cardholder data never enters our infrastructure, reducing PCI DSS 4.0 scope to near zero. For a company at this price point, carrying CDE scope is not survivable. Note that tokenisation rarely eliminates scope entirely for a SaaS platform — plan for a reduced-scope assessment, not none.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">N-09</div>
+          <div class="req-body">
+            <p class="req-t">India GST e-invoicing, correct and current<span class="pill p0">P0</span></p>
+            <p>IRN generation via the IRP with signed QR on the invoice, HSN at 4 or 6 digits by turnover, e-way bill with Ship-To GSTIN (mandatory from 15 June 2026), 30-day reporting windows for larger taxpayers, and <strong>six-year retention</strong> of signed JSON, IRN and QR data. The schema version changes — validate against the current schema on every generation rather than pinning.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">N-10</div>
+          <div class="req-body">
+            <p class="req-t">DPDP Act compliance<span class="pill p0">P0</span></p>
+            <p>No blanket localisation requirement, and cross-border transfer runs on a negative list — but there is <em>no legitimate-interest basis</em>, so consent architecture is mandatory, alongside 72-hour breach notification and automated deletion workflows. Multi-tenant architectures with long sub-processor chains carry elevated exposure. Penalty scale needs legal verification (§17) — sources conflict, and the figure materially affects risk posture.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">N-11</div>
+          <div class="req-body">
+            <p class="req-t">Compliance is a pluggable pack<span class="pill p1">P1</span></p>
+            <p>Tax and fiscal rules are versioned, dated, per-jurisdiction data — not application logic. Historic invoices must be reproducible under the rules in force when issued. This is also the mechanism for entering a second country without forking the product.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 14 -->
+      <section id="devices">
+        <div class="sec-head"><div class="sec-num">14</div><h2>The device and peripheral platform</h2></div>
+        <div class="col">
+          <p>
+            "Any device, any peripheral" is the requirement. There is one hard technical
+            constraint standing in the way, and it needs to be confronted in the architecture
+            rather than discovered in month four.
+          </p>
+
+          <div class="constraint">
+            <span class="lbl">The browser cannot talk to a receipt printer</span>
+            <p>
+              ESC/POS is the de facto standard for thermal printers over USB, serial,
+              Bluetooth and network. Browsers expose no raw TCP or Bluetooth serial access,
+              so <strong>no ESC/POS connection type is functional from a pure web app</strong>
+              <span class="ev">unified_esc_pos_printer</span>. A web-only client therefore
+              cannot print receipts, read a scale, or open a cash drawer directly. Any
+              "runs anywhere in a browser" plan must account for this.
+            </p>
+          </div>
+
+          <p>
+            The resolution is a <strong>device bridge</strong>: a small local agent — native
+            app, companion daemon, or LAN print server — that owns hardware and exposes it
+            over a stable local protocol. Thin clients on any device talk to the bridge. This
+            keeps the surface layer genuinely device-agnostic while placing hardware access
+            where the OS permits it.
+          </p>
+        </div>
+
+        <div class="req">
+          <div class="req-id">N-12</div>
+          <div class="req-body">
+            <p class="req-t">Device bridge abstraction<span class="pill p0">P0</span></p>
+            <p>A capability-based protocol — <em>print</em>, <em>weigh</em>, <em>scan</em>, <em>display</em>, <em>open-drawer</em>, <em>read-sensor</em> — with pluggable drivers beneath. The application layer addresses capabilities, never specific devices.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">N-13</div>
+          <div class="req-body">
+            <p class="req-t">Baseline driver set<span class="pill p0">P0</span></p>
+            <p>ESC/POS printers over USB, BLE, Bluetooth Classic and network; HID and BLE barcode scanners; serial and BLE weighing scales; cash drawers; customer displays; kitchen display screens. UnifiedPOS/OPOS concepts inform the model but should not constrain it.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">N-14</div>
+          <div class="req-body">
+            <p class="req-t">Open peripheral SDK<span class="pill p1">P1</span></p>
+            <p>Third parties — and we ourselves, per vertical — must be able to add device support without touching core. This is what makes "compatible with any sensor the business needs" a real claim: temperature probes for cold chain, fuel dispensers, occupancy sensors, IoT scales, queue displays.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">N-15</div>
+          <div class="req-body">
+            <p class="req-t">Graceful hardware degradation<span class="pill p0">P0</span></p>
+            <p>No printer → digital receipt via WhatsApp or QR. No scanner → camera. No scale → manual weight. No bridge at all → the phone alone completes the sale. Every peripheral is optional at runtime, and the system must say so plainly rather than erroring.</p>
+          </div>
+        </div>
+
+        <div class="col">
+          <h3>F&amp;B-specific surfaces</h3>
+          <p>
+            For food businesses the peripheral story extends to order routing. Kitchen tickets
+            to the correct station, kitchen display with timers, and aggregator integration —
+            Swiggy and Zomato deliver orders by webhook within 1–2 seconds and expect
+            bidirectional menu and availability sync. For a solo operator, aggregator orders
+            arriving in the same queue as walk-ins is not a convenience feature; it is the
+            difference between coping and not.
+          </p>
+        </div>
+      </section>
+
+      <!-- 15 -->
+      <section id="economics">
+        <div class="sec-head"><div class="sec-num">15</div><h2>Unit economics as a design constraint</h2></div>
+        <div class="col">
+          <p class="lede">
+            Affordability is not a pricing decision made at the end. It is an architectural
+            constraint that invalidates certain designs, and it should be enforced from the
+            first commit.
+          </p>
+          <p>
+            The Indian market prices the reference point: ₹399/year at the bottom
+            (myBillBook mobile), ₹3,420–8,999/year for established players. Call it
+            <strong>₹300–800 per month</strong> as the realistic ceiling for a solo merchant.
+            That is roughly $4–10. Every architectural choice has to survive that number.
+          </p>
+          <p>
+            The reason this is now possible: inference costs fell from ~$20 to ~$0.40 per
+            million tokens for GPT-4-class capability, roughly 10× annually, with cheaper
+            distilled models at $0.20 <span class="ev">AI Magicx / Silicon Data</span>. Gartner
+            projects a further 90%+ reduction by 2030. An AI-native product at this ARPU was
+            not viable three years ago and will be comfortable in three more. <strong>The
+            timing is the opportunity.</strong>
+          </p>
+        </div>
+
+        <div class="req">
+          <div class="req-id">N-16</div>
+          <div class="req-body">
+            <p class="req-t">Explicit per-tenant cost ceiling<span class="pill p0">P0</span></p>
+            <p>Set a monthly infrastructure-plus-inference budget per tenant, instrument it from day one, and treat exceeding it as a build-breaking regression. Without this, AI features silently destroy the margin.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">N-17</div>
+          <div class="req-body">
+            <p class="req-t">Tiered model routing<span class="pill p0">P0</span></p>
+            <p>Most interactions should never reach a frontier model. On-device or small models for classification, catalogue matching, and routine speech; mid-tier for structured extraction; frontier models only for genuine advisory reasoning. Route by task, and measure the mix.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">N-18</div>
+          <div class="req-body">
+            <p class="req-t">Aggressive caching and precomputation<span class="pill p1">P1</span></p>
+            <p>Advisory answers to common questions are computed on a schedule, not per query. Cache embeddings and extraction results. Deduplicate across tenants wherever it is provably safe — vertical-layer knowledge is shared, tenant-layer never is.</p>
+          </div>
+        </div>
+        <div class="req">
+          <div class="req-id">N-19</div>
+          <div class="req-body">
+            <p class="req-t">Zero-touch onboarding as a cost requirement<span class="pill p0">P0</span></p>
+            <p>At this ARPU there is no budget for a human implementation call — ever. Onboarding must be entirely self-service and AI-assisted. This is why F-13 (photo-to-catalogue) is P0: it is simultaneously the adoption feature and the gross-margin feature.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 16 -->
+      <section id="risks">
+        <div class="sec-head"><div class="sec-num">16</div><h2>Hard constraints and risks</h2></div>
+        <div class="col">
+          <p>
+            Collected from the research, worst first. Each of these has killed a product
+            before.
+          </p>
+        </div>
+
+        <div class="breakout">
+          <div class="scroller">
+            <table>
+              <caption>Risk register</caption>
+              <thead>
+                <tr><th>Risk</th><th>Evidence</th><th>Mitigation</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Voice unreliable in a real shop</td>
+                  <td>78–83% accuracy at 65+ dB; Hinglish WER 27–70%</td>
+                  <td>Confidence ladder; voice never unattended on money; multimodal parity (F-10)</td>
+                </tr>
+                <tr>
+                  <td>Week-two abandonment</td>
+                  <td>Half of microentrepreneurs lapsed in a controlled pilot</td>
+                  <td>Value inside 90 seconds; credit-ledger wedge; proactive advisor creates a return reason</td>
+                </tr>
+                <tr>
+                  <td>Inventory drifts, trust collapses</td>
+                  <td>63–83% accuracy on manual systems</td>
+                  <td>Probabilistic stock with visible error bands (F-15); micro-counts (F-16)</td>
+                </tr>
+                <tr>
+                  <td>Web client cannot drive peripherals</td>
+                  <td>Browsers expose no raw TCP/SPP/USB</td>
+                  <td>Device bridge (N-12); native shell where hardware is required</td>
+                </tr>
+                <tr>
+                  <td>Cross-tenant knowledge leakage</td>
+                  <td>OWASP LLM08:2025</td>
+                  <td>Enforcement below the app layer; signed JWT namespace claims; leakage tests in CI</td>
+                </tr>
+                <tr>
+                  <td>Inference cost exceeds ARPU</td>
+                  <td>₹300–800/mo realistic ceiling</td>
+                  <td>Hard per-tenant budget (N-16); tiered routing (N-17)</td>
+                </tr>
+                <tr>
+                  <td>Advisor hallucinates a financial figure</td>
+                  <td>Inherent to retrieval-based answering</td>
+                  <td>Numbers only from generated queries over the ledger (F-19); traceable claims (F-20)</td>
+                </tr>
+                <tr>
+                  <td>Compliance drift breaks invoicing</td>
+                  <td>Schema and rules changed repeatedly through 2026</td>
+                  <td>Versioned compliance packs (N-11); validate against live schema</td>
+                </tr>
+                <tr>
+                  <td>Incumbents ship the same AI layer</td>
+                  <td>Tote at 225+ stores; Square and Shopify shipping AI</td>
+                  <td>Their constraint is the trained-operator assumption baked into their UX and price; speed matters</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 17 -->
+      <section id="decisions">
+        <div class="sec-head"><div class="sec-num">17</div><h2>Open decisions</h2></div>
+        <div class="col">
+          <p>
+            These are yours to make, and each one changes the build materially. My
+            recommendation is attached to each.
+          </p>
+        </div>
+
+        <div class="decision">
+          <h4>01 — Launch geography</h4>
+          <p>India-first and Western-first imply different products. India means GST e-invoicing, UPI, code-mixed voice, ₹300–800/month, and a fiercely competitive low-price field. The West means higher ARPU and payment-processing revenue, but Square and Toast are entrenched and the affordability constraint largely disappears.</p>
+          <p class="rec"><b>Recommendation</b> &nbsp;India-first. The affordability constraint is a feature — it forces an architecture nobody with Western ARPU would build, and that architecture travels upward into other price-sensitive markets. The reverse journey does not work.</p>
+        </div>
+
+        <div class="decision">
+          <h4>02 — Wedge feature</h4>
+          <p>Do we enter as a biller, or as a credit ledger? Khatabook's 10 million merchants came from digitising the credit book, not the bill. Billing is a bigger product; credit is an easier first yes.</p>
+          <p class="rec"><b>Recommendation</b> &nbsp;Lead with billing but ship credit in the same release, and let acquisition messaging lead with credit. It is the more urgent pain and the lower-friction install.</p>
+        </div>
+
+        <div class="decision">
+          <h4>03 — Client architecture</h4>
+          <p>The peripheral constraint forces a choice: native-first (full hardware, higher build cost per platform), web-first with a bridge (broad reach, degraded hardware story), or cross-platform with native modules.</p>
+          <p class="rec"><b>Recommendation</b> &nbsp;Cross-platform shell with a native device-bridge module. Preserves the "any device" promise without conceding hardware access.</p>
+        </div>
+
+        <div class="decision">
+          <h4>04 — Payments: facilitate or integrate?</h4>
+          <p>Becoming a payment facilitator adds a revenue stream that could subsidise near-free software — Square's entire model — but adds regulatory weight, capital requirements, and PCI scope.</p>
+          <p class="rec"><b>Recommendation</b> &nbsp;Integrate first, keep the data model facilitator-ready. Revisit once transaction volume makes the economics obvious. Note this interacts with the lending option in §12.</p>
+        </div>
+
+        <div class="decision">
+          <h4>05 — First vertical pack</h4>
+          <p>The vertical pack model needs one vertical done exceptionally well to prove domain expertise is real rather than marketing.</p>
+          <p class="rec"><b>Recommendation</b> &nbsp;Pick a genuine hybrid — a bakery-café or a sweet shop with a hot counter. It exercises retail and F&amp;B on one bill from day one, which is the architectural claim we most need to validate early.</p>
+        </div>
+
+        <div class="decision">
+          <h4>06 — Legal verification needed</h4>
+          <p>Sources conflict on DPDP penalty scale, and GST e-invoicing thresholds have moved repeatedly. Neither should be taken from secondary research.</p>
+          <p class="rec"><b>Recommendation</b> &nbsp;Commission a compliance review before the architecture freezes. Retention, consent, and residency decisions are expensive to reverse.</p>
+        </div>
+      </section>
+
+      <!-- 18 -->
+      <section id="phasing">
+        <div class="sec-head"><div class="sec-num">18</div><h2>Suggested phasing</h2></div>
+        <div class="col">
+          <p>
+            Sequenced so that each phase is independently useful to a merchant, and so the
+            riskiest assumptions get tested earliest rather than last.
+          </p>
+        </div>
+
+        <div class="phase">
+          <div class="phase-k"><span class="n">Phase 00</span><span class="t">Prove the wedge</span></div>
+          <div class="phase-b">
+            <p class="goal">Before writing production code, test the two assumptions that invalidate everything downstream.</p>
+            <p>Can photo-to-catalogue populate a real shop's inventory accurately enough to sell from? Can voice and camera input survive a genuinely noisy shop at 65+ dB? Build throwaway prototypes, take them into five real stores, and measure. If F-13 does not work, the onboarding thesis collapses and the plan changes.</p>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="phase-k"><span class="n">Phase 01</span><span class="t">Sell and remember</span></div>
+          <div class="phase-b">
+            <p class="goal">A solo operator can run their entire day on it, offline, on a phone.</p>
+            <p>Unified sellable model, the three-second sale, unknown-item capture, cash and UPI, bidirectional credit ledger, photo-to-catalogue onboarding, full offline operation, single-tenant-correct multi-tenancy. No advisor yet — but the event ledger is accumulating from day one, which is what makes the advisor possible later.</p>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="phase-k"><span class="n">Phase 02</span><span class="t">Understand the shop</span></div>
+          <div class="phase-b">
+            <p class="goal">The system starts knowing things the operator did not tell it.</p>
+            <p>Probabilistic inventory with micro-counts, invoice-driven stock-in, the first vertical pack, tenant knowledge layer, and the first proactive interventions. Compliance pack for the launch geography. The device bridge with the baseline driver set.</p>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="phase-k"><span class="n">Phase 03</span><span class="t">The consultant</span></div>
+          <div class="phase-b">
+            <p class="goal">Ask it anything about the business and get a grounded, traceable answer.</p>
+            <p>Full conversational advisory over the ledger, advisory memory, multi-store comparison and roll-up, F&amp;B routing and aggregator integration, peripheral SDK opened to third parties.</p>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="phase-k"><span class="n">Phase 04</span><span class="t">Platform</span></div>
+          <div class="phase-b">
+            <p class="goal">Vertical packs and hardware from outside the company.</p>
+            <p>Additional verticals and geographies via packs rather than code. Optionally, the financial-data business hinted at in §12 — which by this point has years of verified transaction history behind it.</p>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <footer>
+      Draft 01 · 29 August 2026 · Compiled from market research conducted August 2026.<br>
+      Figures marked with a source chip are from secondary research and are directional;
+      vendor pricing and market sizing require primary verification before external use.
+    </footer>
+
+  </main>
+</div>
