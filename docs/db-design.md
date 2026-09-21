@@ -845,10 +845,10 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM stock_movements
          WHERE batch_id = NEW.id
-           AND movement_type = 'purchase_receipt'
-           AND quantity_delta = NEW.received_quantity
+           AND movement_type = 'PURCHASED'
+           AND quantity = NEW.received_quantity
     ) THEN
-        RAISE EXCEPTION 'batch % has no matching purchase_receipt stock movement', NEW.id;
+        RAISE EXCEPTION 'batch % has no matching PURCHASED stock movement', NEW.id;
     END IF;
 
     RETURN NULL;
@@ -874,7 +874,7 @@ CREATE CONSTRAINT TRIGGER trg_inventory_batches_insert_guard
 
 ## `stock_movements`
 
-The append-only ledger behind inventory. **Stock on hand is never stored on the batch; it is the sum of movements.** This follows design principle six and F-04, and gives the consultant a real history (F-19, F-20).
+The append-only ledger behind inventory. **There is no `on_hand_quantity` column anywhere — not on the batch, not on the variant.** Stock on hand is always a `SUM()` over this table. This follows design principle six and F-04, and gives the consultant a real history (F-19, F-20).
 
 ```sql
 CREATE TABLE stock_movements (
@@ -886,37 +886,55 @@ CREATE TABLE stock_movements (
     movement_type       VARCHAR(30) NOT NULL
                             CONSTRAINT stock_movements_type_check
                             CHECK (movement_type IN (
-                                'purchase_receipt', 'sale', 'sale_return', 'adjustment', 'write_off')),
-    quantity_delta      NUMERIC(12,3) NOT NULL
-                            CONSTRAINT stock_movements_delta_nonzero_check CHECK (quantity_delta <> 0),
-    note                TEXT,
-    occurred_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_by          UUID REFERENCES users (id),
+                                'PURCHASED', 'SOLD', 'PURCHASE_RETURN', 'SALE_RETURN',
+                                'DAMAGED', 'LOST', 'INTERNAL_USE')),
+    -- always positive; movement_type alone decides direction (see the sign function below)
+    quantity            NUMERIC(12,3) NOT NULL
+                            CONSTRAINT stock_movements_quantity_positive_check CHECK (quantity > 0),
+    reference_type      VARCHAR(30)
+                            CONSTRAINT stock_movements_reference_type_check
+                            CHECK (reference_type IN (
+                                'PURCHASE_ITEM', 'SALE_ITEM', 'PURCHASE_RETURN', 'SALE_RETURN',
+                                'STOCK_ADJUSTMENT')),
+    reference_id        UUID,
+    reason              VARCHAR(500),
+    created_by          UUID NOT NULL REFERENCES users (id),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    -- direction must match the type; adjustments may go either way
-    CONSTRAINT stock_movements_sign_check CHECK (
-        (movement_type IN ('purchase_receipt', 'sale_return') AND quantity_delta > 0)
-        OR (movement_type IN ('sale', 'write_off') AND quantity_delta < 0)
-        OR movement_type = 'adjustment'
-    ),
+    -- a reference is an all-or-nothing pair; a movement may have neither (see notes)
+    CONSTRAINT stock_movements_reference_pair_check
+        CHECK ((reference_type IS NULL) = (reference_id IS NULL)),
 
-    -- store, variant and batch must all agree
+    -- store, variant and batch must all agree with each other, transitively via the batch's own FKs
     CONSTRAINT stock_movements_batch_fk
         FOREIGN KEY (tenant_id, store_id, batch_id, variant_id)
         REFERENCES inventory_batches (tenant_id, store_id, id, variant_id)
 );
 
--- a batch is received exactly once; splitting a receipt means creating another batch
-CREATE UNIQUE INDEX idx_stock_movements_one_receipt_per_batch
+-- a batch is received exactly once; a partial or split receipt means creating another batch
+CREATE UNIQUE INDEX idx_stock_movements_one_purchase_per_batch
     ON stock_movements (batch_id)
-    WHERE movement_type = 'purchase_receipt';
+    WHERE movement_type = 'PURCHASED';
 
-CREATE INDEX idx_stock_movements_batch ON stock_movements (batch_id);
+-- tenant/store/variant inventory queries (e.g. "on hand for this variant in this store")
 CREATE INDEX idx_stock_movements_variant
-    ON stock_movements (tenant_id, store_id, variant_id, occurred_at);
+    ON stock_movements (tenant_id, store_id, variant_id, created_at);
 
--- append-only: no updates, no deletes
+-- batch inventory queries (e.g. "on hand for this specific batch")
+CREATE INDEX idx_stock_movements_batch
+    ON stock_movements (tenant_id, store_id, batch_id, created_at);
+
+-- reference lookup (e.g. "every movement this sale produced") — NOT unique: PHASE 1
+-- requirement, several movements can share one reference_id (see notes)
+CREATE INDEX idx_stock_movements_reference
+    ON stock_movements (tenant_id, reference_type, reference_id)
+    WHERE reference_id IS NOT NULL;
+
+-- chronological ledger queries (e.g. a tenant-wide activity feed, or an export)
+CREATE INDEX idx_stock_movements_created_at
+    ON stock_movements (tenant_id, created_at);
+
+-- append-only: no updates, no deletes, ever — a correction is a new, compensating row
 CREATE FUNCTION stock_movements_reject_change() RETURNS TRIGGER AS $$
 BEGIN
     RAISE EXCEPTION 'stock_movements is append-only; record a correcting movement instead';
@@ -928,18 +946,63 @@ CREATE TRIGGER trg_stock_movements_append_only
     FOR EACH ROW
     EXECUTE FUNCTION stock_movements_reject_change();
 
--- current stock is a projection of the ledger
+-- +1 for movement types that add stock, -1 for movement types that remove it.
+-- IMMUTABLE so it can be used in the view below, in a future generated column,
+-- or in an index, without being re-evaluated on every read.
+CREATE FUNCTION stock_movement_sign(p_movement_type VARCHAR) RETURNS SMALLINT AS $$
+BEGIN
+    RETURN CASE p_movement_type
+        WHEN 'PURCHASED'        THEN  1
+        WHEN 'SALE_RETURN'      THEN  1
+        WHEN 'SOLD'             THEN -1
+        WHEN 'PURCHASE_RETURN'  THEN -1
+        WHEN 'DAMAGED'          THEN -1
+        WHEN 'LOST'             THEN -1
+        WHEN 'INTERNAL_USE'     THEN -1
+        ELSE NULL
+    END;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- current stock is a projection of the ledger, never a stored fact
 CREATE VIEW batch_stock_on_hand WITH (security_invoker = true) AS
-SELECT tenant_id, store_id, variant_id, batch_id, SUM(quantity_delta) AS on_hand
+SELECT tenant_id, store_id, variant_id, batch_id,
+       SUM(quantity * stock_movement_sign(movement_type)) AS on_hand
   FROM stock_movements
  GROUP BY tenant_id, store_id, variant_id, batch_id;
 ```
 
-- **No `updated_at`, no updates, no deletes.** Mistakes are fixed by a compensating `adjustment`, never by editing history. Production should also `REVOKE UPDATE, DELETE, TRUNCATE` on this table from the application role, as a second line of defence behind the trigger.
-- **Receipt is part of the foundation.** Every batch must have exactly one `purchase_receipt` movement equal to its `received_quantity`. The deferred trigger on `inventory_batches` enforces this, so on-hand can never disagree with what was received.
-- **Negative on-hand is allowed, on purpose.** Nothing stops a `sale` movement from taking a batch below zero. That follows "never block a sale" (principle one) and F-15 (stock is an estimate). The system flags the drift for a micro-count (F-16) instead of refusing the sale.
-- **Phase 1 movement types** are the five above. Transfers (paired out/in rows) are added when multi-store stock arrives. A `sale` movement will gain a foreign key to its order line when orders exist; that column is added then, not stubbed now.
+### Notes
+
+- **`quantity` is always positive.** Every row's `CHECK (quantity > 0)` is unconditional — there is no signed delta column. Direction comes entirely from `movement_type`, via `stock_movement_sign()`:
+  - **Adds stock:** `PURCHASED`, `SALE_RETURN`
+  - **Removes stock:** `SOLD`, `PURCHASE_RETURN`, `DAMAGED`, `LOST`, `INTERNAL_USE`
+  - This is deliberately simpler than an application-supplied signed delta: the direction is a property of the *type*, not something each caller can get backwards. A caller only ever writes "10 units, `SOLD`", never "-10 units."
+- **No `updated_at`, no updates, no deletes — enforced twice.** The `BEFORE UPDATE OR DELETE` trigger rejects every attempt at the row level; production should also `REVOKE UPDATE, DELETE, TRUNCATE` on this table from the application role, as a second line of defence. A posting mistake is fixed by inserting a new row with the opposite-direction movement type (e.g. a wrongly posted `SOLD` is corrected with a `SALE_RETURN`, or a wrongly posted `DAMAGED` with a manually justified `PURCHASE`-side adjustment through `STOCK_ADJUSTMENT`), never by touching the original row. History is never rewritten, so an audit trail and a stock count always agree with what was actually posted.
+- **`reference_type` + `reference_id` trace a movement back to the business transaction that caused it** — a purchase line, a sale line, a return document, or a manual stock adjustment. Phase 1's values: `PURCHASE_ITEM`, `SALE_ITEM`, `PURCHASE_RETURN`, `SALE_RETURN`, `STOCK_ADJUSTMENT`. The pair is polymorphic (it can point at rows in different tables depending on `reference_type`), so — like `membership_store_access`'s cross-table tenant check — it cannot be a real foreign key; the application is responsible for `reference_id` actually existing in the table `reference_type` names, scoped to the same `tenant_id`.
+- **`reference_id` is intentionally *not* unique**, globally or per tenant. One business transaction routinely produces several movement rows — a sale with three line items posts three `SOLD` movements against the same `SALE_ITEM` reference (one per batch/variant, since each item may draw from a different batch); a multi-line purchase receipt posts one `PURCHASED` movement per batch, all sharing the same `reference_id` when it identifies the purchase rather than the line. `idx_stock_movements_reference` is a plain (non-unique) index for exactly this "fetch every movement this transaction produced" query.
+- **`reference_type`/`reference_id` are both optional together.** Some movements — a shrinkage write-off, a stock take done by feel rather than a formal `STOCK_ADJUSTMENT` record — have no upstream document to point at. `reason` (free text) carries the justification instead. The pair-check constraint only guarantees the two columns move together: never a `reference_type` with no `reference_id` or vice versa.
+- **Receipt is part of the foundation.** Every batch must have exactly one `PURCHASED` movement equal to its `received_quantity` — enforced by the deferred trigger on `inventory_batches` (which checks `movement_type = 'PURCHASED' AND quantity = received_quantity`) and by `idx_stock_movements_one_purchase_per_batch`, so on-hand can never disagree with what was received. A supplier return against that stock is a separate `PURCHASE_RETURN` row, not an edit to the receipt.
+- **Negative on-hand is allowed, on purpose.** Nothing stops a `SOLD` movement from taking a batch below zero. That follows "never block a sale" (principle one) and F-15 (stock is an estimate). The system flags the drift for a micro-count (F-16) instead of refusing the sale.
+- **`created_by` is required** (`NOT NULL`), unlike most other tables' optional audit columns — every ledger entry must be attributable to the user or system actor that posted it, since a ledger with anonymous entries is not auditable.
+- **Only `created_at`, no separate `occurred_at`.** Phase 1 movements are posted synchronously with the event that causes them (a sale, a receipt, a manual adjustment) — there is no back-dating or batch-imported history yet, so "when it was recorded" and "when it happened" are the same instant. If a future need for back-dated or batch-imported movements arises, add `occurred_at` then rather than carrying an unused column now.
+- **Phase 1 movement types are the seven above.** No F&B-specific types (e.g. recipe consumption) and no multi-store transfer types yet — both are additive migrations (new `CHECK` values, new `reference_type` values), not redesigns of this table. Batch splitting is similarly additive: it needs a new movement type or two, not a change to the columns here, which is why `quantity`/`movement_type`/`reference_type` are kept as open-ended, migratable `CHECK`-based enums rather than baked into the table shape.
+- **No serialized unit tracking.** This ledger moves quantities of a batch, never individual serialized units — that is a future `stock_units` table beneath batches (see "Future path" below), not a Phase 1 concern.
 - **Performance:** the view is the definition, not the final mechanism. When ledgers grow, keep a cached balance table maintained from the ledger (a projection, per F-04), and treat the ledger as the source of truth.
+
+### Why an append-only ledger, not a mutable `on_hand_quantity`
+
+A mutable `on_hand_quantity` column (on `inventory_batches` or anywhere else) is a **cache with no history**: every write clobbers the previous value, so there is no way to answer "what was on hand last Tuesday," "why did stock drop by 3," or "did the count match what we sold" after the fact. It also creates a second source of truth that a ledger-based system must keep in sync by hand — every sale, return, receipt and adjustment would need to update both the ledger *and* the counter in the same transaction, and any missed or double-applied update silently drifts the counter away from reality with no way to detect or repair it except a manual recount.
+
+An append-only ledger avoids this by construction:
+
+- **On-hand is always a query, never a stored fact.** `SUM(quantity * sign)` over `stock_movements` *is* the on-hand quantity — there is nothing to keep in sync, because there is only one number and it is derived, not duplicated.
+- **Every change is self-explanatory.** Each row carries what changed (`movement_type`, `quantity`), why (`reference_type`/`reference_id` or `reason`), and who (`created_by`) and when (`created_at`) — a full audit trail comes for free, rather than needing a separate audit-log table shadowing the counter.
+- **Corrections are visible, not silent.** Fixing a mistake means posting a new compensating row, so the ledger shows both the error and its correction — a mutable counter would just show the "fixed" number with no trace that anything was ever wrong.
+- **Concurrency is safe by default.** Two concurrent sales each insert their own row; there is no read-modify-write race on a shared counter (`UPDATE ... SET on_hand = on_hand - N`) under concurrent load, which is exactly the kind of race that produces phantom stock or impossible negative counts with no record of how it happened.
+- **It matches how the rest of this schema already works.** `inventory_batches.received_quantity` is immutable, purchases and purchase lines freeze after receipt, memberships are removed rather than edited into invisibility — a mutable running total on inventory would be the one place in the schema where history is thrown away instead of appended to.
+
+The tradeoff is read cost: `SUM()` over a growing table is more expensive than reading one column. That is a solved, well-understood problem (a materialized/cached projection maintained from the ledger, see "Performance" above) and is strictly better than the alternative, where the *cheap* read is also the *wrong* one.
 
 Example queries:
 
@@ -957,6 +1020,19 @@ SELECT variant_id, SUM(on_hand) AS on_hand
   FROM batch_stock_on_hand
  WHERE tenant_id = $1 AND store_id = $2
  GROUP BY variant_id;
+
+-- every movement a given sale produced (reference lookup, e.g. for a receipt/audit screen)
+SELECT *
+  FROM stock_movements
+ WHERE tenant_id = $1 AND reference_type = 'SALE_ITEM' AND reference_id = $2
+ ORDER BY created_at;
+
+-- chronological ledger for a store (activity feed / export)
+SELECT *
+  FROM stock_movements
+ WHERE tenant_id = $1 AND store_id = $2
+ ORDER BY created_at DESC
+ LIMIT 100;
 ```
 
 ---
@@ -969,7 +1045,7 @@ These four are easy to blur and must stay separate.
 |---|---|---|---|
 | **Selling price** | `variants.base_price` | What a customer pays for this variant | Yes (price changes; history table later) |
 | **Purchase cost** | `purchase_items.unit_cost` (the deal) and `inventory_batches.unit_cost` (cost basis of the stock) | What we paid the supplier | Line: only while the purchase is open. Batch: never |
-| **Inventory quantity** | `inventory_batches.received_quantity` (how many arrived) and `SUM(stock_movements.quantity_delta)` (how many are here now) | Units received vs units on hand | `received_quantity`: never. On-hand: only by adding movements |
+| **Inventory quantity** | `inventory_batches.received_quantity` (how many arrived) and `SUM(stock_movements.quantity * stock_movement_sign(movement_type))` (how many are here now) | Units received vs units on hand | `received_quantity`: never. On-hand: only by adding movements, never stored |
 | **Barcode** | `inventory_batches.barcode` | Identifies one batch of physical stock, and through it the variant and its cost basis | Never |
 
 Because price sits on the variant and cost sits on the purchase line and batch, two batches of the same variant can have different costs while every customer still sees one selling price.
@@ -996,9 +1072,12 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 |---|---|
 | Create a product | 1 `sellables` + ≥1 `variants` |
 | Record a purchase | 1 `purchases` + N `purchase_items` (header totals recomputed in the same transaction) |
-| Receive stock | Mark the purchase `received`; per batch, 1 `inventory_batches` + 1 `purchase_receipt` `stock_movements` row |
+| Receive stock | Mark the purchase `received`; per batch, 1 `inventory_batches` + 1 `PURCHASED` `stock_movements` row (`reference_type='PURCHASE_ITEM'`) |
 | Same variant bought at a new cost | A new purchase line and a new batch with its own barcode. Nothing existing changes |
-| Correct a miscount | 1 `adjustment` movement |
+| Sell stock | 1 `SOLD` `stock_movements` row per batch drawn from (`reference_type='SALE_ITEM'`) |
+| Customer returns a sale | 1 `SALE_RETURN` `stock_movements` row (`reference_type='SALE_RETURN'`) |
+| Return stock to a supplier | 1 `PURCHASE_RETURN` `stock_movements` row (`reference_type='PURCHASE_RETURN'`) |
+| Correct a miscount, damage or loss | 1 `DAMAGED` / `LOST` / `INTERNAL_USE` `stock_movements` row, optionally against a `STOCK_ADJUSTMENT` reference |
 
 ### Future path (not Phase 1)
 
@@ -1021,11 +1100,12 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 - **Phase 1 catalogue has no sharing.** `sellables.store_id` replaces the earlier tenant-level `sellables` with `source_store_id`, and `store_sellables` is removed. Sharing, `store_variants` and store-level pricing are deferred; the migration path is `store_id` → `source_store_id` plus a link table. This supersedes the earlier "no tenant-level catalogue entity" and "source store is always linked" decisions.
 - **Selling price is on the variant.** `variants.base_price` replaces `sellables.base_price`, because variants of one sellable can be priced differently. Purchase cost never lives on `variants`.
 - **`tenant_id` on every tenant-owned table, with composite FKs.** Parents expose `UNIQUE (tenant_id, ...)` keys and children reference `(tenant_id, parent_id)` pairs, so the database rejects any cross-tenant reference. `membership_store_access` is the one table that still relies on an application-level same-tenant check.
-- **Inventory is append-only.** `inventory_batches.received_quantity` is immutable, and on-hand is the sum of `stock_movements`, which cannot be updated or deleted. `stock_movements` is part of the Phase 1 foundation, not an afterthought. Negative on-hand is deliberately allowed, so a sale is never blocked by an inaccurate count.
+- **Inventory is append-only.** `inventory_batches.received_quantity` is immutable, and on-hand is the sum of `stock_movements`, which cannot be updated or deleted — no `on_hand_quantity` column exists anywhere as a mutable source of truth. `stock_movements` is part of the Phase 1 foundation, not an afterthought. Negative on-hand is deliberately allowed, so a sale is never blocked by an inaccurate count.
+- **`stock_movements.quantity` is unsigned; direction comes from `movement_type`.** Seven Phase 1 types (`PURCHASED`, `SOLD`, `PURCHASE_RETURN`, `SALE_RETURN`, `DAMAGED`, `LOST`, `INTERNAL_USE`) each map to a fixed sign via `stock_movement_sign()`, rather than trusting each caller to supply a correctly-signed delta. `reference_type`/`reference_id` trace a movement back to its originating transaction and are deliberately not unique, since one transaction (a multi-line sale, a multi-batch receipt) can post several movements against the same reference.
 - **A purchase line may be split into several batches.** The rule is that batch `received_quantity` totals may not exceed the line's `quantity`; it is not an equality, so partial receipts and future batch splitting are valid.
 - **`kind` is a coarse discriminator only.** `product` / `service` says whether stock can exist. Capabilities (F-01 facets) will be modelled as separate optional tables and are not replaced by `kind`.
 - **Purchases and their history are frozen after receipt.** Lines are editable only while a purchase is `draft` or `ordered`; `received` and `cancelled` are terminal. Header totals are verified against the lines at commit.
 
 ## Up next
 
-Orders (F-02's state machine) now have something to sell, and their `sale` lines will reference batches through new `stock_movements` links. Facet tables and store-level pricing follow once the order model is settled.
+Orders (F-02's state machine) now have something to sell, and their order lines will post `SOLD` `stock_movements` rows against batches, tagged `reference_type='SALE_ITEM'`. Facet tables and store-level pricing follow once the order model is settled.
