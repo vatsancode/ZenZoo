@@ -342,8 +342,8 @@ Purchase → Purchase Item → Variant
 
 - `tenant_id` is an explicit column on every table, for RLS (N-05), composite foreign keys and tenant-scoped uniqueness. Tenant isolation is not left to a join through `stores`.
 - Each parent exposes a `UNIQUE (tenant_id, ...)` key, and each child references `(tenant_id, parent_id)`. The database therefore rejects any row that points at another tenant's parent.
-- Soft-delete via a terminal `status`, no `deleted_at`, as elsewhere. The two exceptions are draft purchase lines (working data, deletable while the purchase is open) and `stock_movements` (never deleted, never updated).
-- Money is `NUMERIC(12,2)` per unit and `NUMERIC(14,2)` for totals. Quantities are `NUMERIC(12,3)`, so weighed goods need no later migration. Amounts are in the store's currency (`COALESCE(stores.currency, tenants.default_currency)`).
+- Soft-delete via a terminal `status`, no `deleted_at`, as elsewhere. The exceptions are draft purchase lines (working data, deletable while the purchase is open), `stock_movements` (never deleted, never updated), and `inventory_batches` (no `status` column at all — see its notes).
+- Money is `NUMERIC(12,2)` per unit and `NUMERIC(14,2)` for totals. Line-item quantities (`purchase_items.quantity`) are `NUMERIC(12,3)`, so a future weighed/fractional purchase line needs no migration. Batch and ledger quantities (`inventory_batches.received_quantity`/`available_quantity`, `stock_movements.quantity`) are `INTEGER` — Phase 1 physical stock is whole units only. Amounts are in the store's currency (`COALESCE(stores.currency, tenants.default_currency)`).
 
 ---
 
@@ -401,6 +401,8 @@ CREATE TABLE sellables (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT sellables_tenant_id_id_unique UNIQUE (tenant_id, id),
+    -- target for variants: keeps a variant in the same tenant AND store as its sellable
+    CONSTRAINT sellables_tenant_store_id_unique UNIQUE (tenant_id, store_id, id),
     CONSTRAINT sellables_store_fk
         FOREIGN KEY (tenant_id, store_id) REFERENCES stores (tenant_id, id)
 );
@@ -439,12 +441,13 @@ CREATE TRIGGER trg_sellables_prevent_identity_change
 
 ## `variants`
 
-A specific version of a sellable, and **the level that is stocked, priced and sold** (**`sellables 1:N variants`**). Example: `Silk Saree → Red/6m, Blue/6m, Green/6m`.
+A specific version of a sellable, and **the level that is stocked, priced and sold** (**`sellables 1:N variants`**). Example: `Silk Saree → Red/6m, Blue/6m, Green/6m`. **This is also the level the product-creation UX is built around** — a variant carries its own name, SKU and selling price; the sellable itself never asks for a price (see notes).
 
 ```sql
 CREATE TABLE variants (
     id                  UUID PRIMARY KEY DEFAULT uuidv7(),
     tenant_id           UUID NOT NULL REFERENCES tenants (id),
+    store_id            UUID NOT NULL,
     sellable_id         UUID NOT NULL,
     name                VARCHAR(200) NOT NULL,
     sku                 VARCHAR(64),
@@ -458,8 +461,13 @@ CREATE TABLE variants (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT variants_tenant_id_id_unique UNIQUE (tenant_id, id),
+    -- target for inventory_batches: keeps a batch in the same tenant AND store as its variant
+    CONSTRAINT variants_tenant_store_id_unique UNIQUE (tenant_id, store_id, id),
+    -- tenant AND store must match the parent sellable — a variant cannot silently drift to
+    -- another store's sellable, even though store_id is stored again here for speed
     CONSTRAINT variants_sellable_fk
-        FOREIGN KEY (tenant_id, sellable_id) REFERENCES sellables (tenant_id, id)
+        FOREIGN KEY (tenant_id, store_id, sellable_id)
+        REFERENCES sellables (tenant_id, store_id, id)
 );
 
 -- SKU is optional (the system can fill it in later, per "never block a sale"),
@@ -469,6 +477,7 @@ CREATE UNIQUE INDEX idx_variants_tenant_sku_unique
     WHERE sku IS NOT NULL;
 
 CREATE INDEX idx_variants_sellable ON variants (tenant_id, sellable_id);
+CREATE INDEX idx_variants_store ON variants (tenant_id, store_id);
 
 CREATE TRIGGER trg_variants_set_updated_at
     BEFORE UPDATE ON variants
@@ -477,8 +486,10 @@ CREATE TRIGGER trg_variants_set_updated_at
 
 CREATE FUNCTION variants_prevent_parent_change() RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW.tenant_id <> OLD.tenant_id OR NEW.sellable_id <> OLD.sellable_id THEN
-        RAISE EXCEPTION 'variants tenant_id and sellable_id are immutable (variant %)', OLD.id;
+    IF NEW.tenant_id <> OLD.tenant_id
+       OR NEW.store_id <> OLD.store_id
+       OR NEW.sellable_id <> OLD.sellable_id THEN
+        RAISE EXCEPTION 'variants tenant_id, store_id and sellable_id are immutable (variant %)', OLD.id;
     END IF;
     RETURN NEW;
 END;
@@ -491,8 +502,10 @@ CREATE TRIGGER trg_variants_prevent_parent_change
 ```
 
 - **`base_price` is the selling price and lives on the variant**, because Red/6m and a plain 3m variant can be priced differently. It is the master selling price for Phase 1; a later store-level override would sit on top of it without changing this column.
-- **`name`** is the human label ("Red / 6m"). Structured option axes (colour, size) are a future `variant_options` design using real tables, not a JSONB blob.
+- **Variant-first commercial UX.** A variant is created with its own name, SKU, attributes and `base_price` — the sellable is the umbrella grouping ("Silk Saree") and is never asked for a price. `Red/6m → ₹2,000`, `Blue/6m → ₹2,300`, `Green/6m → ₹1,900` are three variant rows under one sellable, each independently priced.
+- **`name`** is the human label ("Red / 6m") and today doubles as where free-text "attributes" (colour, size, etc.) live. Structured option axes as their own columns are a future `variant_options` design using real tables, not a JSONB blob — that decision is unchanged by variant-first UX; the UX is about *where the user enters the data*, not about how it is normalised in the schema.
 - **`sku`** is unique per tenant. Manufacturer barcodes (EAN) are a separate future `variant_barcodes` table; the barcode on `inventory_batches` is something else (see the comparison table below).
+- **`store_id` is denormalised from the sellable, on purpose** — same pattern as `purchase_items.store_id`. It exists so `inventory_batches` (and any future table hanging off a variant) can enforce tenant/store consistency with a direct composite FK, instead of only transitively through a join to `sellables`. The composite `variants_sellable_fk` still ties `store_id` to the parent sellable's own store, so the two can never disagree — this is not a second, independently-editable store assignment.
 
 ---
 
@@ -740,6 +753,7 @@ CREATE CONSTRAINT TRIGGER trg_purchase_items_totals_guard
 
 - **`unit_cost` is what we paid the supplier.** It is never copied into `variants.base_price`, and nothing reads it as a selling price.
 - **`line_total = round(quantity × unit_cost − discount + tax, 2)`**, enforced by `CHECK`. `discount_amount` and `tax_amount` are absolute amounts for the whole line, not per unit or percentages, so the application computes them (tax rules belong to the compliance pack, N-11).
+- **`tax_amount` here is *purchase* tax — tax paid to the supplier — and it stays scoped to this table.** There is no generic, shared `tax` concept anywhere in this schema: purchasing and sales are different transactions with different tax treatment (input tax vs. output tax), so a future `sale_items` table gets its own `sales_tax_amount` column, never a column shared with `purchase_items`. Neither concept lives on `inventory_batches`, which only ever stores acquisition cost (`unit_cost`) — see that table's notes.
 - **`store_id` is denormalised on purpose.** It exists so a composite FK can force a line into the same store as its purchase, and so batches can inherit that store.
 - The variant guard checks store and kind at write time. When sharing arrives, this one trigger is what gets relaxed.
 
@@ -747,7 +761,9 @@ CREATE CONSTRAINT TRIGGER trg_purchase_items_totals_guard
 
 ## `inventory_batches`
 
-Stock received through purchasing, tracked **per batch** with one barcode per batch (**`stores 1:N`**, **`variants 1:N`**, **`purchase_items 1:N inventory_batches`**). Phase 1 does not track individual units.
+Stock received through purchasing, tracked **per batch** with one barcode per batch (**`stores 1:N`**, **`variants 1:N`**, **`purchase_items 1:N inventory_batches`**). Phase 1 does not track individual units, and Phase 1 inventory quantities are **whole numbers** — no fractional units at the batch level.
+
+**This table is the fast, operational read path for "how much of this is here right now."** It holds `available_quantity`, a running balance maintained transactionally from `stock_movements` (see the trigger below and "Batch balance vs. the ledger" further down) — the immutable ledger remains the append-only source of truth for *what happened*, but the batch row is where the barcode scanner and the POS actually read *current stock* from, because summing the whole ledger on every scan does not scale.
 
 ```sql
 CREATE TABLE inventory_batches (
@@ -757,15 +773,18 @@ CREATE TABLE inventory_batches (
     variant_id          UUID NOT NULL,
     purchase_item_id    UUID NOT NULL,
     barcode             VARCHAR(64) NOT NULL,
-    received_quantity   NUMERIC(12,3) NOT NULL
+    -- how many arrived — immutable, whole units only
+    received_quantity   INTEGER NOT NULL
                             CONSTRAINT inventory_batches_received_quantity_check
                             CHECK (received_quantity > 0),
+    -- how many are here now — mutable, maintained ONLY by the stock_movements trigger below
+    available_quantity  INTEGER NOT NULL DEFAULT 0
+                            CONSTRAINT inventory_batches_available_quantity_check
+                            CHECK (available_quantity >= 0),
+    -- acquisition cost basis for inventory valuation. No tax field here — see notes
     unit_cost           NUMERIC(12,2) NOT NULL
                             CONSTRAINT inventory_batches_unit_cost_check CHECK (unit_cost >= 0),
     received_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    status              VARCHAR(20) NOT NULL DEFAULT 'active'
-                            CONSTRAINT inventory_batches_status_check
-                            CHECK (status IN ('active', 'blocked', 'archived')),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -780,20 +799,31 @@ CREATE TABLE inventory_batches (
     CONSTRAINT inventory_batches_purchase_item_fk
         FOREIGN KEY (tenant_id, store_id, purchase_item_id, variant_id)
         REFERENCES purchase_items (tenant_id, store_id, id, variant_id),
+    -- tenant AND store must also match the variant directly (not only transitively via the
+    -- purchase item), now that variants carries its own store_id
     CONSTRAINT inventory_batches_variant_fk
-        FOREIGN KEY (tenant_id, variant_id) REFERENCES variants (tenant_id, id)
+        FOREIGN KEY (tenant_id, store_id, variant_id)
+        REFERENCES variants (tenant_id, store_id, id)
 );
 
+-- tenant/store/variant inventory queries (e.g. "every batch of this variant in this store")
 CREATE INDEX idx_inventory_batches_store_variant
     ON inventory_batches (tenant_id, store_id, variant_id, received_at);
+
+-- purchase-item lookup (traceability: purchase → purchase item → its batches)
 CREATE INDEX idx_inventory_batches_purchase_item ON inventory_batches (purchase_item_id);
+
+-- barcode lookup is already served by inventory_batches_tenant_barcode_unique above;
+-- batch lookup by id is already served by the primary key
 
 CREATE TRIGGER trg_inventory_batches_set_updated_at
     BEFORE UPDATE ON inventory_batches
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 
--- a batch is a receipt fact: only its status may change
+-- a batch is a receipt fact: only available_quantity (and updated_at) may change,
+-- and available_quantity itself should only ever be touched by the trigger below —
+-- see the REVOKE note
 CREATE FUNCTION inventory_batches_prevent_core_change() RETURNS TRIGGER AS $$
 BEGIN
     IF NEW.tenant_id <> OLD.tenant_id
@@ -804,7 +834,7 @@ BEGIN
        OR NEW.received_quantity <> OLD.received_quantity
        OR NEW.unit_cost <> OLD.unit_cost
        OR NEW.received_at <> OLD.received_at THEN
-        RAISE EXCEPTION 'inventory_batches are immutable except for status (batch %)', OLD.id;
+        RAISE EXCEPTION 'inventory_batches are immutable except for available_quantity (batch %)', OLD.id;
     END IF;
     RETURN NEW;
 END;
@@ -862,13 +892,19 @@ CREATE CONSTRAINT TRIGGER trg_inventory_batches_insert_guard
     EXECUTE FUNCTION trg_fn_inventory_batches_insert_guard();
 ```
 
-- **One purchase line → many batches.** The rule is *the batches' `received_quantity` together may not exceed the line's `quantity`*. It is deliberately **not** an equality. A partial receipt, or a line split into several batches (each with its own barcode), is valid. Over-receipt is rejected: if the supplier shipped 52 against an order of 50, correct the line to 52 first, so the record shows what really arrived.
+### Notes
+
+- **One purchase line → many batches.** The rule is *the batches' `received_quantity` together may not exceed the line's `quantity`*. It is deliberately **not** an equality. A partial receipt, or a line split into several batches (each with its own barcode), is valid. Over-receipt is rejected: if the supplier shipped 52 against an order of 50, correct the line to 52 first, so the record shows what really arrived. `purchase_item_id` stays a plain (non-unique) FK for exactly this reason — one purchase item can and will produce more than one batch.
 - **Same variant, different costs.** `Red Silk Saree / 6m` can have Batch A (50 units at ₹1,500, barcode A) and Batch B (30 units at ₹1,650, barcode B). They are different rows under the same `variant_id`, each with its own barcode and cost basis.
-- **`unit_cost` on the batch is the cost basis of that stock.** It starts as the purchase line's cost and is immutable. It is a separate column because the effective cost per unit can later include allocated discount, tax or freight, and because margin and cost-of-goods reporting must never depend on a line that could be edited.
-- **`received_quantity` is immutable**: it is how many units arrived, not how many remain. On-hand is derived from `stock_movements`.
-- **`barcode`** is a store-issued label for this batch, unique per tenant (never global, so two tenants cannot collide). Scanning it identifies the batch and, through it, the variant and the cost basis.
-- **`status`**: `active` (sellable), `blocked` (held out of sale: damaged, recalled), `archived` (terminal). "Sold out" is not a status. It is the ledger summing to zero.
+- **`unit_cost` on the batch is the cost basis of that stock, and only that.** It starts as the purchase line's cost and is immutable. It is a separate column from `purchase_items.unit_cost` because the effective cost per unit can later include allocated discount, tax or freight, and because margin and cost-of-goods reporting must never depend on a line that could be edited. **No purchase-tax or sales-tax field lives here** — tax is a transaction-side concept (`purchase_items.tax_amount` today, a future `sale_items.sales_tax_amount`), and the batch tracks acquisition cost for valuation, not tax. If inventory valuation is ever demonstrated to need a tax-inclusive cost basis, that is a deliberate follow-up decision, not a default.
+- **`received_quantity` is immutable and whole-number only**: it is how many units arrived, not how many remain, and Phase 1 does not support fractional batch quantities (weighed goods are a future facet, not modelled yet). `purchase_items.quantity` upstream stays `NUMERIC(12,3)` for that future — a batch is still always created with a whole-number `received_quantity`, which is the boundary where "a line can in principle be fractional" meets "a physical batch on a shelf cannot" in Phase 1.
+- **`available_quantity` is the current operational balance, and the *only* mutable column on this table.** It starts at `0` and is changed **exclusively** by the `stock_movements` trigger described in that table's section below — never by a direct application `UPDATE`. A batch's first `PURCHASED` movement is what brings it from `0` up to `received_quantity`, using the exact same code path as every later `SOLD`, `DAMAGED`, `SALE_RETURN`, etc. — there is deliberately no special-cased "set available_quantity at batch creation" logic. See "Batch balance vs. the ledger" under `stock_movements` for why this can't drift from the ledger, and why `CHECK (available_quantity >= 0)` is a real, enforced backstop rather than a hopeful comment.
+- **`REVOKE` is the second line of defence for `available_quantity`, same idiom as `stock_movements`.** `trg_inventory_batches_prevent_core_change` stops every column except `available_quantity` (and `updated_at`) from changing, but it cannot by itself distinguish a legitimate trigger-driven update from a direct application `UPDATE ... SET available_quantity = ...` that bypasses the ledger — both arrive as an ordinary `UPDATE` statement. Production should `REVOKE UPDATE (available_quantity) ON inventory_batches FROM <app_role>` (Postgres supports column-level privileges), so the application role can no longer write that column at all; `trg_fn_stock_movements_apply_to_batch` keeps working because trigger functions execute with the privileges of the function's owner, not the invoking role.
+- **`barcode`** is a store-issued label unique per tenant (never global, so two tenants cannot collide), and is expected to encode a human-readable variant reference plus a unique batch reference — e.g. `VAR-RED-00001` for a batch of the "Red" variant. **This encoding is presentational only.** The database never parses `barcode` to derive `variant_id` or the batch's own `id` — both are stored as real columns and are what every join, constraint and query actually uses. Scanning a barcode is a lookup by the unique `(tenant_id, barcode)` index, which returns the row; the row's own `variant_id` (and, through it, cost and selling price) is what the application reads next.
+- **No `status` column.** The previous `active` / `blocked` / `archived` states are superseded by `available_quantity`: "sold out" is `available_quantity = 0`, and a `DAMAGED`/`LOST` movement already removes damaged or lost stock from `available_quantity` directly, so those units stop being sellable without a separate "blocked" flag. A distinct "held out of sale but not damaged/lost" state (e.g. a recall on stock that is otherwise fine) is not modelled in Phase 1; if that need shows up, it is an additive column, not a redesign.
+- **`available_quantity` is not clamped to `received_quantity` — only the floor is enforced.** Nothing prevents `available_quantity` from exceeding `received_quantity` if, say, a `SALE_RETURN` is posted incorrectly; that's a data-entry mistake to catch (e.g. via the reconciliation query above, or an application-level sanity check) and correct with a compensating movement, not a scenario the schema hard-forbids. The floor is different: `CHECK (available_quantity >= 0)` is a hard, transaction-failing constraint (see "Batch balance vs. the ledger"), because going negative means the physical scan/sale that triggered it cannot actually be fulfilled — an asymmetry that matches the real-world asymmetry between "can't sell what isn't there" and "a return was probably just logged against the wrong batch."
 - Batches can only be created against a `received` purchase, so history and stock cannot drift.
+- **Future batch splitting** (not implemented in Phase 1) takes one existing batch's `available_quantity` and divides it into several new whole-number batches that preserve `variant_id` (and, for provenance, `purchase_item_id`, since the goods still trace back to the same original purchase line). This needs at least a way to link a child batch back to the batch it was split from — most likely a nullable `parent_batch_id` self-reference added later, plus a new `stock_movements` movement type (or pair of types) to record the split as ledger events, exactly the way "Phase 1 movement types are open-ended, migratable `CHECK` values" already anticipates. Nothing in this table's current shape blocks that migration.
 
 ---
 
@@ -888,8 +924,9 @@ CREATE TABLE stock_movements (
                             CHECK (movement_type IN (
                                 'PURCHASED', 'SOLD', 'PURCHASE_RETURN', 'SALE_RETURN',
                                 'DAMAGED', 'LOST', 'INTERNAL_USE')),
-    -- always positive; movement_type alone decides direction (see the sign function below)
-    quantity            NUMERIC(12,3) NOT NULL
+    -- always positive, whole units only; movement_type alone decides direction (see the sign
+    -- function below) — matches inventory_batches, which is also integer-quantity in Phase 1
+    quantity            INTEGER NOT NULL
                             CONSTRAINT stock_movements_quantity_positive_check CHECK (quantity > 0),
     reference_type      VARCHAR(30)
                             CONSTRAINT stock_movements_reference_type_check
@@ -963,12 +1000,35 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
--- current stock is a projection of the ledger, never a stored fact
+-- current stock is a projection of the ledger, never a stored fact — kept as the
+-- reconciliation/audit path; inventory_batches.available_quantity is the fast operational path
 CREATE VIEW batch_stock_on_hand WITH (security_invoker = true) AS
 SELECT tenant_id, store_id, variant_id, batch_id,
        SUM(quantity * stock_movement_sign(movement_type)) AS on_hand
   FROM stock_movements
  GROUP BY tenant_id, store_id, variant_id, batch_id;
+
+-- every posted movement immediately (same transaction, not deferred) applies itself to its
+-- batch's operational balance — this is the ONLY code path allowed to change
+-- inventory_batches.available_quantity; see the REVOKE note below
+CREATE FUNCTION trg_fn_stock_movements_apply_to_batch() RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE inventory_batches
+       SET available_quantity = available_quantity
+                                 + (NEW.quantity * stock_movement_sign(NEW.movement_type))
+     WHERE id = NEW.batch_id
+       AND tenant_id = NEW.tenant_id
+       AND store_id = NEW.store_id
+       AND variant_id = NEW.variant_id;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_stock_movements_apply_to_batch
+    AFTER INSERT ON stock_movements
+    FOR EACH ROW
+    EXECUTE FUNCTION trg_fn_stock_movements_apply_to_batch();
 ```
 
 ### Notes
@@ -982,43 +1042,52 @@ SELECT tenant_id, store_id, variant_id, batch_id,
 - **`reference_id` is intentionally *not* unique**, globally or per tenant. One business transaction routinely produces several movement rows — a sale with three line items posts three `SOLD` movements against the same `SALE_ITEM` reference (one per batch/variant, since each item may draw from a different batch); a multi-line purchase receipt posts one `PURCHASED` movement per batch, all sharing the same `reference_id` when it identifies the purchase rather than the line. `idx_stock_movements_reference` is a plain (non-unique) index for exactly this "fetch every movement this transaction produced" query.
 - **`reference_type`/`reference_id` are both optional together.** Some movements — a shrinkage write-off, a stock take done by feel rather than a formal `STOCK_ADJUSTMENT` record — have no upstream document to point at. `reason` (free text) carries the justification instead. The pair-check constraint only guarantees the two columns move together: never a `reference_type` with no `reference_id` or vice versa.
 - **Receipt is part of the foundation, but the ledger itself does not enforce "exactly one."** Every batch must have at least one `PURCHASED` movement equal to its `received_quantity` — enforced by the deferred trigger on `inventory_batches` (which checks `movement_type = 'PURCHASED' AND quantity = received_quantity`), so a batch can never exist without a matching receipt in the ledger. There is deliberately **no uniqueness constraint** tying a batch to a single `PURCHASED` row: that would couple the ledger's shape to the current purchase workflow. Purchase-receipt integrity (a batch is received exactly once today) is a rule of the *purchasing* workflow, enforced there; the ledger's job is only to record what happened, not to police how many times a given business process is allowed to write to it. This also keeps the door open for a batch to legitimately gain more `PURCHASED` rows later (e.g. a correction, or a future batch-split flow) without a schema change.
-- **Negative on-hand is allowed, on purpose.** Nothing stops a `SOLD` movement from taking a batch below zero. That follows "never block a sale" (principle one) and F-15 (stock is an estimate). The system flags the drift for a micro-count (F-16) instead of refusing the sale.
+- **Batch balance vs. the ledger: every insert applies itself, in the same transaction, by construction.** `trg_stock_movements_apply_to_batch` fires `AFTER INSERT` (not deferred) and updates the matching batch's `available_quantity` before the statement completes. Because that update is subject to `inventory_batches`' `CHECK (available_quantity >= 0)`, a movement that would take a batch's balance negative makes the **whole transaction fail** — the `stock_movements` row is never actually committed either. This is a deliberate reversal from the ledger-only design: on-hand is no longer allowed to drift negative as an "estimate" the way a pure `SUM()`-based ledger could. `available_quantity >= 0` is the validation named in the stock-movement integration requirements ("validate sufficient available stock where applicable"), enforced uniformly for every movement type via one `CHECK`, rather than bespoke per-type application logic. The application should still pre-check `available_quantity` before attempting the insert for a good error message — the `CHECK` is the non-negotiable backstop, not the primary UX.
 - **`created_by` is required** (`NOT NULL`), unlike most other tables' optional audit columns — every ledger entry must be attributable to the user or system actor that posted it, since a ledger with anonymous entries is not auditable.
 - **`occurred_at` (business time) and `created_at` (record time) are both kept, and can diverge.** Inventory movements are financial/operational history, and delayed entry, corrections and future imports are plausible — a cashier fixing yesterday's miscount today should be able to say the event happened yesterday even though the row is inserted now. `occurred_at` defaults to `now()` for the common synchronous case (a sale posts its movement at the moment of sale) but the application may set it explicitly for a backdated or imported entry. `created_at` is never backdated — it is strictly "when this row entered the table," which is what the append-only/audit guarantees above are actually about. Chronological ledger and inventory-query indexes are built on `occurred_at`, since that is the axis a ledger reader cares about; `created_at` remains for audit ordering ("what did we actually insert, and in what order").
 - **Phase 1 movement types are the seven above.** No F&B-specific types (e.g. recipe consumption) and no multi-store transfer types yet — both are additive migrations (new `CHECK` values, new `reference_type` values), not redesigns of this table. Batch splitting is similarly additive: it needs a new movement type or two, not a change to the columns here, which is why `quantity`/`movement_type`/`reference_type` are kept as open-ended, migratable `CHECK`-based enums rather than baked into the table shape.
 - **No serialized unit tracking.** This ledger moves quantities of a batch, never individual serialized units — that is a future `stock_units` table beneath batches (see "Future path" below), not a Phase 1 concern.
-- **Performance:** the view is the definition, not the final mechanism. When ledgers grow, keep a cached balance table maintained from the ledger (a projection, per F-04), and treat the ledger as the source of truth.
+- **Performance is no longer a "later" problem for the common read.** `inventory_batches.available_quantity` *is* the cached/projected balance this section previously described as a future optimisation — it now exists from Phase 1, trigger-maintained so it cannot silently drift out of sync with the ledger. `batch_stock_on_hand` (the `SUM()` view) remains for reconciliation, audit and "does the cache still agree with the ledger" checks, not as the primary read path.
 
-### Why an append-only ledger, not a mutable `on_hand_quantity`
+### Why an append-only ledger, not a mutable `on_hand_quantity` — and how `available_quantity` is different
 
-A mutable `on_hand_quantity` column (on `inventory_batches` or anywhere else) is a **cache with no history**: every write clobbers the previous value, so there is no way to answer "what was on hand last Tuesday," "why did stock drop by 3," or "did the count match what we sold" after the fact. It also creates a second source of truth that a ledger-based system must keep in sync by hand — every sale, return, receipt and adjustment would need to update both the ledger *and* the counter in the same transaction, and any missed or double-applied update silently drifts the counter away from reality with no way to detect or repair it except a manual recount.
+A mutable `on_hand_quantity` column that the **application writes to directly** — as its own independent fact, alongside the ledger — is a **cache with no history and no guarantee of staying correct**: every write clobbers the previous value, so there is no way to answer "what was on hand last Tuesday," "why did stock drop by 3," or "did the count match what we sold" after the fact. It also creates a second source of truth that a ledger-based system must keep in sync *by hand* — every sale, return, receipt and adjustment would need application code to remember to update both the ledger *and* the counter in the same transaction, and any missed or double-applied update silently drifts the counter away from reality with no way to detect or repair it except a manual recount.
 
-An append-only ledger avoids this by construction:
+**`inventory_batches.available_quantity` is not that.** The distinction is not "is there a stored number" — there now is one — it's *who is allowed to write it and how*:
 
-- **On-hand is always a query, never a stored fact.** `SUM(quantity * sign)` over `stock_movements` *is* the on-hand quantity — there is nothing to keep in sync, because there is only one number and it is derived, not duplicated.
-- **Every change is self-explanatory.** Each row carries what changed (`movement_type`, `quantity`), why (`reference_type`/`reference_id` or `reason`), and who (`created_by`) and when (`created_at`) — a full audit trail comes for free, rather than needing a separate audit-log table shadowing the counter.
-- **Corrections are visible, not silent.** Fixing a mistake means posting a new compensating row, so the ledger shows both the error and its correction — a mutable counter would just show the "fixed" number with no trace that anything was ever wrong.
-- **Concurrency is safe by default.** Two concurrent sales each insert their own row; there is no read-modify-write race on a shared counter (`UPDATE ... SET on_hand = on_hand - N`) under concurrent load, which is exactly the kind of race that produces phantom stock or impossible negative counts with no record of how it happened.
-- **It matches how the rest of this schema already works.** `inventory_batches.received_quantity` is immutable, purchases and purchase lines freeze after receipt, memberships are removed rather than edited into invisibility — a mutable running total on inventory would be the one place in the schema where history is thrown away instead of appended to.
+- **It has exactly one writer: the ledger itself.** `available_quantity` is changed only by `trg_stock_movements_apply_to_batch`, fired automatically by every `stock_movements` insert. There is no application code path that sets it directly (see the `REVOKE` note in `inventory_batches`), so there is no "forgot to update the counter" failure mode — the counter update isn't a second statement someone has to remember, it's a side effect of the one statement (the ledger insert) that always has to happen anyway.
+- **It cannot silently diverge, because divergence fails the transaction, not the check.** If the trigger's update would violate `CHECK (available_quantity >= 0)`, the whole transaction — ledger insert included — rolls back. The ledger and the balance either both advance together or neither does; there is no state where one moved and the other didn't.
+- **It is still fully reconstructable from the ledger**, via `batch_stock_on_hand`, at any time — it is a cache *of* the ledger, not an alternative to it. If the two ever disagreed (they shouldn't, by the construction above, but hardware/software bugs happen), `batch_stock_on_hand` is the source of truth to reconcile against, exactly as "Performance" describes.
+- **Every change is still self-explanatory, at the ledger.** Each `stock_movements` row carries what changed, why, who and when — the audit trail is unaffected by `available_quantity` existing; the cache adds a fast read path, it doesn't replace or shadow the audit trail.
+- **Corrections are still visible, not silent.** Fixing a mistake means posting a new compensating row (which updates `available_quantity` the same way every other row does), so the ledger — and the balance derived from it — show both the error and its correction.
 
-The tradeoff is read cost: `SUM()` over a growing table is more expensive than reading one column. That is a solved, well-understood problem (a materialized/cached projection maintained from the ledger, see "Performance" above) and is strictly better than the alternative, where the *cheap* read is also the *wrong* one.
+So the rule from the original design is unchanged: no column anywhere is an **independent, application-writable** running total. What's new is that one column, on one table, is allowed to be a **ledger-writable, trigger-enforced cache** of that same ledger — which is a fundamentally different (and much safer) thing than a second source of truth.
 
 Example queries:
 
 ```sql
--- what does this scanned barcode mean? (price comes from the variant, cost from the batch)
-SELECT b.id AS batch_id, s.name AS sellable, v.name AS variant,
+-- what does this scanned barcode mean, and how much is left? (price from the variant,
+-- cost from the batch, current stock straight off the batch row — no SUM needed)
+SELECT b.id AS batch_id, b.available_quantity, s.name AS sellable, v.name AS variant,
        v.base_price AS selling_price, b.unit_cost AS purchase_cost
   FROM inventory_batches b
   JOIN variants v  ON v.id = b.variant_id  AND v.tenant_id = b.tenant_id
   JOIN sellables s ON s.id = v.sellable_id AND s.tenant_id = v.tenant_id
- WHERE b.tenant_id = $1 AND b.barcode = $2 AND b.status = 'active';
+ WHERE b.tenant_id = $1 AND b.barcode = $2;
 
--- units on hand per variant in a store
-SELECT variant_id, SUM(on_hand) AS on_hand
-  FROM batch_stock_on_hand
+-- units on hand per variant in a store — fast path, straight off inventory_batches
+SELECT variant_id, SUM(available_quantity) AS on_hand
+  FROM inventory_batches
  WHERE tenant_id = $1 AND store_id = $2
  GROUP BY variant_id;
+
+-- reconciliation: does the ledger agree with the cached batch balance? (audit / drift check)
+SELECT b.id AS batch_id, b.available_quantity AS cached_balance, v.on_hand AS ledger_balance
+  FROM inventory_batches b
+  JOIN batch_stock_on_hand v
+    ON v.tenant_id = b.tenant_id AND v.store_id = b.store_id
+   AND v.variant_id = b.variant_id AND v.batch_id = b.id
+ WHERE b.tenant_id = $1 AND b.available_quantity IS DISTINCT FROM v.on_hand;
 
 -- every movement a given sale produced (reference lookup, e.g. for a receipt/audit screen)
 SELECT *
@@ -1044,8 +1113,8 @@ These four are easy to blur and must stay separate.
 |---|---|---|---|
 | **Selling price** | `variants.base_price` | What a customer pays for this variant | Yes (price changes; history table later) |
 | **Purchase cost** | `purchase_items.unit_cost` (the deal) and `inventory_batches.unit_cost` (cost basis of the stock) | What we paid the supplier | Line: only while the purchase is open. Batch: never |
-| **Inventory quantity** | `inventory_batches.received_quantity` (how many arrived) and `SUM(stock_movements.quantity * stock_movement_sign(movement_type))` (how many are here now) | Units received vs units on hand | `received_quantity`: never. On-hand: only by adding movements, never stored |
-| **Barcode** | `inventory_batches.barcode` | Identifies one batch of physical stock, and through it the variant and its cost basis | Never |
+| **Inventory quantity** | `inventory_batches.received_quantity` (how many arrived) and `inventory_batches.available_quantity` (how many are here now — the fast, trigger-maintained path); `SUM(stock_movements.quantity * stock_movement_sign(movement_type))` via `batch_stock_on_hand` is the same number, derived, kept for reconciliation | Units received vs units currently available | `received_quantity`: never. `available_quantity`: only via a `stock_movements` insert, never by a direct `UPDATE` |
+| **Barcode** | `inventory_batches.barcode` | Identifies one batch of physical stock, and through it (via stored `variant_id`/`id` columns, not by parsing the string) the variant and its cost basis | Never |
 
 Because price sits on the variant and cost sits on the purchase line and batch, two batches of the same variant can have different costs while every customer still sees one selling price.
 
@@ -1056,7 +1125,7 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 | Relationship | Why it exists |
 |---|---|
 | `stores 1:N sellables` | A sellable is created within a store. This gives every catalogue row a home now, without any sharing model. |
-| `sellables 1:N variants` | The sellable is the idea ("Silk Saree"); the variant is the thing you can stock, price and sell (Red/6m). Splitting them lets one idea have many prices and stock levels. |
+| `sellables 1:N variants` | The sellable is the idea ("Silk Saree"); the variant is the thing you can stock, price and sell (Red/6m). Splitting them lets one idea have many prices and stock levels. `variants.store_id` is denormalised from the sellable (and FK-tied to it), so a variant's store is directly, not just transitively, enforceable further down the chain. |
 | `stores 1:N purchases` | Purchasing is an operational event at a store, and the store is where stock arrives. |
 | `suppliers 1:N purchases` | One supplier serves many purchases, and reports like "spend by supplier" need the link. Suppliers are tenant-level. |
 | `purchases 1:N purchase_items` | A purchase is a header plus lines. |
@@ -1069,19 +1138,20 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 
 | Flow | Rows written |
 |---|---|
-| Create a product | 1 `sellables` + ≥1 `variants` |
+| Create a product | 1 `sellables` (no price) + ≥1 `variants` (each with its own `base_price`, SKU and name) |
 | Record a purchase | 1 `purchases` + N `purchase_items` (header totals recomputed in the same transaction) |
-| Receive stock | Mark the purchase `received`; per batch, 1 `inventory_batches` + 1 `PURCHASED` `stock_movements` row (`reference_type='PURCHASE_ITEM'`) |
+| Receive stock | Mark the purchase `received`; per batch, 1 `inventory_batches` (`available_quantity` starts at 0) + 1 `PURCHASED` `stock_movements` row (`reference_type='PURCHASE_ITEM'`), whose trigger brings `available_quantity` up to `received_quantity` — all in one transaction |
 | Same variant bought at a new cost | A new purchase line and a new batch with its own barcode. Nothing existing changes |
-| Sell stock | 1 `SOLD` `stock_movements` row per batch drawn from (`reference_type='SALE_ITEM'`) |
+| Sell stock | 1 `SOLD` `stock_movements` row per batch drawn from (`reference_type='SALE_ITEM'`); its trigger decrements that batch's `available_quantity` in the same transaction, and fails the whole sale if it would go negative |
 | Customer returns a sale | 1 `SALE_RETURN` `stock_movements` row (`reference_type='SALE_RETURN'`) |
 | Return stock to a supplier | 1 `PURCHASE_RETURN` `stock_movements` row (`reference_type='PURCHASE_RETURN'`) |
 | Correct a miscount, damage or loss | 1 `DAMAGED` / `LOST` / `INTERNAL_USE` `stock_movements` row, optionally against a `STOCK_ADJUSTMENT` reference |
 
 ### Future path (not Phase 1)
 
-- **Multi-store sharing:** `sellables.store_id` becomes `source_store_id`, plus a `store_sellables` link, `store_variants` for store-level price overrides, and the store check in the variant guard is relaxed.
+- **Multi-store sharing:** `sellables.store_id` becomes `source_store_id`, plus a `store_sellables` link, `store_variants` for store-level price overrides, and the store checks in the variant guard and in `variants`/`inventory_batches`' composite FKs are relaxed.
 - **Transfers:** paired `stock_movements` rows between stores, with new movement types.
+- **Batch splitting:** an existing batch's `available_quantity` divided into several new whole-number batches that preserve `variant_id` and `purchase_item_id`; needs a `parent_batch_id`-style lineage column and one or two new `stock_movements` types, not a redesign of `inventory_batches`.
 - **Serial-number tracking:** a `stock_units` table beneath batches, without changing batches.
 - **Facets and F&B:** optional child tables keyed on sellables and variants (Stocked, Weighed, Made, Configured, Routed, Timed). `kind` stays a coarse discriminator.
 - **Price history:** an append-only `variant_price_history` table, without touching `variants`.
@@ -1099,7 +1169,12 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 - **Phase 1 catalogue has no sharing.** `sellables.store_id` replaces the earlier tenant-level `sellables` with `source_store_id`, and `store_sellables` is removed. Sharing, `store_variants` and store-level pricing are deferred; the migration path is `store_id` → `source_store_id` plus a link table. This supersedes the earlier "no tenant-level catalogue entity" and "source store is always linked" decisions.
 - **Selling price is on the variant.** `variants.base_price` replaces `sellables.base_price`, because variants of one sellable can be priced differently. Purchase cost never lives on `variants`.
 - **`tenant_id` on every tenant-owned table, with composite FKs.** Parents expose `UNIQUE (tenant_id, ...)` keys and children reference `(tenant_id, parent_id)` pairs, so the database rejects any cross-tenant reference. `membership_store_access` is the one table that still relies on an application-level same-tenant check.
-- **Inventory is append-only.** `inventory_batches.received_quantity` is immutable, and on-hand is the sum of `stock_movements`, which cannot be updated or deleted — no `on_hand_quantity` column exists anywhere as a mutable source of truth. `stock_movements` is part of the Phase 1 foundation, not an afterthought. Negative on-hand is deliberately allowed, so a sale is never blocked by an inaccurate count.
+- **Inventory is append-only, with one trigger-maintained cache.** `inventory_batches.received_quantity` is immutable, and the ledger (`stock_movements`) cannot be updated or deleted. `inventory_batches.available_quantity` is the one exception to "no mutable quantity column": it is a fast operational balance that only the ledger itself, via `trg_stock_movements_apply_to_batch`, is allowed to change — never an application-writable second source of truth. Because that update happens inside the same transaction as the ledger insert and is subject to `CHECK (available_quantity >= 0)`, the two cannot drift apart, and **this supersedes the earlier "negative on-hand is deliberately allowed" decision**: a movement that would oversell a batch now fails the whole transaction instead of being recorded as drift. See `stock_movements`' "Why an append-only ledger" section for the full reasoning.
+- **`inventory_batches` and `stock_movements` quantities are `INTEGER`, not `NUMERIC(12,3)`.** Phase 1 batch-level stock is whole-number only — no fractional units at the batch or ledger level — to keep whole-number batch splitting straightforward later. `purchase_items.quantity` intentionally stays `NUMERIC(12,3)`, preserving room for a future fractional/weighed purchase line; the boundary where a (possibly fractional) purchase quantity becomes a whole-number batch is where that future reconciliation belongs, not a Phase 1 concern.
+- **`inventory_batches` has no `status` column.** The earlier `active`/`blocked`/`archived` states are superseded by `available_quantity` (zero means sold out) and by `DAMAGED`/`LOST` movements already removing bad stock from the operational balance. A distinct "held out of sale but otherwise fine" state is not modelled yet; it would be an additive column, not a redesign.
+- **`variants` carries its own `store_id`, denormalised from `sellables` and FK-tied to it.** This lets `inventory_batches` enforce tenant/store/variant consistency with one direct composite FK to `variants`, instead of relying only on the transitive path through `purchase_items`. The same "denormalise the parent's store, then FK back to it" pattern `purchase_items.store_id` already used against `purchases`.
+- **Selling price stays variant-first; the sellable is never asked for a price.** No schema change was needed here — `variants.base_price` and a price-less `sellables` were already the Phase 1 design — but the product-creation UX (variant name, SKU, attributes and price entered per-variant) is now an explicit, documented decision rather than an implicit consequence of the schema.
+- **Purchase tax and sales tax are, and remain, separate concepts that never share a column.** `purchase_items.tax_amount` is scoped to tax paid to the supplier; a future `sale_items.sales_tax_amount` will be scoped to tax collected from the customer. `inventory_batches` carries only `unit_cost` (acquisition cost for valuation) — no tax field of either kind, absent a demonstrated accounting need.
 - **`stock_movements.quantity` is unsigned; direction comes from `movement_type`.** Seven Phase 1 types (`PURCHASED`, `SOLD`, `PURCHASE_RETURN`, `SALE_RETURN`, `DAMAGED`, `LOST`, `INTERNAL_USE`) each map to a fixed sign via `stock_movement_sign()`, rather than trusting each caller to supply a correctly-signed delta. `reference_type`/`reference_id` trace a movement back to its originating transaction and are deliberately not unique, since one transaction (a multi-line sale, a multi-batch receipt) can post several movements against the same reference.
 - **`stock_movements` keeps `occurred_at` (business time) separate from `created_at` (record time).** They usually match, but corrections, delayed entry and future imports can legitimately post a movement whose `occurred_at` is in the past. Ledger and inventory-query indexes are built on `occurred_at`.
 - **The ledger does not enforce "one `PURCHASED` movement per batch."** Receipt integrity (a batch is received exactly once) is a purchasing-workflow rule, checked by the deferred trigger on `inventory_batches` as an existence check, not a `stock_movements`-level uniqueness constraint — keeping the ledger's own shape independent of how any one business process happens to use it today.
