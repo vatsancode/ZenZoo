@@ -328,7 +328,9 @@ Tenant
         ├── Sellables
         │     └── Variants
         ├── Purchases (also belong to a Supplier)
-        │     └── Purchase Items ──► Variant
+        │     ├── Purchase Items ──► Variant
+        │     └── Purchase Returns ──► Purchase
+        │           └── Purchase Return Items ──► Purchase Item, Inventory Batch
         └── Inventory Batches ──► Variant, Purchase Item
               └── Stock Movements (append-only ledger)
 ```
@@ -336,6 +338,9 @@ Tenant
 ```text
 Purchase → Purchase Item → Variant
                  └── Inventory Batch(es) ← Stock Movements
+
+Purchase ──► Purchase Return ──► Purchase Return Item ──► Purchase Item, Inventory Batch
+                                        └── PURCHASE_RETURN Stock Movement
 ```
 
 **Conventions used by every table below**
@@ -626,7 +631,7 @@ CREATE CONSTRAINT TRIGGER trg_purchases_totals_guard
     EXECUTE FUNCTION trg_fn_purchase_totals_guard();
 ```
 
-- **Lifecycle:** `draft` → `ordered` → `received`, or `cancelled` from `draft`/`ordered`. `received` and `cancelled` are terminal. A goods return after receipt is a future purchase-return document, not a status change. `received_at` is set exactly when the status is `received`.
+- **Lifecycle:** `draft` → `ordered` → `received`, or `cancelled` from `draft`/`ordered`. `received` and `cancelled` are terminal. A goods return after receipt is a separate `purchase_returns` document (see that table), never a status change here — this row is never touched by a return.
 - **Totals.** `total_amount = subtotal − discount + tax + adjustment`, enforced per row. `adjustment_amount` (may be negative) covers freight, round-off and any header-level discount, so the three line-derived totals stay exactly reconcilable. Whether `subtotal`/`discount`/`tax` equal the sums of the lines is a cross-row rule, enforced by the deferred trigger above. The application must recompute the header in the same transaction as any line change.
 - **`reference_number`** is the supplier's invoice number and is optional (a draft may not have one yet).
 - Excluded for now: payment status and amounts paid (a payables ledger concern, F-26) and purchase orders separate from invoices.
@@ -1111,6 +1116,253 @@ SELECT *
 
 ---
 
+## `purchase_returns`
+
+A supplier return transaction — goods going back to the supplier against a `received` purchase (**`purchases 1:N purchase_returns`**). **The original `purchases` row is never touched**: a return is a new, separate document that points back at it, not an edit or a status change on it (see that table's notes).
+
+```sql
+CREATE TABLE purchase_returns (
+    id                  UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id           UUID NOT NULL REFERENCES tenants (id),
+    store_id            UUID NOT NULL,
+    purchase_id         UUID NOT NULL,
+    return_date         DATE NOT NULL DEFAULT CURRENT_DATE,
+    reason              VARCHAR(500),
+    status              VARCHAR(20) NOT NULL DEFAULT 'completed'
+                            CONSTRAINT purchase_returns_status_check
+                            CHECK (status IN ('completed', 'cancelled')),
+    created_by          UUID NOT NULL REFERENCES users (id),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- target for purchase_return_items: keeps a line in the same tenant AND store as its return
+    CONSTRAINT purchase_returns_tenant_store_id_unique UNIQUE (tenant_id, store_id, id),
+    -- tenant AND store must match the original purchase
+    CONSTRAINT purchase_returns_purchase_fk
+        FOREIGN KEY (tenant_id, store_id, purchase_id)
+        REFERENCES purchases (tenant_id, store_id, id)
+);
+
+CREATE INDEX idx_purchase_returns_purchase ON purchase_returns (tenant_id, purchase_id);
+CREATE INDEX idx_purchase_returns_store_date ON purchase_returns (tenant_id, store_id, return_date DESC);
+
+CREATE TRIGGER trg_purchase_returns_set_updated_at
+    BEFORE UPDATE ON purchase_returns
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+
+-- tenant/store/purchase never change; cancelled is terminal
+CREATE FUNCTION purchase_returns_guard_update() RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.tenant_id <> OLD.tenant_id
+       OR NEW.store_id <> OLD.store_id
+       OR NEW.purchase_id <> OLD.purchase_id THEN
+        RAISE EXCEPTION 'purchase_returns tenant_id, store_id and purchase_id are immutable (return %)', OLD.id;
+    END IF;
+    IF OLD.status = 'cancelled' AND NEW.status <> OLD.status THEN
+        RAISE EXCEPTION 'purchase_return % is cancelled and cannot change status', OLD.id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_purchase_returns_guard_update
+    BEFORE UPDATE ON purchase_returns
+    FOR EACH ROW
+    EXECUTE FUNCTION purchase_returns_guard_update();
+
+-- nothing is eligible for return until it has actually been received
+CREATE FUNCTION purchase_returns_require_received_purchase() RETURNS TRIGGER AS $$
+DECLARE
+    v_status VARCHAR(20);
+BEGIN
+    SELECT status INTO v_status FROM purchases WHERE id = NEW.purchase_id;
+
+    IF v_status <> 'received' THEN
+        RAISE EXCEPTION 'purchase % is % and is not eligible for a return', NEW.purchase_id, v_status;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_purchase_returns_require_received_purchase
+    BEFORE INSERT ON purchase_returns
+    FOR EACH ROW
+    EXECUTE FUNCTION purchase_returns_require_received_purchase();
+```
+
+### Notes
+
+- **Lifecycle: `completed` → `cancelled`, one-way, no draft.** Phase 1 does not support multi-batch or partial *receiving*, and a return mirrors that simplicity: there is no draft/ordered-style staging state, because creating a return and posting its `PURCHASE_RETURN` movement(s) happen together (see `purchase_return_items`). `cancelled` is a record-level annotation ("this return was entered in error") — it does **not** delete or edit any `purchase_return_items` row or `stock_movements` row, and it does **not** reverse the stock effect. If stock genuinely needs to come back after a return is cancelled, that is a new compensating movement (the same "corrections are new rows, never edits" rule that governs `stock_movements` everywhere else), not a side effect of flipping this status.
+- **Eligibility is checked once, at the header.** `trg_purchase_returns_require_received_purchase` requires `purchases.status = 'received'` before a return can even be created — there is nothing to return against a `draft`, `ordered`, or already-`cancelled` purchase. This mirrors `inventory_batches`' own "batches can only be created against a `received` purchase" rule.
+- **`reason`** is free text at the header level (why the whole return happened — a damaged shipment, a wrong item, an over-ship correction). Line-level detail lives on `purchase_return_items` implicitly through which batches and quantities were selected; Phase 1 does not add a second, per-line `reason`.
+- **`created_by` is required** (`NOT NULL`), same rationale as `stock_movements.created_by`: a return is a financial/inventory transaction and must be attributable to whoever created it.
+
+---
+
+## `purchase_return_items`
+
+The specific stock being returned — one row per batch a return draws from (**`purchase_returns 1:N purchase_return_items`**, **`purchase_items 1:N purchase_return_items`**, **`inventory_batches 1:N purchase_return_items`**). This is where the returned quantity and its preserved cost basis live.
+
+```sql
+CREATE TABLE purchase_return_items (
+    id                  UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id           UUID NOT NULL REFERENCES tenants (id),
+    store_id            UUID NOT NULL,
+    variant_id          UUID NOT NULL,
+    purchase_return_id  UUID NOT NULL,
+    purchase_item_id    UUID NOT NULL,
+    batch_id            UUID NOT NULL,
+    -- whole units only, matching inventory_batches/stock_movements
+    quantity            INTEGER NOT NULL
+                            CONSTRAINT purchase_return_items_quantity_check CHECK (quantity > 0),
+    -- copied from the batch's own immutable cost basis at creation time — see notes
+    unit_cost           NUMERIC(12,2) NOT NULL
+                            CONSTRAINT purchase_return_items_unit_cost_check CHECK (unit_cost >= 0),
+    -- purchase-side tax being credited back; the application derives this proportionally
+    -- from purchase_items.tax_amount — see notes
+    tax_amount          NUMERIC(12,2) NOT NULL DEFAULT 0
+                            CONSTRAINT purchase_return_items_tax_check CHECK (tax_amount >= 0),
+    line_total          NUMERIC(14,2) NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT purchase_return_items_line_total_check
+        CHECK (line_total = round(quantity * unit_cost + tax_amount, 2)),
+
+    -- keeps a return line in the same tenant AND store as its return header
+    CONSTRAINT purchase_return_items_return_fk
+        FOREIGN KEY (tenant_id, store_id, purchase_return_id)
+        REFERENCES purchase_returns (tenant_id, store_id, id),
+    -- the original purchase line: tenant, store AND variant must all agree
+    CONSTRAINT purchase_return_items_purchase_item_fk
+        FOREIGN KEY (tenant_id, store_id, purchase_item_id, variant_id)
+        REFERENCES purchase_items (tenant_id, store_id, id, variant_id),
+    -- the batch being returned from: tenant, store AND variant must all agree
+    CONSTRAINT purchase_return_items_batch_fk
+        FOREIGN KEY (tenant_id, store_id, batch_id, variant_id)
+        REFERENCES inventory_batches (tenant_id, store_id, id, variant_id)
+);
+
+CREATE INDEX idx_purchase_return_items_return ON purchase_return_items (purchase_return_id);
+CREATE INDEX idx_purchase_return_items_purchase_item ON purchase_return_items (purchase_item_id);
+CREATE INDEX idx_purchase_return_items_batch ON purchase_return_items (batch_id);
+
+-- cross-row checks a composite FK can't express: the batch must be the one this purchase line
+-- actually produced, the purchase line must actually belong to the purchase this return is
+-- against, and the preserved unit_cost must match the batch's own immutable cost basis
+CREATE FUNCTION purchase_return_items_validate() RETURNS TRIGGER AS $$
+DECLARE
+    v_batch_purchase_item_id UUID;
+    v_batch_unit_cost        NUMERIC(12,2);
+    v_return_purchase_id     UUID;
+    v_item_purchase_id       UUID;
+BEGIN
+    SELECT purchase_item_id, unit_cost INTO v_batch_purchase_item_id, v_batch_unit_cost
+      FROM inventory_batches
+     WHERE id = NEW.batch_id AND tenant_id = NEW.tenant_id;
+
+    IF v_batch_purchase_item_id <> NEW.purchase_item_id THEN
+        RAISE EXCEPTION 'batch % was not received against purchase item %', NEW.batch_id, NEW.purchase_item_id;
+    END IF;
+
+    IF NEW.unit_cost <> v_batch_unit_cost THEN
+        RAISE EXCEPTION 'purchase_return_items.unit_cost must match batch % cost basis (%), got %',
+            NEW.batch_id, v_batch_unit_cost, NEW.unit_cost;
+    END IF;
+
+    SELECT purchase_id INTO v_item_purchase_id
+      FROM purchase_items
+     WHERE id = NEW.purchase_item_id AND tenant_id = NEW.tenant_id;
+
+    SELECT purchase_id INTO v_return_purchase_id
+      FROM purchase_returns
+     WHERE id = NEW.purchase_return_id AND tenant_id = NEW.tenant_id;
+
+    IF v_item_purchase_id <> v_return_purchase_id THEN
+        RAISE EXCEPTION 'purchase item % does not belong to the purchase being returned against (return %)',
+            NEW.purchase_item_id, NEW.purchase_return_id;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_purchase_return_items_validate
+    BEFORE INSERT ON purchase_return_items
+    FOR EACH ROW
+    EXECUTE FUNCTION purchase_return_items_validate();
+
+-- append-only, like stock_movements: no updates, no deletes, ever
+CREATE FUNCTION purchase_return_items_reject_change() RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'purchase_return_items is append-only; a correction needs a new, separate return';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_purchase_return_items_append_only
+    BEFORE UPDATE OR DELETE ON purchase_return_items
+    FOR EACH ROW
+    EXECUTE FUNCTION purchase_return_items_reject_change();
+
+-- checked at commit, so the return item and its PURCHASE_RETURN movement can be inserted in
+-- either order — mirrors inventory_batches' own completeness check for its PURCHASED movement
+CREATE FUNCTION trg_fn_purchase_return_items_insert_guard() RETURNS TRIGGER AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM stock_movements
+         WHERE batch_id = NEW.batch_id
+           AND movement_type = 'PURCHASE_RETURN'
+           AND reference_type = 'PURCHASE_RETURN'
+           AND reference_id = NEW.id
+           AND quantity = NEW.quantity
+    ) THEN
+        RAISE EXCEPTION 'purchase_return_item % has no matching PURCHASE_RETURN stock movement', NEW.id;
+    END IF;
+
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE CONSTRAINT TRIGGER trg_purchase_return_items_insert_guard
+    AFTER INSERT ON purchase_return_items
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW
+    EXECUTE FUNCTION trg_fn_purchase_return_items_insert_guard();
+```
+
+### Notes
+
+- **`reference_type='PURCHASE_RETURN'` resolves to `purchase_return_items.id`**, not `purchase_returns.id`. This was left ambiguous when `stock_movements.reference_type` was first designed; resolving it now, for consistency with `PURCHASE_ITEM` (which already points at the *line* — `purchase_items.id` — not the purchase header): each `purchase_return_items` row gets its own `PURCHASE_RETURN` movement, and `reference_id` names that line. A return with three lines against three different batches posts three `PURCHASE_RETURN` movements, one per line, each `reference_id` pointing at its own `purchase_return_items.id` — the same "several movements can share a reference, but each line has exactly one" shape `PURCHASE_ITEM` already has.
+- **The application flow is: validate → `INSERT purchase_return_items` → `INSERT stock_movements` (`PURCHASE_RETURN`) → commit.** The `stock_movements` insert's existing `trg_stock_movements_apply_to_batch` trigger (see that table) is what actually decrements `inventory_batches.available_quantity` — nothing new is added here, `purchase_return_items` plugs into the exact same DB-owned mechanism every other movement type already uses. The application must never issue its own `UPDATE` to `available_quantity`; that path is already closed off by the `REVOKE` on that column.
+- **"Returned quantity must not exceed available quantity" is enforced the same way an oversell already is: `CHECK (available_quantity >= 0)` on `inventory_batches`, tripped by the same trigger.** No new mechanism was added here — a `PURCHASE_RETURN` movement that would take a batch negative fails the whole transaction (return item included), exactly like an over-sold `SOLD` movement does. The application should still pre-check `batch.available_quantity` before attempting the insert, for a good error message, per the same pattern already documented under `stock_movements`.
+- **`unit_cost` is copied, not entered.** `trg_purchase_return_items_validate` hard-rejects any value that doesn't exactly equal the referenced batch's own `unit_cost` — there is no "recalculate from today's cost" path, so the credit due back always reflects what was actually paid for that specific batch, consistent with "preserve the original acquisition cost."
+- **`tax_amount` is proportional, application-computed, and not independently DB-verified.** Unlike `unit_cost` (a fixed, immutable value with one correct answer), the purchase tax owed back on a *partial* return of a line is `round(purchase_items.tax_amount * quantity / purchase_items.quantity, 2)` — a derived, rounding-sensitive calculation. Per the validation requirements, this is application/service-layer responsibility rather than a rigid `CHECK`, the same way `purchase_items.discount_amount`/`tax_amount` are already "the application computes them" (see that table's notes) rather than DB-derived. **This column is purchase-side tax only** — tax paid to (and credited back by) the supplier. No sales-side tax field exists here or ever will; see `purchase_items`' tax-scoping note, which applies identically to this table.
+- **`line_total = round(quantity × unit_cost + tax_amount, 2)`** — the cost of the returned units plus their share of purchase tax, i.e. the credit owed back from the supplier. There is no discount component: Phase 1 returns don't re-open or re-negotiate the original line's discount, they only give back cost and tax on the units actually returned.
+- **Fully immutable, append-only, no `updated_at` — by design, not oversight.** `purchase_return_items` has no mutable column at all (unlike `purchase_returns`, which at least has a `status` to cancel), so every update and delete is rejected outright, the same idiom as `stock_movements`. A wrong return line is corrected the way every other posted fact in this schema is corrected: a new, separate transaction (here, a new purchase — the goods coming back in — not a self-referential "return of a return"), never an edit.
+- **Auditability is now a real, DB-enforced chain, both directions:** `purchases → purchase_items → inventory_batches → PURCHASED movement` (existing) and `purchases → purchase_items → purchase_returns → purchase_return_items → PURCHASE_RETURN movement` (this table). `trg_fn_purchase_return_items_insert_guard` is what makes the second chain a guarantee rather than a convention — a `purchase_return_items` row can no more exist without its `PURCHASE_RETURN` movement than an `inventory_batches` row can exist without its `PURCHASED` movement.
+- **No partial or multi-batch *receiving* is introduced here.** A return always targets one specific, already-existing batch (`batch_id`); nothing about returns creates new batches, splits a purchase item's receipt across several batches, or otherwise touches how goods were originally received.
+
+Example queries:
+
+```sql
+-- everything returned against a given purchase, with what it cost to give back
+SELECT pr.id AS return_id, pr.return_date, pr.status,
+       pri.batch_id, pri.quantity, pri.unit_cost, pri.tax_amount, pri.line_total
+  FROM purchase_returns pr
+  JOIN purchase_return_items pri ON pri.purchase_return_id = pr.id
+ WHERE pr.tenant_id = $1 AND pr.purchase_id = $2
+ ORDER BY pr.return_date, pri.created_at;
+
+-- full traceability for one returned batch: the receipt and every return against it
+SELECT movement_type, quantity, occurred_at, reference_type, reference_id
+  FROM stock_movements
+ WHERE tenant_id = $1 AND batch_id = $2
+ ORDER BY occurred_at;
+```
+
+---
+
 ## Selling price, purchase cost, quantity and barcode
 
 These four are easy to blur and must stay separate.
@@ -1139,6 +1391,9 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 | `purchase_items 1:N inventory_batches` | Stock traces back to what was bought, and one line can arrive as several batches. |
 | `variants 1:N inventory_batches` | Batches are the physical stock of a variant, with as many cost tiers as it has batches. |
 | `inventory_batches 1:N stock_movements` | Everything that happens to a batch after receipt is a row in its ledger. |
+| `purchases 1:N purchase_returns` | A return is a separate transaction against an already-received purchase, never an edit to it. |
+| `purchase_items 1:N purchase_return_items` | A return line traces back to the original purchase line it's crediting. |
+| `inventory_batches 1:N purchase_return_items` | A return always targets one specific batch — the physical stock actually being sent back. |
 
 ### How the main flows map
 
@@ -1150,7 +1405,7 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 | Same variant bought at a new cost | A new purchase line and a new batch with its own barcode. Nothing existing changes |
 | Sell stock | 1 `SOLD` `stock_movements` row per batch drawn from (`reference_type='SALE_ITEM'`); its trigger decrements that batch's `available_quantity` in the same transaction, and fails the whole sale if it would go negative |
 | Customer returns a sale | 1 `SALE_RETURN` `stock_movements` row (`reference_type='SALE_RETURN'`) |
-| Return stock to a supplier | 1 `PURCHASE_RETURN` `stock_movements` row (`reference_type='PURCHASE_RETURN'`) |
+| Return stock to a supplier | 1 `purchase_returns` (header) + 1 `purchase_return_items` row per batch returned from + 1 `PURCHASE_RETURN` `stock_movements` row per line (`reference_type='PURCHASE_RETURN'`, `reference_id`=that line's id), whose trigger decrements each batch's `available_quantity` in the same transaction |
 | Correct a miscount, damage or loss | 1 `DAMAGED` / `LOST` / `INTERNAL_USE` `stock_movements` row, optionally against a `STOCK_ADJUSTMENT` reference |
 
 ### Future path (not Phase 1)
@@ -1161,7 +1416,7 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 - **Serial-number tracking:** a `stock_units` table beneath batches, without changing batches.
 - **Facets and F&B:** optional child tables keyed on sellables and variants (Stocked, Weighed, Made, Configured, Routed, Timed). `kind` stays a coarse discriminator.
 - **Price history:** an append-only `variant_price_history` table, without touching `variants`.
-- **Also pending:** supplier payables, purchase returns, a `partially_received` purchase status (add to the `CHECK` when needed), and manufacturer barcodes in `variant_barcodes`.
+- **Also pending:** supplier payables, a `partially_received` purchase status (add to the `CHECK` when needed), and manufacturer barcodes in `variant_barcodes`.
 
 ---
 
@@ -1187,6 +1442,10 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 - **A purchase line may be split into several batches.** The rule is that batch `received_quantity` totals may not exceed the line's `quantity`; it is not an equality, so partial receipts and future batch splitting are valid.
 - **`kind` is a coarse discriminator only.** `product` / `service` says whether stock can exist. Capabilities (F-01 facets) will be modelled as separate optional tables and are not replaced by `kind`.
 - **Purchases and their history are frozen after receipt.** Lines are editable only while a purchase is `draft` or `ordered`; `received` and `cancelled` are terminal. Header totals are verified against the lines at commit.
+- **A purchase return is a new document, never an edit to the original purchase.** `purchase_returns`/`purchase_return_items` point back at `purchases`/`purchase_items` and `inventory_batches` but never modify them; `purchases.status` has no `returned` value and never will — the return lives entirely in its own tables, so a purchase's original receipt history stays untouched no matter how many returns are later posted against it.
+- **`purchase_return_items` reuses the existing stock-movement/available_quantity mechanism wholesale — no new trigger on `inventory_batches` was needed.** Posting a `PURCHASE_RETURN` movement decrements `available_quantity` and enforces the oversell floor exactly the way `SOLD` already does; the only genuinely new pieces are `purchase_return_items`' own referential-integrity trigger (batch ↔ purchase item ↔ purchase agreement, and preserved `unit_cost`) and its deferred completeness check (a return line must have a matching ledger row), both mirroring patterns `inventory_batches` already established for `PURCHASED`.
+- **`reference_type='PURCHASE_RETURN'` resolves to the return *line* (`purchase_return_items.id`), matching how `PURCHASE_ITEM` already resolves to a purchase *line*, not a purchase header.** This was left unspecified when the `reference_type` enum was first written; building the actual return tables forced the resolution, and line-level was chosen for consistency across both reference types.
+- **`purchase_return_items` is fully immutable and append-only (no `updated_at`, no allowed `UPDATE`/`DELETE`), stricter even than `purchase_returns`.** A return line is a posted financial/inventory fact the moment it exists; correcting it is a new transaction, never an edit — the same rule already governing `stock_movements`.
 
 ## Up next
 
