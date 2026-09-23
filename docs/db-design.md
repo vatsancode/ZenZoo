@@ -341,15 +341,17 @@ Tenant
 Purchase → Purchase Item → Variant
                  └── Inventory Batch(es) ← Stock Movements
 
-Purchase ──► Purchase Return ──► Purchase Return Item ──► Purchase Item, Inventory Batch
-                                        └── PURCHASE_RETURN Stock Movement
+Purchase ──► Purchase Return (draft → completed → reversed)
+                    └── Purchase Return Item ──► Purchase Item, Inventory Batch
+                              ├── on completion:  PURCHASE_RETURN stock movement
+                              └── on reversal:    PURCHASE_RETURN_REVERSAL stock movement
 ```
 
 **Conventions used by every table below**
 
 - `tenant_id` is an explicit column on every table, for RLS (N-05), composite foreign keys and tenant-scoped uniqueness. Tenant isolation is not left to a join through `stores`.
 - Each parent exposes a `UNIQUE (tenant_id, ...)` key, and each child references `(tenant_id, parent_id)`. The database therefore rejects any row that points at another tenant's parent.
-- Soft-delete via a terminal `status`, no `deleted_at`, as elsewhere. The exceptions are draft purchase lines (working data, deletable while the purchase is open), `stock_movements` (never deleted, never updated), and `inventory_batches` (no `status` column at all — see its notes).
+- Soft-delete via a terminal `status`, no `deleted_at`, as elsewhere. The exceptions are draft purchase lines and draft return lines (working data, deletable while their parent purchase/return is still open), `stock_movements` (never deleted, never updated), and `inventory_batches` (no `status` column at all — see its notes).
 - Money is `NUMERIC(12,2)` per unit and `NUMERIC(14,2)` for totals. **All quantities are `INTEGER`** — `purchase_items.quantity`, `inventory_batches.received_quantity`/`available_quantity`, and `stock_movements.quantity` — because Phase 1 does not support fractional or weighed goods. If that need arrives, it gets a proper unit-of-measure model designed for it, not a quiet widening of these columns to `NUMERIC`. Amounts are in the store's currency (`COALESCE(stores.currency, tenants.default_currency)`).
 
 ---
@@ -569,14 +571,21 @@ CREATE TRIGGER trg_purchases_set_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 
--- tenant/store never change; received and cancelled are terminal
+-- tenant/store never change; status may only move along the allowed edges below.
+-- 'received' and 'cancelled' are terminal by construction: neither appears on the
+-- left of an allowed edge, so any change away from them falls through to the exception.
 CREATE FUNCTION purchases_guard_update() RETURNS TRIGGER AS $$
 BEGIN
     IF NEW.tenant_id <> OLD.tenant_id OR NEW.store_id <> OLD.store_id THEN
         RAISE EXCEPTION 'purchases tenant_id and store_id are immutable (purchase %)', OLD.id;
     END IF;
-    IF OLD.status IN ('received', 'cancelled') AND NEW.status <> OLD.status THEN
-        RAISE EXCEPTION 'purchase % is % and cannot change status', OLD.id, OLD.status;
+    IF NEW.status <> OLD.status THEN
+        IF NOT (
+            (OLD.status = 'draft'   AND NEW.status IN ('ordered', 'cancelled'))
+            OR (OLD.status = 'ordered' AND NEW.status IN ('received', 'cancelled'))
+        ) THEN
+            RAISE EXCEPTION 'purchase % cannot go from % to %', OLD.id, OLD.status, NEW.status;
+        END IF;
     END IF;
     RETURN NEW;
 END;
@@ -633,7 +642,9 @@ CREATE CONSTRAINT TRIGGER trg_purchases_totals_guard
     EXECUTE FUNCTION trg_fn_purchase_totals_guard();
 ```
 
-- **Lifecycle:** `draft` → `ordered` → `received`, or `cancelled` from `draft`/`ordered`. `received` and `cancelled` are terminal. A goods return after receipt is a separate `purchase_returns` document (see that table), never a status change here — this row is never touched by a return.
+- **Lifecycle, enforced edge by edge, not just as terminal states.** `trg_purchases_guard_update` allows exactly `draft → ordered`, `draft → cancelled`, `ordered → received`, `ordered → cancelled`, and nothing else — a direct `draft → received` is rejected, same as any other edge not on this list. `received` and `cancelled` are terminal because neither appears as a starting state on any edge, so the guard's fallthrough rejects any further change once a purchase reaches either.
+- **`received` means "receiving has started," not "receiving is complete."** Nothing about this status requires every `purchase_item` to be fully received before the header can be `received` — a `purchase_item` for 100 units can have 40 units' worth of `inventory_batches` today and the remaining 60 arrive later as more batches against the same item, all while the header stays `received` throughout. `inventory_batches` can only be created once the purchase is already `received` (see that table), so "received" is the gate that opens receiving, not a claim that it's finished. There is no separate `partially_received` status in Phase 1 (see "Also pending" in Future path).
+- **Because `received` is terminal, "a purchase can't be cancelled once inventory has arrived" falls out of the transition graph for free.** No `inventory_batches` row can exist while a purchase is still `draft`/`ordered` (batch creation requires `status = 'received'`), and once `received`, `cancelled` is no longer a reachable edge. So there is no code path where inventory exists and cancellation is still possible — nothing extra needed to enforce this beyond the edge list above. A goods return after receipt is a separate `purchase_returns` document (see that table), never a status change here — this row is never touched by a return, and there is no `returned` value in `purchases.status` and never will be.
 - **Totals.** `total_amount = subtotal − discount + tax + adjustment`, enforced per row. `adjustment_amount` (may be negative) covers freight, round-off and any header-level discount, so the three line-derived totals stay exactly reconcilable. Whether `subtotal`/`discount`/`tax` equal the sums of the lines is a cross-row rule, enforced by the deferred trigger above. The application must recompute the header in the same transaction as any line change.
 - **`reference_number`** is the supplier's invoice number and is optional (a draft may not have one yet).
 - Excluded for now: payment status and amounts paid (a payables ledger concern, F-26) and purchase orders separate from invoices.
@@ -932,7 +943,7 @@ CREATE TABLE stock_movements (
                             CONSTRAINT stock_movements_type_check
                             CHECK (movement_type IN (
                                 'PURCHASED', 'SOLD', 'PURCHASE_RETURN', 'SALE_RETURN',
-                                'DAMAGED', 'LOST', 'INTERNAL_USE')),
+                                'DAMAGED', 'LOST', 'INTERNAL_USE', 'PURCHASE_RETURN_REVERSAL')),
     -- always positive, whole units only; movement_type alone decides direction (see the sign
     -- function below) — matches inventory_batches, which is also integer-quantity in Phase 1
     quantity            INTEGER NOT NULL
@@ -997,13 +1008,14 @@ CREATE TRIGGER trg_stock_movements_append_only
 CREATE FUNCTION stock_movement_sign(p_movement_type VARCHAR) RETURNS SMALLINT AS $$
 BEGIN
     RETURN CASE p_movement_type
-        WHEN 'PURCHASED'        THEN  1
-        WHEN 'SALE_RETURN'      THEN  1
-        WHEN 'SOLD'             THEN -1
-        WHEN 'PURCHASE_RETURN'  THEN -1
-        WHEN 'DAMAGED'          THEN -1
-        WHEN 'LOST'             THEN -1
-        WHEN 'INTERNAL_USE'     THEN -1
+        WHEN 'PURCHASED'                THEN  1
+        WHEN 'SALE_RETURN'              THEN  1
+        WHEN 'PURCHASE_RETURN_REVERSAL' THEN  1
+        WHEN 'SOLD'                     THEN -1
+        WHEN 'PURCHASE_RETURN'          THEN -1
+        WHEN 'DAMAGED'                  THEN -1
+        WHEN 'LOST'                     THEN -1
+        WHEN 'INTERNAL_USE'             THEN -1
         ELSE NULL
     END;
 END;
@@ -1047,7 +1059,7 @@ CREATE TRIGGER trg_stock_movements_apply_to_batch
 ### Notes
 
 - **`quantity` is always positive.** Every row's `CHECK (quantity > 0)` is unconditional — there is no signed delta column. Direction comes entirely from `movement_type`, via `stock_movement_sign()`:
-  - **Adds stock:** `PURCHASED`, `SALE_RETURN`
+  - **Adds stock:** `PURCHASED`, `SALE_RETURN`, `PURCHASE_RETURN_REVERSAL`
   - **Removes stock:** `SOLD`, `PURCHASE_RETURN`, `DAMAGED`, `LOST`, `INTERNAL_USE`
   - This is deliberately simpler than an application-supplied signed delta: the direction is a property of the *type*, not something each caller can get backwards. A caller only ever writes "10 units, `SOLD`", never "-10 units."
 - **No `updated_at`, no updates, no deletes — enforced twice.** The `BEFORE UPDATE OR DELETE` trigger rejects every attempt at the row level; production should also `REVOKE UPDATE, DELETE, TRUNCATE` on this table from the application role, as a second line of defence. A posting mistake is fixed by inserting a new row with the opposite-direction movement type (e.g. a wrongly posted `SOLD` is corrected with a `SALE_RETURN`, or a wrongly posted `DAMAGED` with a manually justified `PURCHASE`-side adjustment through `STOCK_ADJUSTMENT`), never by touching the original row. History is never rewritten, so an audit trail and a stock count always agree with what was actually posted.
@@ -1058,7 +1070,7 @@ CREATE TRIGGER trg_stock_movements_apply_to_batch
 - **Batch balance vs. the ledger: every insert applies itself, in the same transaction, by construction.** `trg_stock_movements_apply_to_batch` fires `AFTER INSERT` (not deferred) and updates the matching batch's `available_quantity` before the statement completes. Because that update is subject to `inventory_batches`' `CHECK (available_quantity >= 0)`, a movement that would take a batch's balance negative makes the **whole transaction fail** — the `stock_movements` row is never actually committed either. This is a deliberate reversal from the ledger-only design: on-hand is no longer allowed to drift negative as an "estimate" the way a pure `SUM()`-based ledger could. `available_quantity >= 0` is the validation named in the stock-movement integration requirements ("validate sufficient available stock where applicable"), enforced uniformly for every movement type via one `CHECK`, rather than bespoke per-type application logic. The application should still pre-check `available_quantity` before attempting the insert for a good error message — the `CHECK` is the non-negotiable backstop, not the primary UX.
 - **`created_by` is required** (`NOT NULL`), unlike most other tables' optional audit columns — every ledger entry must be attributable to the user or system actor that posted it, since a ledger with anonymous entries is not auditable.
 - **`occurred_at` (business time) and `created_at` (record time) are both kept, and can diverge.** Inventory movements are financial/operational history, and delayed entry, corrections and future imports are plausible — a cashier fixing yesterday's miscount today should be able to say the event happened yesterday even though the row is inserted now. `occurred_at` defaults to `now()` for the common synchronous case (a sale posts its movement at the moment of sale) but the application may set it explicitly for a backdated or imported entry. `created_at` is never backdated — it is strictly "when this row entered the table," which is what the append-only/audit guarantees above are actually about. Chronological ledger and inventory-query indexes are built on `occurred_at`, since that is the axis a ledger reader cares about; `created_at` remains for audit ordering ("what did we actually insert, and in what order").
-- **Phase 1 movement types are the seven above.** No F&B-specific types (e.g. recipe consumption) and no multi-store transfer types yet — both are additive migrations (new `CHECK` values, new `reference_type` values), not redesigns of this table. Batch splitting is similarly additive: it needs a new movement type or two, not a change to the columns here, which is why `quantity`/`movement_type`/`reference_type` are kept as open-ended, migratable `CHECK`-based enums rather than baked into the table shape.
+- **Phase 1 movement types are the eight above**, seven originally plus `PURCHASE_RETURN_REVERSAL` (added when purchase-return reversal was designed — see `purchase_returns`). No F&B-specific types (e.g. recipe consumption) and no multi-store transfer types yet — both are additive migrations (new `CHECK` values, new `reference_type` values), not redesigns of this table, and `PURCHASE_RETURN_REVERSAL` is the proof: it slotted in as one more `CHECK`/`stock_movement_sign()` value, with zero changes to this table's columns or `trg_stock_movements_apply_to_batch`. Batch splitting is expected to be similarly additive: a new movement type or two, not a change to the columns here, which is why `quantity`/`movement_type`/`reference_type` are kept as open-ended, migratable `CHECK`-based enums rather than baked into the table shape.
 - **No serialized unit tracking.** This ledger moves quantities of a batch, never individual serialized units — that is a future `stock_units` table beneath batches (see "Future path" below), not a Phase 1 concern.
 - **Performance is no longer a "later" problem for the common read.** `inventory_batches.available_quantity` *is* the cached/projected balance this section previously described as a future optimisation — it now exists from Phase 1, trigger-maintained so it cannot silently drift out of sync with the ledger. `batch_stock_on_hand` (the `SUM()` view) remains for reconciliation, audit and "does the cache still agree with the ledger" checks, not as the primary read path.
 
@@ -1130,9 +1142,9 @@ CREATE TABLE purchase_returns (
     purchase_id         UUID NOT NULL,
     return_date         DATE NOT NULL DEFAULT CURRENT_DATE,
     reason              VARCHAR(500),
-    status              VARCHAR(20) NOT NULL DEFAULT 'completed'
+    status              VARCHAR(20) NOT NULL DEFAULT 'draft'
                             CONSTRAINT purchase_returns_status_check
-                            CHECK (status IN ('completed', 'cancelled')),
+                            CHECK (status IN ('draft', 'completed', 'reversed')),
     created_by          UUID NOT NULL REFERENCES users (id),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1153,7 +1165,8 @@ CREATE TRIGGER trg_purchase_returns_set_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 
--- tenant/store/purchase never change; cancelled is terminal
+-- tenant/store/purchase never change; status only moves draft -> completed -> reversed.
+-- 'reversed' is terminal by construction, same "no edge starts here" idiom as purchases.
 CREATE FUNCTION purchase_returns_guard_update() RETURNS TRIGGER AS $$
 BEGIN
     IF NEW.tenant_id <> OLD.tenant_id
@@ -1161,8 +1174,13 @@ BEGIN
        OR NEW.purchase_id <> OLD.purchase_id THEN
         RAISE EXCEPTION 'purchase_returns tenant_id, store_id and purchase_id are immutable (return %)', OLD.id;
     END IF;
-    IF OLD.status = 'cancelled' AND NEW.status <> OLD.status THEN
-        RAISE EXCEPTION 'purchase_return % is cancelled and cannot change status', OLD.id;
+    IF NEW.status <> OLD.status THEN
+        IF NOT (
+            (OLD.status = 'draft'     AND NEW.status = 'completed')
+            OR (OLD.status = 'completed' AND NEW.status = 'reversed')
+        ) THEN
+            RAISE EXCEPTION 'purchase_return % cannot go from % to %', OLD.id, OLD.status, NEW.status;
+        END IF;
     END IF;
     RETURN NEW;
 END;
@@ -1173,7 +1191,9 @@ CREATE TRIGGER trg_purchase_returns_guard_update
     FOR EACH ROW
     EXECUTE FUNCTION purchase_returns_guard_update();
 
--- nothing is eligible for return until it has actually been received
+-- nothing is eligible for return until it has actually been received — checked once, at
+-- draft creation; a purchase can't stop being 'received' later (that status is terminal),
+-- so there's no need to re-check this at completion time
 CREATE FUNCTION purchase_returns_require_received_purchase() RETURNS TRIGGER AS $$
 DECLARE
     v_status VARCHAR(20);
@@ -1192,14 +1212,64 @@ CREATE TRIGGER trg_purchase_returns_require_received_purchase
     BEFORE INSERT ON purchase_returns
     FOR EACH ROW
     EXECUTE FUNCTION purchase_returns_require_received_purchase();
+
+-- shared by the completion and reversal guards below: does every item on this return
+-- already have the matching stock_movements row for the given movement_type?
+CREATE FUNCTION check_purchase_return_movements(
+    p_return_id UUID, p_expected_movement_type VARCHAR
+) RETURNS VOID AS $$
+DECLARE
+    v_missing INTEGER;
+BEGIN
+    SELECT count(*) INTO v_missing
+      FROM purchase_return_items pri
+     WHERE pri.purchase_return_id = p_return_id
+       AND NOT EXISTS (
+           SELECT 1 FROM stock_movements sm
+            WHERE sm.batch_id = pri.batch_id
+              AND sm.movement_type = p_expected_movement_type
+              AND sm.reference_type = 'PURCHASE_RETURN'
+              AND sm.reference_id = pri.id
+              AND sm.quantity = pri.quantity
+       );
+
+    IF v_missing > 0 THEN
+        RAISE EXCEPTION 'purchase_return % is missing % stock movement(s) of type % for its items',
+            p_return_id, v_missing, p_expected_movement_type;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- checked at commit, so the application can insert the stock_movements rows and flip
+-- this header's status in either order within the same transaction
+CREATE FUNCTION trg_fn_purchase_returns_completion_guard() RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.status = 'completed' AND OLD.status = 'draft' THEN
+        IF NOT EXISTS (SELECT 1 FROM purchase_return_items WHERE purchase_return_id = NEW.id) THEN
+            RAISE EXCEPTION 'purchase_return % has no items to complete', NEW.id;
+        END IF;
+        PERFORM check_purchase_return_movements(NEW.id, 'PURCHASE_RETURN');
+    ELSIF NEW.status = 'reversed' AND OLD.status = 'completed' THEN
+        PERFORM check_purchase_return_movements(NEW.id, 'PURCHASE_RETURN_REVERSAL');
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE CONSTRAINT TRIGGER trg_purchase_returns_completion_guard
+    AFTER UPDATE ON purchase_returns
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW
+    EXECUTE FUNCTION trg_fn_purchase_returns_completion_guard();
 ```
 
 ### Notes
 
-- **Lifecycle: `completed` → `cancelled`, one-way, no draft.** Phase 1 does not support multi-batch or partial *receiving*, and a return mirrors that simplicity: there is no draft/ordered-style staging state, because creating a return and posting its `PURCHASE_RETURN` movement(s) happen together (see `purchase_return_items`). `cancelled` is a record-level annotation ("this return was entered in error") — it does **not** delete or edit any `purchase_return_items` row or `stock_movements` row, and it does **not** reverse the stock effect. If stock genuinely needs to come back after a return is cancelled, that is a new compensating movement (the same "corrections are new rows, never edits" rule that governs `stock_movements` everywhere else), not a side effect of flipping this status.
-- **Eligibility is checked once, at the header.** `trg_purchase_returns_require_received_purchase` requires `purchases.status = 'received'` before a return can even be created — there is nothing to return against a `draft`, `ordered`, or already-`cancelled` purchase. This mirrors `inventory_batches`' own "batches can only be created against a `received` purchase" rule.
+- **Lifecycle: `draft` → `completed` → `reversed`, each edge one-way.** A draft is where a return is assembled — its items can be added, edited and removed freely (see `purchase_return_items`) and it has **no stock effect at all** while draft. Moving to `completed` is what actually posts stock: the application inserts one `PURCHASE_RETURN` `stock_movements` row per `purchase_return_items` row (each decrementing its batch's `available_quantity` via the existing trigger) and flips this row's status to `completed`, all in one transaction; `trg_purchase_returns_completion_guard` verifies at commit that every item really does have its matching movement, so a return can't reach `completed` with some items posted and others silently missing. `reversed` is reached the same way — insert the compensating `PURCHASE_RETURN_REVERSAL` movements, then flip status — and is terminal: nothing transitions out of `reversed`, which is also what makes "a completed return can't be reversed twice" true without any extra bookkeeping (a second reversal attempt is just an illegal `reversed → reversed` no-op-that-isn't, rejected by the same guard).
+- **`completed` and `reversed` rows are never edited or deleted by the application to represent what happened next.** A cancelled-before-completion draft is simply left as `draft` or its items removed (no stock was ever posted, so there's nothing to undo); a completed return that needs undoing is *reversed*, which is a new set of movements referencing the original, never a rewrite of it. The original `purchase_returns`/`purchase_return_items` rows for a completed-then-reversed return are byte-for-byte what they were the moment they completed.
+- **Eligibility is checked once, at draft creation.** `trg_purchase_returns_require_received_purchase` requires `purchases.status = 'received'` before a return can even be drafted — there is nothing to return against a `draft`, `ordered`, or `cancelled` purchase. Since `received` is terminal on `purchases` (see that table), this can't become stale between draft creation and completion.
 - **`reason`** is free text at the header level (why the whole return happened — a damaged shipment, a wrong item, an over-ship correction). Line-level detail lives on `purchase_return_items` implicitly through which batches and quantities were selected; Phase 1 does not add a second, per-line `reason`.
-- **`created_by` is required** (`NOT NULL`), same rationale as `stock_movements.created_by`: a return is a financial/inventory transaction and must be attributable to whoever created it.
+- **`created_by` is required** (`NOT NULL`), same rationale as `stock_movements.created_by`: a return is a financial/inventory transaction and must be attributable to whoever created it. It names who drafted the return, not necessarily who completed or reversed it — Phase 1 doesn't track a separate actor per status transition; the `stock_movements` rows posted at completion/reversal carry their own `created_by`, which is where that finer-grained attribution actually lives.
 
 ---
 
@@ -1219,7 +1289,7 @@ CREATE TABLE purchase_return_items (
     -- whole units only, matching inventory_batches/stock_movements
     quantity            INTEGER NOT NULL
                             CONSTRAINT purchase_return_items_quantity_check CHECK (quantity > 0),
-    -- copied from the batch's own immutable cost basis at creation time — see notes
+    -- must match the batch's own immutable cost basis at all times — see notes
     unit_cost           NUMERIC(12,2) NOT NULL
                             CONSTRAINT purchase_return_items_unit_cost_check CHECK (unit_cost >= 0),
     -- purchase-side tax being credited back; the application derives this proportionally
@@ -1228,6 +1298,7 @@ CREATE TABLE purchase_return_items (
                             CONSTRAINT purchase_return_items_tax_check CHECK (tax_amount >= 0),
     line_total          NUMERIC(14,2) NOT NULL,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT purchase_return_items_line_total_check
         CHECK (line_total = round(quantity * unit_cost + tax_amount, 2)),
@@ -1250,9 +1321,16 @@ CREATE INDEX idx_purchase_return_items_return ON purchase_return_items (purchase
 CREATE INDEX idx_purchase_return_items_purchase_item ON purchase_return_items (purchase_item_id);
 CREATE INDEX idx_purchase_return_items_batch ON purchase_return_items (batch_id);
 
+CREATE TRIGGER trg_purchase_return_items_set_updated_at
+    BEFORE UPDATE ON purchase_return_items
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+
 -- cross-row checks a composite FK can't express: the batch must be the one this purchase line
 -- actually produced, the purchase line must actually belong to the purchase this return is
--- against, and the preserved unit_cost must match the batch's own immutable cost basis
+-- against, and the preserved unit_cost must match the batch's own immutable cost basis.
+-- Re-runs on every UPDATE too (not just INSERT), since quantity/unit_cost/tax_amount stay
+-- editable while the return is draft — see the draft-only guard below.
 CREATE FUNCTION purchase_return_items_validate() RETURNS TRIGGER AS $$
 DECLARE
     v_batch_purchase_item_id UUID;
@@ -1291,58 +1369,66 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_purchase_return_items_validate
-    BEFORE INSERT ON purchase_return_items
+    BEFORE INSERT OR UPDATE ON purchase_return_items
     FOR EACH ROW
     EXECUTE FUNCTION purchase_return_items_validate();
 
--- append-only, like stock_movements: no updates, no deletes, ever
-CREATE FUNCTION purchase_return_items_reject_change() RETURNS TRIGGER AS $$
+-- identity (which return/purchase item/batch/variant/tenant/store this line is for) is
+-- immutable from the moment a line exists — only quantity/unit_cost/tax_amount/line_total
+-- may change, and only while the parent return is still draft (next trigger)
+CREATE FUNCTION purchase_return_items_prevent_identity_change() RETURNS TRIGGER AS $$
 BEGIN
-    RAISE EXCEPTION 'purchase_return_items is append-only; a correction needs a new, separate return';
+    IF NEW.tenant_id <> OLD.tenant_id
+       OR NEW.store_id <> OLD.store_id
+       OR NEW.variant_id <> OLD.variant_id
+       OR NEW.purchase_return_id <> OLD.purchase_return_id
+       OR NEW.purchase_item_id <> OLD.purchase_item_id
+       OR NEW.batch_id <> OLD.batch_id THEN
+        RAISE EXCEPTION 'purchase_return_items identity columns are immutable (item %)', OLD.id;
+    END IF;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_purchase_return_items_append_only
-    BEFORE UPDATE OR DELETE ON purchase_return_items
+CREATE TRIGGER trg_purchase_return_items_prevent_identity_change
+    BEFORE UPDATE ON purchase_return_items
     FOR EACH ROW
-    EXECUTE FUNCTION purchase_return_items_reject_change();
+    EXECUTE FUNCTION purchase_return_items_prevent_identity_change();
 
--- checked at commit, so the return item and its PURCHASE_RETURN movement can be inserted in
--- either order — mirrors inventory_batches' own completeness check for its PURCHASED movement
-CREATE FUNCTION trg_fn_purchase_return_items_insert_guard() RETURNS TRIGGER AS $$
+-- lines are editable only while the return is draft; once completed or reversed they are
+-- history — mirrors purchase_items_require_open_purchase exactly
+CREATE FUNCTION purchase_return_items_require_draft_return() RETURNS TRIGGER AS $$
+DECLARE
+    v_status VARCHAR(20);
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM stock_movements
-         WHERE batch_id = NEW.batch_id
-           AND movement_type = 'PURCHASE_RETURN'
-           AND reference_type = 'PURCHASE_RETURN'
-           AND reference_id = NEW.id
-           AND quantity = NEW.quantity
-    ) THEN
-        RAISE EXCEPTION 'purchase_return_item % has no matching PURCHASE_RETURN stock movement', NEW.id;
+    SELECT status INTO v_status
+      FROM purchase_returns
+     WHERE id = CASE WHEN TG_OP = 'DELETE' THEN OLD.purchase_return_id ELSE NEW.purchase_return_id END;
+
+    IF v_status <> 'draft' THEN
+        RAISE EXCEPTION 'purchase_return_items cannot be changed once the return is %', v_status;
     END IF;
 
-    RETURN NULL;
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE CONSTRAINT TRIGGER trg_purchase_return_items_insert_guard
-    AFTER INSERT ON purchase_return_items
-    DEFERRABLE INITIALLY DEFERRED
+CREATE TRIGGER trg_purchase_return_items_require_draft_return
+    BEFORE INSERT OR UPDATE OR DELETE ON purchase_return_items
     FOR EACH ROW
-    EXECUTE FUNCTION trg_fn_purchase_return_items_insert_guard();
+    EXECUTE FUNCTION purchase_return_items_require_draft_return();
 ```
 
 ### Notes
 
-- **`reference_type='PURCHASE_RETURN'` resolves to `purchase_return_items.id`**, not `purchase_returns.id`. This was left ambiguous when `stock_movements.reference_type` was first designed; resolving it now, for consistency with `PURCHASE_ITEM` (which already points at the *line* — `purchase_items.id` — not the purchase header): each `purchase_return_items` row gets its own `PURCHASE_RETURN` movement, and `reference_id` names that line. A return with three lines against three different batches posts three `PURCHASE_RETURN` movements, one per line, each `reference_id` pointing at its own `purchase_return_items.id` — the same "several movements can share a reference, but each line has exactly one" shape `PURCHASE_ITEM` already has.
-- **The application flow is: validate → `INSERT purchase_return_items` → `INSERT stock_movements` (`PURCHASE_RETURN`) → commit.** The `stock_movements` insert's existing `trg_stock_movements_apply_to_batch` trigger (see that table) is what actually decrements `inventory_batches.available_quantity` — nothing new is added here, `purchase_return_items` plugs into the exact same DB-owned mechanism every other movement type already uses. The application must never issue its own `UPDATE` to `available_quantity`; that path is already closed off by the `REVOKE` on that column.
-- **"Returned quantity must not exceed available quantity" is enforced the same way an oversell already is: `CHECK (available_quantity >= 0)` on `inventory_batches`, tripped by the same trigger.** No new mechanism was added here — a `PURCHASE_RETURN` movement that would take a batch negative fails the whole transaction (return item included), exactly like an over-sold `SOLD` movement does. The application should still pre-check `batch.available_quantity` before attempting the insert, for a good error message, per the same pattern already documented under `stock_movements`.
-- **`unit_cost` is copied, not entered.** `trg_purchase_return_items_validate` hard-rejects any value that doesn't exactly equal the referenced batch's own `unit_cost` — there is no "recalculate from today's cost" path, so the credit due back always reflects what was actually paid for that specific batch, consistent with "preserve the original acquisition cost."
-- **`tax_amount` is proportional, application-computed, and not independently DB-verified.** Unlike `unit_cost` (a fixed, immutable value with one correct answer), the purchase tax owed back on a *partial* return of a line is `round(purchase_items.tax_amount * quantity / purchase_items.quantity, 2)` — a derived, rounding-sensitive calculation. Per the validation requirements, this is application/service-layer responsibility rather than a rigid `CHECK`, the same way `purchase_items.discount_amount`/`tax_amount` are already "the application computes them" (see that table's notes) rather than DB-derived. **This column is purchase-side tax only** — tax paid to (and credited back by) the supplier. No sales-side tax field exists here or ever will; see `purchase_items`' tax-scoping note, which applies identically to this table.
+- **`reference_type='PURCHASE_RETURN'` resolves to `purchase_return_items.id`**, not `purchase_returns.id`, for both a completion's `PURCHASE_RETURN` movement and a reversal's `PURCHASE_RETURN_REVERSAL` movement — consistent with `PURCHASE_ITEM` already pointing at the *line* (`purchase_items.id`), not the purchase header. A return with three lines against three different batches posts three `PURCHASE_RETURN` movements at completion, one per line; if later reversed, it posts three more `PURCHASE_RETURN_REVERSAL` movements, each still `reference_type='PURCHASE_RETURN'` and `reference_id`=that same line's id. `reference_id` not being unique (see `stock_movements`) is exactly what lets both the original and its reversal point at the same line.
+- **Mutable while `draft`, frozen from `completed` onward.** `trg_purchase_return_items_require_draft_return` blocks every insert, update and delete once the parent return leaves `draft` — the same rule `purchase_items_require_open_purchase` already applies to purchase lines while their purchase is `draft`/`ordered`. Within `draft`, `trg_purchase_return_items_prevent_identity_change` still locks which return/purchase item/batch/variant/tenant/store a line points to (change your mind about *which* batch → delete the line and add a new one), but `quantity`, `unit_cost`, `tax_amount` and `line_total` can be adjusted freely, each re-validated by `purchase_return_items_validate` and the `line_total` `CHECK` on every edit. **A draft return has no inventory effect** — no `stock_movements` row exists for a draft item, `available_quantity` is untouched, and nothing here requires one to exist yet (contrast `inventory_batches`, where a batch is invalid without a matching `PURCHASED` movement from the moment it exists — return items are deliberately not held to that bar until they leave draft).
+- **The application flow is: validate → build/edit `purchase_return_items` while `draft` → (to complete) `INSERT stock_movements` (`PURCHASE_RETURN`) per item → `UPDATE purchase_returns SET status='completed'` → commit atomically.** `trg_purchase_returns_completion_guard` (see `purchase_returns`) verifies at commit that every item has its matching movement — that's what turns "the app is supposed to insert one movement per item" from a convention into a guarantee. The `stock_movements` insert's existing `trg_stock_movements_apply_to_batch` trigger (see that table) is what actually decrements `inventory_batches.available_quantity`; nothing new was added here for that part. The application must never issue its own `UPDATE` to `available_quantity` — that path is already closed off by the `REVOKE` on that column.
+- **"Returned quantity must not exceed available quantity" is enforced the same way an oversell already is: `CHECK (available_quantity >= 0)` on `inventory_batches`, tripped by the same trigger, at completion time.** No new mechanism was needed — a `PURCHASE_RETURN` movement that would take a batch negative fails the whole completion transaction, exactly like an over-sold `SOLD` movement does. Because the check only bites when the movement actually posts (at completion, not at draft-time editing), the application should pre-check `batch.available_quantity` right before completing — a draft item's snapshot of "was there enough stock" can go stale while it sits in draft, so a pre-check at draft-creation time would be advisory at best; the real answer is always "does completion's `CHECK` pass right now."
+- **`unit_cost` always matches the batch, at every edit, not just at creation.** `purchase_return_items_validate` re-runs on `UPDATE` too and hard-rejects any value that doesn't exactly equal the referenced batch's own `unit_cost` — there is no "recalculate from today's cost" path, so the credit due back always reflects what was actually paid for that specific batch, consistent with "preserve the original acquisition cost."
+- **`tax_amount` is proportional, application-computed, and not independently DB-verified.** Unlike `unit_cost` (a fixed, immutable value with one correct answer), the purchase tax owed back on a *partial* return of a line is `round(purchase_items.tax_amount * quantity / purchase_items.quantity, 2)` — a derived, rounding-sensitive calculation that should be recomputed by the application whenever `quantity` is edited in draft. Per the validation requirements, this is application/service-layer responsibility rather than a rigid `CHECK`, the same way `purchase_items.discount_amount`/`tax_amount` are already "the application computes them" (see that table's notes) rather than DB-derived. **This column is purchase-side tax only** — tax paid to (and credited back by) the supplier. No sales-side tax field exists here or ever will; see `purchase_items`' tax-scoping note, which applies identically to this table.
 - **`line_total = round(quantity × unit_cost + tax_amount, 2)`** — the cost of the returned units plus their share of purchase tax, i.e. the credit owed back from the supplier. There is no discount component: Phase 1 returns don't re-open or re-negotiate the original line's discount, they only give back cost and tax on the units actually returned.
-- **Fully immutable, append-only, no `updated_at` — by design, not oversight.** `purchase_return_items` has no mutable column at all (unlike `purchase_returns`, which at least has a `status` to cancel), so every update and delete is rejected outright, the same idiom as `stock_movements`. A wrong return line is corrected the way every other posted fact in this schema is corrected: a new, separate transaction (here, a new purchase — the goods coming back in — not a self-referential "return of a return"), never an edit.
-- **Auditability is now a real, DB-enforced chain, both directions:** `purchases → purchase_items → inventory_batches → PURCHASED movement` (existing) and `purchases → purchase_items → purchase_returns → purchase_return_items → PURCHASE_RETURN movement` (this table). `trg_fn_purchase_return_items_insert_guard` is what makes the second chain a guarantee rather than a convention — a `purchase_return_items` row can no more exist without its `PURCHASE_RETURN` movement than an `inventory_batches` row can exist without its `PURCHASED` movement.
+- **Auditability is a real, DB-enforced chain, both directions, anchored on the *return header's* status transitions rather than on each item's own insert.** `purchases → purchase_items → inventory_batches → PURCHASED movement` (existing) and `purchases → purchase_items → purchase_returns → purchase_return_items → PURCHASE_RETURN movement → (optionally) PURCHASE_RETURN_REVERSAL movement` (this table, plus `purchase_returns`' completion/reversal guard). A `purchase_return_items` row can exist without a movement (while draft) — that's intentional — but a return cannot *reach* `completed` or `reversed` without every one of its items having the matching movement, which is where the guarantee actually lives.
 - **No partial or multi-batch *receiving* is introduced here.** A return always targets one specific, already-existing batch (`batch_id`); nothing about returns creates new batches, splits a purchase item's receipt across several batches, or otherwise touches how goods were originally received.
 
 Example queries:
@@ -1356,11 +1442,16 @@ SELECT pr.id AS return_id, pr.return_date, pr.status,
  WHERE pr.tenant_id = $1 AND pr.purchase_id = $2
  ORDER BY pr.return_date, pri.created_at;
 
--- full traceability for one returned batch: the receipt and every return against it
+-- full traceability for one returned batch: receipt, every return, and any reversal
 SELECT movement_type, quantity, occurred_at, reference_type, reference_id
   FROM stock_movements
  WHERE tenant_id = $1 AND batch_id = $2
  ORDER BY occurred_at;
+
+-- has this completed return been reversed?
+SELECT status FROM purchase_returns WHERE tenant_id = $1 AND id = $2;
+-- status = 'reversed' means yes; trg_purchase_returns_guard_update already guarantees
+-- it can't be 'reversed' twice, so this single check is authoritative
 ```
 
 ---
@@ -1407,7 +1498,9 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 | Same variant bought at a new cost | A new purchase line and a new batch with its own barcode. Nothing existing changes |
 | Sell stock | 1 `SOLD` `stock_movements` row per batch drawn from (`reference_type='SALE_ITEM'`); its trigger decrements that batch's `available_quantity` in the same transaction, and fails the whole sale if it would go negative |
 | Customer returns a sale | 1 `SALE_RETURN` `stock_movements` row (`reference_type='SALE_RETURN'`) |
-| Return stock to a supplier | 1 `purchase_returns` (header) + 1 `purchase_return_items` row per batch returned from + 1 `PURCHASE_RETURN` `stock_movements` row per line (`reference_type='PURCHASE_RETURN'`, `reference_id`=that line's id), whose trigger decrements each batch's `available_quantity` in the same transaction |
+| Draft a return | 1 `purchase_returns` (header, `status='draft'`) + 1 `purchase_return_items` row per batch to return from. No stock effect yet — freely editable while draft |
+| Complete a return | Per item, 1 `PURCHASE_RETURN` `stock_movements` row (`reference_type='PURCHASE_RETURN'`, `reference_id`=that item's id), whose trigger decrements each batch's `available_quantity`; then `UPDATE purchase_returns SET status='completed'` — all in one transaction, verified at commit by the completion guard |
+| Reverse a completed return | Per item, 1 `PURCHASE_RETURN_REVERSAL` `stock_movements` row (same `reference_type='PURCHASE_RETURN'`/`reference_id` as the original item), whose trigger re-increments each batch's `available_quantity`; then `UPDATE purchase_returns SET status='reversed'` — same atomic pattern as completion. The original `purchase_returns`/`purchase_return_items` rows are untouched |
 | Correct a miscount, damage or loss | 1 `DAMAGED` / `LOST` / `INTERNAL_USE` `stock_movements` row, optionally against a `STOCK_ADJUSTMENT` reference |
 
 ### Future path (not Phase 1)
@@ -1438,7 +1531,7 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 - **`variants` carries its own `store_id`, denormalised from `sellables` and FK-tied to it.** This lets `inventory_batches` enforce tenant/store/variant consistency with one direct composite FK to `variants`, instead of relying only on the transitive path through `purchase_items`. The same "denormalise the parent's store, then FK back to it" pattern `purchase_items.store_id` already used against `purchases`.
 - **Selling price stays variant-first; the sellable is never asked for a price.** No schema change was needed here — `variants.base_price` and a price-less `sellables` were already the Phase 1 design — but the product-creation UX (variant name, SKU, attributes and price entered per-variant) is now an explicit, documented decision rather than an implicit consequence of the schema.
 - **Purchase tax and sales tax are, and remain, separate concepts that never share a column.** `purchase_items.tax_amount` is scoped to tax paid to the supplier; a future `sale_items.sales_tax_amount` will be scoped to tax collected from the customer. `inventory_batches` carries only `unit_cost` (acquisition cost for valuation) — no tax field of either kind, absent a demonstrated accounting need.
-- **`stock_movements.quantity` is unsigned; direction comes from `movement_type`.** Seven Phase 1 types (`PURCHASED`, `SOLD`, `PURCHASE_RETURN`, `SALE_RETURN`, `DAMAGED`, `LOST`, `INTERNAL_USE`) each map to a fixed sign via `stock_movement_sign()`, rather than trusting each caller to supply a correctly-signed delta. `reference_type`/`reference_id` trace a movement back to its originating transaction and are deliberately not unique, since one transaction (a multi-line sale, a multi-batch receipt) can post several movements against the same reference.
+- **`stock_movements.quantity` is unsigned; direction comes from `movement_type`.** Eight Phase 1 types (`PURCHASED`, `SOLD`, `PURCHASE_RETURN`, `SALE_RETURN`, `DAMAGED`, `LOST`, `INTERNAL_USE`, `PURCHASE_RETURN_REVERSAL`) each map to a fixed sign via `stock_movement_sign()`, rather than trusting each caller to supply a correctly-signed delta. `reference_type`/`reference_id` trace a movement back to its originating transaction and are deliberately not unique, since one transaction (a multi-line sale, a multi-batch receipt) can post several movements against the same reference — and now also because a reversal deliberately shares its original movement's `reference_id`.
 - **`stock_movements` keeps `occurred_at` (business time) separate from `created_at` (record time).** They usually match, but corrections, delayed entry and future imports can legitimately post a movement whose `occurred_at` is in the past. Ledger and inventory-query indexes are built on `occurred_at`.
 - **The ledger does not enforce "one `PURCHASED` movement per batch."** Receipt integrity (a batch is received exactly once) is a purchasing-workflow rule, checked by the deferred trigger on `inventory_batches` as an existence check, not a `stock_movements`-level uniqueness constraint — keeping the ledger's own shape independent of how any one business process happens to use it today.
 - **A purchase line may be split into several batches — schema capability, not a Phase 1 workflow.** The rule is that batch `received_quantity` totals may not exceed the line's `quantity`; it is not an equality, so partial receipts and multiple batches per line are valid at the schema level, and future batch splitting fits the same shape. Phase 1's receiving UI only exposes the simple one-item-one-batch-received-in-full path — multi-batch/partial receiving isn't a feature a Phase 1 user can invoke, but the schema doesn't need a migration to expose it later. This distinction — schema capability vs. workflow exposure — is deliberate: it keeps Phase 1 simple in the UI without narrowing the database in a way that would need undoing.
@@ -1446,9 +1539,11 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 - **`kind` is a coarse discriminator only.** `product` / `service` says whether stock can exist. Capabilities (F-01 facets) will be modelled as separate optional tables and are not replaced by `kind`.
 - **Purchases and their history are frozen after receipt.** Lines are editable only while a purchase is `draft` or `ordered`; `received` and `cancelled` are terminal. Header totals are verified against the lines at commit.
 - **A purchase return is a new document, never an edit to the original purchase.** `purchase_returns`/`purchase_return_items` point back at `purchases`/`purchase_items` and `inventory_batches` but never modify them; `purchases.status` has no `returned` value and never will — the return lives entirely in its own tables, so a purchase's original receipt history stays untouched no matter how many returns are later posted against it.
-- **`purchase_return_items` reuses the existing stock-movement/available_quantity mechanism wholesale — no new trigger on `inventory_batches` was needed.** Posting a `PURCHASE_RETURN` movement decrements `available_quantity` and enforces the oversell floor exactly the way `SOLD` already does; the only genuinely new pieces are `purchase_return_items`' own referential-integrity trigger (batch ↔ purchase item ↔ purchase agreement, and preserved `unit_cost`) and its deferred completeness check (a return line must have a matching ledger row), both mirroring patterns `inventory_batches` already established for `PURCHASED`.
-- **`reference_type='PURCHASE_RETURN'` resolves to the return *line* (`purchase_return_items.id`), matching how `PURCHASE_ITEM` already resolves to a purchase *line*, not a purchase header.** This was left unspecified when the `reference_type` enum was first written; building the actual return tables forced the resolution, and line-level was chosen for consistency across both reference types.
-- **`purchase_return_items` is fully immutable and append-only (no `updated_at`, no allowed `UPDATE`/`DELETE`), stricter even than `purchase_returns`.** A return line is a posted financial/inventory fact the moment it exists; correcting it is a new transaction, never an edit — the same rule already governing `stock_movements`.
+- **`purchase_return_items` reuses the existing stock-movement/available_quantity mechanism wholesale — no new trigger on `inventory_batches` was needed, and no new column either.** Posting a `PURCHASE_RETURN` movement decrements `available_quantity` and enforces the oversell floor exactly the way `SOLD` already does; posting a `PURCHASE_RETURN_REVERSAL` re-increments it the same way `PURCHASED`/`SALE_RETURN` do. The only genuinely new pieces are `purchase_return_items`' own referential-integrity trigger (batch ↔ purchase item ↔ purchase agreement, and preserved `unit_cost`) and the header-level completion/reversal completeness check on `purchase_returns`, both mirroring patterns `inventory_batches` already established for `PURCHASED`.
+- **`reference_type='PURCHASE_RETURN'` resolves to the return *line* (`purchase_return_items.id`), matching how `PURCHASE_ITEM` already resolves to a purchase *line*, not a purchase header — and a reversal's movement reuses the same `reference_type`/`reference_id` as the return it reverses.** This was left unspecified when the `reference_type` enum was first written; building the actual return tables forced the resolution, and line-level was chosen for consistency across both reference types.
+- **`purchase_return_items` gained a real lifecycle (mutable while `draft`, frozen from `completed` onward) — superseding the earlier "fully immutable and append-only" decision.** That earlier design assumed a return posts its stock effect the instant it's created, with no staging step; the actual requirement is a return can be *drafted* — items added, quantities adjusted — with zero inventory effect until it's explicitly completed. `purchase_return_items` now has `updated_at` and is editable (content columns only; identity columns stay locked) exactly while its parent `purchase_returns.status = 'draft'`, the same `require-open-parent` idiom `purchase_items` already uses against `purchases`. Once `completed`, it is exactly as immutable as the earlier decision described — the earlier design wasn't wrong about the destination, just about when immutability starts.
+- **Purchase returns have a real three-state lifecycle — `draft → completed → reversed` — superseding the earlier `completed`/`cancelled` decision.** The earlier decision had no staging state (a return posted its movements the moment it was created) and no reversal concept (`cancelled` was a paperwork-only annotation that explicitly did *not* undo stock). The actual requirement needed both: a draft stage with no inventory effect, and a real reversal that restores exactly what a completed return removed via a compensating `PURCHASE_RETURN_REVERSAL` movement, never by editing or deleting the original. `reversed` is terminal (no edge leaves it), which is what makes "a completed return can't be reversed twice" true without extra bookkeeping — a second reversal attempt is just an illegal transition, rejected the same way any other disallowed status change is.
+- **`purchases.status` transitions are now validated edge by edge, not just by blocking changes away from the two terminal states.** The original guard only stopped `received`/`cancelled` from changing further; it did not stop an illegal direct `draft → received` jump, since `draft` was never in the blocked-`FROM` list. `trg_purchases_guard_update` now enumerates exactly the four allowed edges (`draft→ordered`, `draft→cancelled`, `ordered→received`, `ordered→cancelled`) and rejects everything else, which is what makes "a purchase can't be cancelled once inventory has arrived" a structural guarantee rather than an incidental side effect: no batch can exist before `status='received'`, and once `received`, `cancelled` is no longer a reachable edge.
 
 ## Up next
 
