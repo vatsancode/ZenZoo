@@ -772,7 +772,7 @@ CREATE CONSTRAINT TRIGGER trg_purchase_items_totals_guard
 
 - **`unit_cost` is what we paid the supplier.** It is never copied into `variants.base_price`, and nothing reads it as a selling price.
 - **`line_total = round(quantity × unit_cost − discount + tax, 2)`**, enforced by `CHECK`. `discount_amount` and `tax_amount` are absolute amounts for the whole line, not per unit or percentages, so the application computes them (tax rules belong to the compliance pack, N-11).
-- **`tax_amount` here is *purchase* tax — tax paid to the supplier — and it stays scoped to this table.** There is no generic, shared `tax` concept anywhere in this schema: purchasing and sales are different transactions with different tax treatment (input tax vs. output tax), so a future `sale_items` table gets its own `sales_tax_amount` column, never a column shared with `purchase_items`. Neither concept lives on `inventory_batches`, which only ever stores acquisition cost (`unit_cost`) — see that table's notes.
+- **`tax_amount` here is *purchase* tax — tax paid to the supplier — and it stays scoped to this table.** There is no generic, shared `tax` concept anywhere in this schema: purchasing and sales are different transactions with different tax treatment (input tax vs. output tax), so `sale_items` (see the customers/payments phase) gets its own `sales_tax_amount` column, never a column shared with `purchase_items`. Neither concept lives on `inventory_batches`, which only ever stores acquisition cost (`unit_cost`) — see that table's notes.
 - **`store_id` is denormalised on purpose.** It exists so a composite FK can force a line into the same store as its purchase, and so batches can inherit that store.
 - The variant guard checks store and kind at write time. When sharing arrives, this one trigger is what gets relaxed.
 
@@ -916,7 +916,7 @@ CREATE CONSTRAINT TRIGGER trg_inventory_batches_insert_guard
 
 - **One purchase line → many batches, as a *schema* capability — not exposed as a Phase 1 *workflow*.** The rule is *the batches' `received_quantity` together may not exceed the line's `quantity`*. It is deliberately **not** an equality: nothing here blocks a partial receipt, or a line split into several batches (each with its own barcode), and `purchase_item_id` stays a plain (non-unique) FK for exactly that reason. But the Phase 1 receiving *UI* only ever exposes the simple path — one purchase item becomes one batch, received in full, in one step. Multi-batch and partial receiving are not built as a feature the user can invoke; the schema just doesn't stand in the way when a later phase adds that UI, so this table needs no migration when it does. Over-receipt is still rejected regardless: if the supplier shipped 52 against an order of 50, correct the line to 52 first, so the record shows what really arrived.
 - **Same variant, different costs.** `Red Silk Saree / 6m` can have Batch A (50 units at ₹1,500, barcode A) and Batch B (30 units at ₹1,650, barcode B). They are different rows under the same `variant_id`, each with its own barcode and cost basis.
-- **`unit_cost` on the batch is the cost basis of that stock, and only that.** It starts as the purchase line's cost and is immutable. It is a separate column from `purchase_items.unit_cost` because the effective cost per unit can later include allocated discount, tax or freight, and because margin and cost-of-goods reporting must never depend on a line that could be edited. **No purchase-tax or sales-tax field lives here** — tax is a transaction-side concept (`purchase_items.tax_amount` today, a future `sale_items.sales_tax_amount`), and the batch tracks acquisition cost for valuation, not tax. If inventory valuation is ever demonstrated to need a tax-inclusive cost basis, that is a deliberate follow-up decision, not a default.
+- **`unit_cost` on the batch is the cost basis of that stock, and only that.** It starts as the purchase line's cost and is immutable. It is a separate column from `purchase_items.unit_cost` because the effective cost per unit can later include allocated discount, tax or freight, and because margin and cost-of-goods reporting must never depend on a line that could be edited. **No purchase-tax or sales-tax field lives here** — tax is a transaction-side concept (`purchase_items.tax_amount` on the purchase side, `sale_items.sales_tax_amount` on the sales side), and the batch tracks acquisition cost for valuation, not tax. If inventory valuation is ever demonstrated to need a tax-inclusive cost basis, that is a deliberate follow-up decision, not a default.
 - **`received_quantity` is immutable and whole-number only**: it is how many units arrived, not how many remain. `purchase_items.quantity` upstream is `INTEGER` too, so there is no fractional-to-whole boundary to reconcile anywhere in Phase 1 — every quantity column in the purchasing → batch → ledger chain is whole units, consistently. Weighed or fractional goods are not a Phase 1 concept at all; supporting them later means designing a proper unit-of-measure model (a unit column, a conversion/precision scheme) rather than quietly widening these columns back to `NUMERIC`.
 - **`available_quantity` is the current operational balance, and the *only* mutable column on this table.** It starts at `0` and is changed **exclusively** by the `stock_movements` trigger described in that table's section below — never by a direct application `UPDATE`. A batch's first `PURCHASED` movement is what brings it from `0` up to `received_quantity`, using the exact same code path as every later `SOLD`, `DAMAGED`, `SALE_RETURN`, etc. — there is deliberately no special-cased "set available_quantity at batch creation" logic. See "Batch balance vs. the ledger" under `stock_movements` for why this can't drift from the ledger, and why `CHECK (available_quantity >= 0)` is a real, enforced backstop rather than a hopeful comment.
 - **`REVOKE` is the second line of defence for `available_quantity`, same idiom as `stock_movements`.** `trg_inventory_batches_prevent_core_change` stops every column except `available_quantity` (and `updated_at`) from changing, but it cannot by itself distinguish a legitimate trigger-driven update from a direct application `UPDATE ... SET available_quantity = ...` that bypasses the ledger — both arrive as an ordinary `UPDATE` statement. Production should `REVOKE UPDATE (available_quantity) ON inventory_batches FROM <app_role>` (Postgres supports column-level privileges), so the application role can no longer write that column at all. A plain (`SECURITY INVOKER`, the PL/pgSQL default) function would run as whichever role fired the triggering `INSERT` and would be blocked by that same `REVOKE` — which is why `trg_fn_stock_movements_apply_to_batch` is declared `SECURITY DEFINER`, so it runs with the privileges of the function's owner regardless of who inserted the movement.
@@ -1456,6 +1456,563 @@ SELECT status FROM purchase_returns WHERE tenant_id = $1 AND id = $2;
 
 ---
 
+## Phase 1: customers and payments
+
+**This phase assumes a `sales` and `sale_items` table that did not, until now, exist anywhere in this document** — "Up next" (see the end of this document, largely superseded by this section) has always described the order/sale model as future work. Building the customer/payment model in this task requires *something* for `customers`, `sale_payments` and `customer_credit_ledger` to reference with real foreign keys, so this section opens with the smallest possible `sales`/`sale_items` stub — just enough columns for referential integrity — clearly marked as a placeholder. **It is not the sales/order design.** The real sale lifecycle (a state machine analogous to `purchases`' `draft`/`ordered`/`received`/`cancelled`), the `SOLD` stock-movement integration (which batch a sale item draws from, FIFO or otherwise), discount/tax computation rules, and sale returns/refunds are all still open and deliberately out of scope here — see "Conflicts and loopholes" in the summary after this edit.
+
+```text
+Tenant
+  └── Store
+        ├── Customers (tenant-level; a customer is not store-scoped)
+        ├── Sales ──► Customer (nullable — guest sales), Store
+        │     └── Sale Items ──► Variant
+        ├── Payment Methods (tenant-level: HOW — cash, UPI, card, ...)
+        ├── Payment Accounts ──► Store (WHERE — a till, a bank account, ...)
+        ├── Sale Payments ──► Sale, Payment Method, Payment Account (nullable for credit)
+        └── Customer Credit Ledger ──► Customer, Sale, Sale Payment (receivable balance)
+```
+
+**Conventions used by every table below** — the same ones already established for catalogue/purchasing/inventory, applied unchanged: `tenant_id` explicit on every table for RLS and composite FKs; parents expose `UNIQUE (tenant_id, ...)` targets and children reference them; soft-delete via a terminal or reversible `status`, never `deleted_at`; money is `NUMERIC(12,2)` per unit / `NUMERIC(14,2)` for totals; quantities are `INTEGER`. `sale_payments` and `customer_credit_ledger` are financial ledgers in the exact same sense `stock_movements` is, and get the same append-only treatment (no `updated_at`, `UPDATE`/`DELETE` rejected by trigger) for the same reason: a completed financial record is corrected by a new, compensating entry, never by editing history.
+
+---
+
+### `sales` (minimal stub — see the section intro)
+
+One completed sale transaction at a store, optionally tied to a customer.
+
+```sql
+CREATE TABLE sales (
+    id                  UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id           UUID NOT NULL REFERENCES tenants (id),
+    store_id            UUID NOT NULL,
+    -- nullable: guest/anonymous sales are supported, no fake customer row is created for them
+    customer_id         UUID,
+    sale_date           DATE NOT NULL DEFAULT CURRENT_DATE,
+    -- Phase 1 records a sale as already completed (POS-style); the full lifecycle
+    -- (drafts/carts, voids, returns) is future work — see the section intro
+    status              VARCHAR(20) NOT NULL DEFAULT 'completed'
+                            CONSTRAINT sales_status_check
+                            CHECK (status IN ('completed')),
+    subtotal_amount     NUMERIC(14,2) NOT NULL DEFAULT 0
+                            CONSTRAINT sales_subtotal_check CHECK (subtotal_amount >= 0),
+    discount_amount     NUMERIC(14,2) NOT NULL DEFAULT 0
+                            CONSTRAINT sales_discount_check CHECK (discount_amount >= 0),
+    -- sales-side tax, kept separate from purchase-side tax — see purchase_items' tax-scoping note
+    tax_amount          NUMERIC(14,2) NOT NULL DEFAULT 0
+                            CONSTRAINT sales_tax_check CHECK (tax_amount >= 0),
+    total_amount        NUMERIC(14,2) NOT NULL DEFAULT 0
+                            CONSTRAINT sales_total_check CHECK (total_amount >= 0),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT sales_total_amount_check
+        CHECK (total_amount = subtotal_amount - discount_amount + tax_amount),
+
+    -- target for sale_items, sale_payments and customer_credit_ledger
+    CONSTRAINT sales_tenant_store_id_unique UNIQUE (tenant_id, store_id, id),
+    CONSTRAINT sales_store_fk
+        FOREIGN KEY (tenant_id, store_id) REFERENCES stores (tenant_id, id),
+    -- MATCH SIMPLE (the default): a NULL customer_id skips this check entirely,
+    -- which is exactly what a guest sale needs
+    CONSTRAINT sales_customer_fk
+        FOREIGN KEY (tenant_id, customer_id) REFERENCES customers (tenant_id, id)
+);
+
+CREATE INDEX idx_sales_store_date ON sales (tenant_id, store_id, sale_date DESC);
+CREATE INDEX idx_sales_customer ON sales (tenant_id, customer_id) WHERE customer_id IS NOT NULL;
+
+CREATE TRIGGER trg_sales_set_updated_at
+    BEFORE UPDATE ON sales
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+```
+
+### `sale_items` (minimal stub — see the section intro)
+
+```sql
+CREATE TABLE sale_items (
+    id                  UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id           UUID NOT NULL REFERENCES tenants (id),
+    store_id            UUID NOT NULL,
+    sale_id             UUID NOT NULL,
+    variant_id          UUID NOT NULL,
+    quantity            INTEGER NOT NULL
+                            CONSTRAINT sale_items_quantity_check CHECK (quantity > 0),
+    -- what the customer paid per unit; never a purchase cost
+    selling_price       NUMERIC(12,2) NOT NULL
+                            CONSTRAINT sale_items_selling_price_check CHECK (selling_price >= 0),
+    discount_amount     NUMERIC(12,2) NOT NULL DEFAULT 0
+                            CONSTRAINT sale_items_discount_check CHECK (discount_amount >= 0),
+    -- sales tax collected from the customer — see purchase_items' tax-scoping note, which
+    -- anticipated exactly this column before sale_items existed to hold it
+    sales_tax_amount    NUMERIC(12,2) NOT NULL DEFAULT 0
+                            CONSTRAINT sale_items_tax_check CHECK (sales_tax_amount >= 0),
+    line_total          NUMERIC(14,2) NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT sale_items_line_total_check
+        CHECK (line_total = round(quantity * selling_price - discount_amount + sales_tax_amount, 2)),
+
+    CONSTRAINT sale_items_sale_fk
+        FOREIGN KEY (tenant_id, store_id, sale_id) REFERENCES sales (tenant_id, store_id, id),
+    CONSTRAINT sale_items_variant_fk
+        FOREIGN KEY (tenant_id, variant_id) REFERENCES variants (tenant_id, id)
+);
+
+CREATE INDEX idx_sale_items_sale ON sale_items (sale_id);
+CREATE INDEX idx_sale_items_variant ON sale_items (tenant_id, variant_id);
+```
+
+- **Deliberately not wired to inventory.** No `SOLD` `stock_movements` row is created here, no `batch_id`, no FIFO/batch-selection logic — "Up next" already flagged this as the next piece of work ("their order lines will post `SOLD` `stock_movements` rows against batches"), and it remains exactly that: next, not now. Treat `sales`/`sale_items` here as load-bearing only for the customer/payment model this task actually asks for.
+- **No discount/tax *rate* fields**, same reasoning as `purchase_items`/`purchase_return_items`: these are absolute amounts, computed by the application, not percentages stored and reproduced here.
+
+---
+
+## `customers`
+
+A tenant-level contact record for a person or business a sale can (optionally) be attributed to. **Not store-scoped** — a customer can appear on sales from any store belonging to the tenant, unlike `sellables`/`variants`, which are store-scoped in Phase 1.
+
+```sql
+CREATE TABLE customers (
+    id                  UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id           UUID NOT NULL REFERENCES tenants (id),
+    name                VARCHAR(200) NOT NULL,
+    phone               VARCHAR(20),
+    email               VARCHAR(255)
+                            CONSTRAINT customers_email_lowercase_check
+                            CHECK (email = lower(email)),
+    address             TEXT,
+    notes               TEXT,
+    status              VARCHAR(20) NOT NULL DEFAULT 'active'
+                            CONSTRAINT customers_status_check
+                            CHECK (status IN ('active', 'archived')),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- target for sales, customer_credit_ledger
+    CONSTRAINT customers_tenant_id_id_unique UNIQUE (tenant_id, id)
+);
+
+CREATE INDEX idx_customers_tenant_status ON customers (tenant_id, status);
+CREATE INDEX idx_customers_tenant_phone ON customers (tenant_id, phone) WHERE phone IS NOT NULL;
+CREATE INDEX idx_customers_tenant_email ON customers (tenant_id, email) WHERE email IS NOT NULL;
+
+CREATE TRIGGER trg_customers_set_updated_at
+    BEFORE UPDATE ON customers
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+```
+
+### Notes
+
+- **No forced uniqueness on `phone`/`email`.** Same reasoning as `users.phone` and `suppliers`' contact fields: a shared household phone, a customer who gives no email, or a duplicate walk-in entry are all real, and forcing uniqueness would block legitimate data rather than catch a real error. `email` still gets the same lowercase-normalisation `CHECK` used everywhere else in this schema (`users.email`, `suppliers.email`) — not for uniqueness, just consistent casing for the (non-unique) lookup index.
+- **`status`: `active` / `archived` — the standard terminal soft-delete pattern**, same as `suppliers`, `sellables`, `variants`. No `deleted_at`.
+- **No `lifetime_purchase_amount`, no `lifetime_discount_amount`, no `credit_balance` column — none, on purpose.** These are exactly the kind of value this schema has consistently refused to store as a mutable, independently-writable fact (the same reasoning `inventory_batches.available_quantity` had to earn its way past in an earlier phase, and here the answer is simpler: nothing earns it). Purchase history is derived from `sales`/`sale_items` (see "Customer purchase history" below); credit balance is derived from `customer_credit_ledger` (see that table's `customer_credit_balance` view). A customer row is identity and contact information only, exactly the same role `users` plays for staff identity versus `tenant_memberships` for their transactional/authorization facts.
+- **`address`/`notes` are `TEXT`, not `VARCHAR(500)`** (unlike `reason` fields elsewhere in this schema) — both are open-ended, potentially multi-line content, not a short structured reason code.
+
+---
+
+## `payment_methods`
+
+Represents **HOW** a customer paid — cash, UPI, card, bank transfer, customer credit. Tenant-scoped, and deliberately a real table, not a Postgres `ENUM` type, so a tenant can add or disable a method without a schema migration.
+
+```sql
+CREATE TABLE payment_methods (
+    id                  UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id           UUID NOT NULL REFERENCES tenants (id),
+    name                VARCHAR(100) NOT NULL,
+    -- an application-facing constant, e.g. CASH, UPI, CARD, BANK_TRANSFER, CUSTOMER_CREDIT
+    code                VARCHAR(30) NOT NULL
+                            CONSTRAINT payment_methods_code_format_check
+                            CHECK (code = upper(code) AND code ~ '^[A-Z0-9_]+$'),
+    -- true for exactly the method(s) representing a customer receivable, not money actually
+    -- received into an account — see payment_accounts and sale_payments notes
+    is_customer_credit  BOOLEAN NOT NULL DEFAULT false,
+    -- reversible toggle, not a terminal archive — see notes
+    status              VARCHAR(20) NOT NULL DEFAULT 'active'
+                            CONSTRAINT payment_methods_status_check
+                            CHECK (status IN ('active', 'disabled')),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- target for sale_payments
+    CONSTRAINT payment_methods_tenant_id_id_unique UNIQUE (tenant_id, id),
+    CONSTRAINT payment_methods_tenant_code_unique UNIQUE (tenant_id, code)
+);
+
+CREATE INDEX idx_payment_methods_tenant_status ON payment_methods (tenant_id, status);
+
+CREATE TRIGGER trg_payment_methods_set_updated_at
+    BEFORE UPDATE ON payment_methods
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+```
+
+### Notes
+
+- **`code` is `UPPER_SNAKE_CASE`, matching this schema's other application-facing constants** (`stock_movements.movement_type`, `.reference_type`) rather than the lowercase-slug convention used for human-chosen identifiers like `stores.code`. The distinction is deliberate: a payment method's `code` is a small, business-meaningful vocabulary the application branches on (`CUSTOMER_CREDIT` in particular has real, different behaviour — see `is_customer_credit`), closer in kind to a `CHECK`-enum value than to a user-typed label, even though it lives in a real, extensible row rather than a fixed `CHECK` list.
+- **Extensibility is the whole point of this being a table.** A tenant can add `WALLET` or `GIFT_CARD` by inserting a row, not by an `ALTER TYPE ... ADD VALUE` (a real Postgres `ENUM` migration, and one that can't run inside certain transaction patterns) or a schema migration to widen a `CHECK`. `code`'s format `CHECK` constrains *shape*, not the specific allowed values.
+- **`status` is a reversible toggle (`active`/`disabled`), not a terminal archive**, unlike most `status` columns elsewhere in this schema (`sellables.status`, `suppliers.status`, etc., which move one-way toward `archived`). A disabled payment method can be re-enabled — "the tenant should be able to enable/disable payment methods" describes an ordinary settings toggle, not a lifecycle with a point of no return. Historical `sale_payments` rows keep referencing a disabled method just fine (see that table's notes); disabling only affects whether the application offers it for *new* payments.
+- **`is_customer_credit`** is what lets exactly one flag drive two related rules downstream (see `sale_payments`): a credit-flagged method doesn't need a real `payment_account` (nothing was actually received into an account — it's a receivable), and using one must produce a matching `customer_credit_ledger` entry. Nothing stops a tenant from having more than one credit-flagged method in principle, but Phase 1's own example expects exactly one (`CUSTOMER_CREDIT`).
+- **Seeding default rows (`CASH`, `UPI`, `CARD`, `BANK_TRANSFER`, `CUSTOMER_CREDIT`) for a new tenant is an application/provisioning concern**, not a schema one — this document has never included seed-data `INSERT`s, staying schema-only throughout, and this table is no exception.
+
+---
+
+## `payment_accounts`
+
+Represents **WHERE** the business actually receives or holds money — a till, a bank account, a card settlement account. Store-scoped, unlike `payment_methods`.
+
+```sql
+CREATE TABLE payment_accounts (
+    id                  UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id           UUID NOT NULL REFERENCES tenants (id),
+    store_id            UUID NOT NULL,
+    name                VARCHAR(200) NOT NULL,
+    -- a short, user-chosen internal label — same convention as stores.code, unlike
+    -- payment_methods.code (see that table's notes for why the two conventions differ)
+    code                VARCHAR(50) NOT NULL
+                            CONSTRAINT payment_accounts_code_lowercase_check
+                            CHECK (code = lower(code) AND code ~ '^[a-z0-9-]+$'),
+    -- reversible toggle, same semantics as payment_methods.status
+    status              VARCHAR(20) NOT NULL DEFAULT 'active'
+                            CONSTRAINT payment_accounts_status_check
+                            CHECK (status IN ('active', 'disabled')),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- target for sale_payments
+    CONSTRAINT payment_accounts_tenant_store_id_unique UNIQUE (tenant_id, store_id, id),
+    CONSTRAINT payment_accounts_tenant_store_code_unique UNIQUE (tenant_id, store_id, code),
+    CONSTRAINT payment_accounts_store_fk
+        FOREIGN KEY (tenant_id, store_id) REFERENCES stores (tenant_id, id)
+);
+
+CREATE INDEX idx_payment_accounts_store_status ON payment_accounts (tenant_id, store_id, status);
+
+CREATE TRIGGER trg_payment_accounts_set_updated_at
+    BEFORE UPDATE ON payment_accounts
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+```
+
+### Notes
+
+- **No credentials, ever.** No account number, no card/UPI provider secret, no API key or token — this table is a *label* for a receiving destination ("HDFC Current Account"), not an integration or a vault. Any real payment-gateway or banking credential belongs in a secrets manager or a narrowly access-controlled table well outside general schema documentation, never here.
+- **`code` uniqueness is scoped to `(tenant_id, store_id, code)`, not tenant-wide** — deliberately allowing the *same* code at two different stores (e.g. every store having its own `cash-drawer` account), because Phase 1 does not model one payment account being shared across multiple stores; each store gets its own row even for what is conceptually the same bank account. This is the same single-store-at-a-time simplification the rest of Phase 1 already accepts (see "Schema capability vs. Phase 1 workflow" in the purchasing/inventory phase) — a genuinely shared multi-store account is future work, not a Phase 1 gap being newly introduced here.
+- **Disabling never breaks history.** `status = 'disabled'` only affects whether new `sale_payments` may be posted against it going forward (an application-level check, since nothing here blocks a `disabled` account from still being a valid FK target); existing `sale_payments` rows keep their FK regardless.
+
+---
+
+## `sale_payments`
+
+The actual money received against a sale — **one sale can have several payments**, potentially different methods and accounts each. Append-only, like `stock_movements`: a completed payment is a historical financial fact, corrected by a new entry, never edited.
+
+```sql
+CREATE TABLE sale_payments (
+    id                  UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id           UUID NOT NULL REFERENCES tenants (id),
+    store_id            UUID NOT NULL,
+    sale_id             UUID NOT NULL,
+    payment_method_id   UUID NOT NULL,
+    -- nullable: a customer-credit payment has no real receiving account — see notes
+    payment_account_id  UUID,
+    amount              NUMERIC(12,2) NOT NULL
+                            CONSTRAINT sale_payments_amount_check CHECK (amount > 0),
+    -- when the money actually arrived (business time) — may be backdated, same idiom as
+    -- stock_movements.occurred_at
+    received_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    reference           VARCHAR(100),
+    notes               TEXT,
+    -- every financial ledger entry in this schema is attributable — same reasoning as
+    -- stock_movements.created_by; not in the suggested field list, added for that reason
+    created_by          UUID NOT NULL REFERENCES users (id),
+    -- when the row was recorded (system time) — never backdated
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT sale_payments_sale_fk
+        FOREIGN KEY (tenant_id, store_id, sale_id) REFERENCES sales (tenant_id, store_id, id),
+    CONSTRAINT sale_payments_payment_method_fk
+        FOREIGN KEY (tenant_id, payment_method_id) REFERENCES payment_methods (tenant_id, id),
+    -- MATCH SIMPLE: a NULL payment_account_id skips this check, which is exactly what a
+    -- customer-credit payment needs
+    CONSTRAINT sale_payments_payment_account_fk
+        FOREIGN KEY (tenant_id, store_id, payment_account_id)
+        REFERENCES payment_accounts (tenant_id, store_id, id),
+
+    -- target for customer_credit_ledger.sale_payment_id
+    CONSTRAINT sale_payments_tenant_id_id_unique UNIQUE (tenant_id, id)
+);
+
+CREATE INDEX idx_sale_payments_sale ON sale_payments (sale_id);
+CREATE INDEX idx_sale_payments_method ON sale_payments (tenant_id, payment_method_id);
+CREATE INDEX idx_sale_payments_account
+    ON sale_payments (tenant_id, payment_account_id) WHERE payment_account_id IS NOT NULL;
+CREATE INDEX idx_sale_payments_received_at ON sale_payments (tenant_id, store_id, received_at);
+
+-- a payment's account requirement must match its method's is_customer_credit flag —
+-- checked immediately (no sibling rows needed, just a lookup on payment_methods)
+CREATE FUNCTION sale_payments_validate() RETURNS TRIGGER AS $$
+DECLARE
+    v_is_credit BOOLEAN;
+BEGIN
+    SELECT is_customer_credit INTO v_is_credit
+      FROM payment_methods
+     WHERE id = NEW.payment_method_id AND tenant_id = NEW.tenant_id;
+
+    IF v_is_credit AND NEW.payment_account_id IS NOT NULL THEN
+        RAISE EXCEPTION 'sale_payment % uses a customer-credit method and must not name a payment_account', NEW.id;
+    ELSIF NOT v_is_credit AND NEW.payment_account_id IS NULL THEN
+        RAISE EXCEPTION 'sale_payment % must name a payment_account unless its method is customer credit', NEW.id;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_sale_payments_validate
+    BEFORE INSERT ON sale_payments
+    FOR EACH ROW
+    EXECUTE FUNCTION sale_payments_validate();
+
+-- append-only: no updates, no deletes, ever — a correction is a new, compensating row
+-- (a future refund/reversal transaction, not built here — see notes)
+CREATE FUNCTION sale_payments_reject_change() RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'sale_payments is append-only; record a correcting/reversing entry instead';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_sale_payments_append_only
+    BEFORE UPDATE OR DELETE ON sale_payments
+    FOR EACH ROW
+    EXECUTE FUNCTION sale_payments_reject_change();
+
+-- checked at commit: a customer-credit payment must have a matching CREDIT_SALE ledger
+-- entry, inserted by the application in the same transaction (either order) — mirrors
+-- purchase_returns' completion guard exactly
+CREATE FUNCTION trg_fn_sale_payments_credit_guard() RETURNS TRIGGER AS $$
+DECLARE
+    v_is_credit BOOLEAN;
+BEGIN
+    SELECT is_customer_credit INTO v_is_credit
+      FROM payment_methods
+     WHERE id = NEW.payment_method_id AND tenant_id = NEW.tenant_id;
+
+    IF v_is_credit AND NOT EXISTS (
+        SELECT 1 FROM customer_credit_ledger
+         WHERE sale_payment_id = NEW.id
+           AND entry_type = 'CREDIT_SALE'
+           AND amount = NEW.amount
+    ) THEN
+        RAISE EXCEPTION 'sale_payment % uses a customer-credit method but has no matching CREDIT_SALE ledger entry', NEW.id;
+    END IF;
+
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE CONSTRAINT TRIGGER trg_sale_payments_credit_guard
+    AFTER INSERT ON sale_payments
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW
+    EXECUTE FUNCTION trg_fn_sale_payments_credit_guard();
+```
+
+### Notes
+
+- **A sale's payments don't have to sum to its `total_amount` at the database level.** Nothing here enforces "payments received = sale total" — that's deliberate: Phase 1 doesn't yet model partial/layaway payment, so today the application is expected to post payments that sum to the total in one transaction, but a hard `CHECK`/trigger tying the two together would conflict directly with "the model must remain compatible with future... split payments" (a split or partial payment is exactly a sale whose payments don't yet sum to its total). This is a real, intentionally-left-open gap for today's all-at-once flow — see the summary after this edit.
+- **`payment_account_id` is nullable for exactly one reason: customer credit.** `trg_sale_payments_validate` enforces the pairing precisely — every non-credit method needs a real account, every credit method must not name one — so "customer credit isn't cash received into a bank/cash account" is a hard constraint, not a convention. A `CUSTOMER_CREDIT` payment is a receivable, not a receipt.
+- **Every customer-credit payment is guaranteed, at commit, to have produced a `customer_credit_ledger` entry** — `trg_sale_payments_credit_guard` is what turns "a credit payment must create a ledger entry" (the requirement) into an enforced invariant rather than a convention the application has to remember. The application flow is: validate → insert the `sale_payments` row (method flagged `is_customer_credit`, `payment_account_id NULL`) → insert the matching `customer_credit_ledger` row (`entry_type='CREDIT_SALE'`, `sale_payment_id`=the new row's id, same `amount`) → commit. Either insert may come first; the deferred trigger only cares that both exist by commit time.
+- **Historical traceability survives a disabled method/account**, because the FK only requires the referenced row to *exist*, not to be `active` — disabling never breaks a historical `sale_payments` row's ability to be joined back to what method/account it used.
+- **`received_at` (business time) vs. `created_at` (record time)** is the exact same split `stock_movements` already established, for the same reason: a payment might be recorded slightly after it was actually received (e.g. an end-of-day reconciliation entering a cash count), and the two timestamps shouldn't be conflated.
+- **No refund/reversal mechanism is built here.** Section 10's requirement is explicit that this isn't Phase 1 scope; what *is* built is the append-only guarantee (so a wrong payment can't silently become a different amount) and a schema shape that doesn't block adding a `sale_payment_reversals`-style table later, the same way `purchase_returns` was added without touching `purchases`.
+
+Example queries:
+
+```sql
+-- how was this sale paid?
+SELECT pm.name AS method, pa.name AS account, sp.amount, sp.received_at
+  FROM sale_payments sp
+  JOIN payment_methods pm ON pm.id = sp.payment_method_id AND pm.tenant_id = sp.tenant_id
+  LEFT JOIN payment_accounts pa ON pa.id = sp.payment_account_id AND pa.tenant_id = sp.tenant_id
+ WHERE sp.tenant_id = $1 AND sp.sale_id = $2
+ ORDER BY sp.created_at;
+
+-- daily cash-drawer reconciliation for a store
+SELECT pa.name AS account, SUM(sp.amount) AS total_received
+  FROM sale_payments sp
+  JOIN payment_accounts pa ON pa.id = sp.payment_account_id AND pa.tenant_id = sp.tenant_id
+ WHERE sp.tenant_id = $1 AND sp.store_id = $2
+   AND sp.received_at >= $3 AND sp.received_at < $4
+ GROUP BY pa.name;
+```
+
+---
+
+## `customer_credit_ledger`
+
+The append-only receivables ledger — how much a customer owes the business, derived the same way `stock_movements` derives on-hand: a `SUM()`, never a stored balance.
+
+```sql
+CREATE TABLE customer_credit_ledger (
+    id                  UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id           UUID NOT NULL REFERENCES tenants (id),
+    -- credit always ties to a known customer — unlike sales.customer_id, never NULL
+    customer_id         UUID NOT NULL,
+    store_id            UUID NOT NULL,
+    -- populated for CREDIT_SALE only — see the pair-check below
+    sale_id             UUID,
+    sale_payment_id     UUID,
+    entry_type          VARCHAR(30) NOT NULL
+                            CONSTRAINT customer_credit_ledger_entry_type_check
+                            CHECK (entry_type IN (
+                                'CREDIT_SALE', 'CREDIT_PAYMENT', 'CREDIT_ADJUSTMENT', 'CREDIT_REVERSAL')),
+    -- SIGNED, unlike stock_movements.quantity — see notes for why this table uses the
+    -- opposite convention deliberately
+    amount              NUMERIC(12,2) NOT NULL
+                            CONSTRAINT customer_credit_ledger_amount_nonzero_check CHECK (amount <> 0),
+    created_by          UUID NOT NULL REFERENCES users (id),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    reference           VARCHAR(100),
+    notes               TEXT,
+
+    -- CREDIT_SALE always increases the receivable and always traces to the exact payment
+    -- that created it; CREDIT_PAYMENT always decreases it. CREDIT_ADJUSTMENT/CREDIT_REVERSAL
+    -- are the only entry types allowed to go either direction, because a correction has to
+    -- be able to undo a mistake in either direction
+    CONSTRAINT customer_credit_ledger_sign_check CHECK (
+        (entry_type = 'CREDIT_SALE' AND amount > 0)
+        OR (entry_type = 'CREDIT_PAYMENT' AND amount < 0)
+        OR entry_type IN ('CREDIT_ADJUSTMENT', 'CREDIT_REVERSAL')
+    ),
+    -- a CREDIT_SALE always has the sale_payment_id that created it; nothing else does
+    CONSTRAINT customer_credit_ledger_sale_payment_pair_check
+        CHECK ((entry_type = 'CREDIT_SALE') = (sale_payment_id IS NOT NULL)),
+
+    CONSTRAINT customer_credit_ledger_customer_fk
+        FOREIGN KEY (tenant_id, customer_id) REFERENCES customers (tenant_id, id),
+    CONSTRAINT customer_credit_ledger_store_fk
+        FOREIGN KEY (tenant_id, store_id) REFERENCES stores (tenant_id, id),
+    -- MATCH SIMPLE: NULL sale_id skips this check (CREDIT_PAYMENT/ADJUSTMENT/REVERSAL
+    -- are typically not tied to any one sale)
+    CONSTRAINT customer_credit_ledger_sale_fk
+        FOREIGN KEY (tenant_id, store_id, sale_id) REFERENCES sales (tenant_id, store_id, id),
+    CONSTRAINT customer_credit_ledger_sale_payment_fk
+        FOREIGN KEY (tenant_id, sale_payment_id) REFERENCES sale_payments (tenant_id, id)
+);
+
+-- at most one CREDIT_SALE ledger entry per sale_payment — a 1:1 relationship, not 1:N
+CREATE UNIQUE INDEX idx_customer_credit_ledger_sale_payment_unique
+    ON customer_credit_ledger (sale_payment_id)
+    WHERE sale_payment_id IS NOT NULL;
+
+CREATE INDEX idx_customer_credit_ledger_customer
+    ON customer_credit_ledger (tenant_id, customer_id, created_at);
+CREATE INDEX idx_customer_credit_ledger_sale
+    ON customer_credit_ledger (sale_id) WHERE sale_id IS NOT NULL;
+
+-- when a ledger entry names a sale, its customer must be that sale's customer — a check
+-- a plain FK can't express (the FK only confirms the sale exists, not who it belongs to)
+CREATE FUNCTION customer_credit_ledger_validate() RETURNS TRIGGER AS $$
+DECLARE
+    v_sale_customer_id UUID;
+BEGIN
+    IF NEW.sale_id IS NOT NULL THEN
+        SELECT customer_id INTO v_sale_customer_id
+          FROM sales
+         WHERE id = NEW.sale_id AND tenant_id = NEW.tenant_id AND store_id = NEW.store_id;
+
+        IF v_sale_customer_id IS DISTINCT FROM NEW.customer_id THEN
+            RAISE EXCEPTION 'customer_credit_ledger % customer does not match sale % customer',
+                NEW.id, NEW.sale_id;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_customer_credit_ledger_validate
+    BEFORE INSERT ON customer_credit_ledger
+    FOR EACH ROW
+    EXECUTE FUNCTION customer_credit_ledger_validate();
+
+-- append-only: no updates, no deletes, ever — a correction is a new CREDIT_ADJUSTMENT
+-- or CREDIT_REVERSAL row, never an edit
+CREATE FUNCTION customer_credit_ledger_reject_change() RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'customer_credit_ledger is append-only; record a correcting entry instead';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_customer_credit_ledger_append_only
+    BEFORE UPDATE OR DELETE ON customer_credit_ledger
+    FOR EACH ROW
+    EXECUTE FUNCTION customer_credit_ledger_reject_change();
+
+-- the balance is always a query, never a stored fact — same idiom as batch_stock_on_hand.
+-- positive = the customer owes the business (a receivable); the sign convention above is
+-- what makes a plain SUM() the right answer with no CASE/sign function needed
+CREATE VIEW customer_credit_balance WITH (security_invoker = true) AS
+SELECT tenant_id, customer_id, SUM(amount) AS balance
+  FROM customer_credit_ledger
+ GROUP BY tenant_id, customer_id;
+```
+
+### Notes
+
+- **Signed `amount`, not unsigned-plus-a-sign-function like `stock_movements.quantity`.** This is a deliberate departure from that convention, not an inconsistency: the requirement here specified the sign convention directly, with worked examples (`CREDIT_SALE → +₹2,000`, `CREDIT_PAYMENT → -₹1,000`), which is a genuinely different shape of requirement than `stock_movements` had (direction implied by type, not given as a literal signed number in the spec). `customer_credit_ledger_sign_check` still hard-enforces that `CREDIT_SALE` and `CREDIT_PAYMENT` can only carry the sign the business meaning demands — the *value* is signed, but which sign is still constrained, not a free-for-all.
+- **`CREDIT_ADJUSTMENT` and `CREDIT_REVERSAL` are the only entry types allowed either sign, on purpose.** A correction has to be able to move the balance in whichever direction actually fixes the mistake — reversing a wrongly-posted `CREDIT_SALE` needs a negative entry, reversing a wrongly-posted `CREDIT_PAYMENT` needs a positive one. Locking their sign the way `CREDIT_SALE`/`CREDIT_PAYMENT` are locked would make some corrections impossible to represent.
+- **A `CREDIT_PAYMENT` (paying down an existing balance) is *not* a `sale_payments` row.** `sale_payments.sale_id` is `NOT NULL` — every row there is a payment *against a sale*. Paying down an old balance isn't a new sale; it's a standalone `customer_credit_ledger` entry with `sale_id`/`sale_payment_id` both `NULL`. Only the credit-creation direction (`CREDIT_SALE`, born from a `CUSTOMER_CREDIT` `sale_payments` row) is tied to a sale at all.
+- **`customer_id` is `NOT NULL` here, unlike `sales.customer_id`.** Credit is inherently a relationship with a known person — there is no such thing as anonymous credit — so this table has no guest-equivalent path, by construction.
+- **Reversal linkage is loose in Phase 1**, unlike `purchase_returns`' reversal (which references its original return via a shared `reference_type`/`reference_id`). A `CREDIT_REVERSAL` row has no dedicated FK back to the ledger entry it corrects; `reference`/`notes` carries that context as free text. This is a smaller guarantee than the purchase-return reversal has, and worth tightening (a self-referencing `reverses_entry_id` column) if credit reversal becomes a heavier-used feature — see the summary after this edit.
+
+---
+
+## Payment method vs. payment account
+
+The distinction this whole phase depends on, stated once, plainly:
+
+| | Payment method | Payment account |
+|---|---|---|
+| **Answers** | *How* did the customer pay? | *Where* did that money land? |
+| **Table** | `payment_methods` | `payment_accounts` |
+| **Scope** | Tenant-level | Store-level |
+| **Examples** | `CASH`, `UPI`, `CARD`, `BANK_TRANSFER`, `CUSTOMER_CREDIT` | "Main Store Cash Drawer", "HDFC Current Account", "HDFC Card Settlement Account" |
+| **Cardinality** | One method can land in several different accounts (UPI payments might go to more than one bank account) | One account can receive several different methods in principle (though Phase 1's examples pair them 1:1) |
+| **Holds credentials?** | No | No — never; see that table's notes |
+
+`sale_payments` is where the two meet: every row names **one method and (usually) one account** — `UPI` paid into `HDFC Current Account` is two separate facts on one row, not one combined field. The one exception is `CUSTOMER_CREDIT`, which names a method but deliberately no account, because nothing was actually received anywhere (see `sale_payments`' notes) — that asymmetry is exactly why these stayed two tables instead of one.
+
+---
+
+## Customer purchase history
+
+**Not duplicated onto `customers`.** The authoritative path is:
+
+```text
+customers → sales → sale_items → variants
+```
+
+Everything a "customer profile" screen would want — products purchased, dates, quantities, prices paid, discounts, tax, total spend — is a query over `sales`/`sale_items`, never a column copied onto `customers`. This is the same principle `inventory_batches.available_quantity` had to earn an exception to and `customers` doesn't: there is no cached "lifetime spend" column here to keep in sync, drift, or reconcile.
+
+```sql
+-- a customer's purchase history: what, when, how much
+SELECT s.sale_date, si.variant_id, si.quantity, si.selling_price,
+       si.discount_amount, si.sales_tax_amount, si.line_total
+  FROM sales s
+  JOIN sale_items si ON si.sale_id = s.id
+ WHERE s.tenant_id = $1 AND s.customer_id = $2
+ ORDER BY s.sale_date DESC;
+
+-- lifetime spend, computed on demand — never stored
+SELECT COALESCE(SUM(total_amount), 0) AS lifetime_spend
+  FROM sales
+ WHERE tenant_id = $1 AND customer_id = $2;
+```
+
+---
+
 ## Selling price, purchase cost, quantity and barcode
 
 These four are easy to blur and must stay separate.
@@ -1487,6 +2044,15 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 | `purchases 1:N purchase_returns` | A return is a separate transaction against an already-received purchase, never an edit to it. |
 | `purchase_items 1:N purchase_return_items` | A return line traces back to the original purchase line it's crediting. |
 | `inventory_batches 1:N purchase_return_items` | A return always targets one specific batch — the physical stock actually being sent back. |
+| `stores 1:N sales` | A sale is an operational event at a store, same reasoning as `purchases`. |
+| `customers 1:N sales` (nullable) | A customer *may* be attributed to a sale; a guest sale has no row on either side of this relationship at all, rather than a placeholder customer. |
+| `sales 1:N sale_items` | A sale is a header plus lines, same shape as `purchases`/`purchase_items`. |
+| `variants 1:N sale_items` | The variant is the unit of sale, mirroring `variants 1:N purchase_items` on the buy side. |
+| `sales 1:N sale_payments` | One sale can be paid across several payments — different methods, different accounts, or both. |
+| `payment_methods 1:N sale_payments` | Tenant-level: the same method (e.g. `UPI`) is reused across every sale that used it. |
+| `payment_accounts 1:N sale_payments` (nullable) | Store-level: every non-credit payment names the account it landed in; a `CUSTOMER_CREDIT` payment names none. |
+| `customers 1:N customer_credit_ledger` | Every receivable entry ties to the customer who owes (or paid down) it — never nullable, unlike `sales.customer_id`. |
+| `sale_payments 1:N customer_credit_ledger` (0 or 1) | A `CUSTOMER_CREDIT` payment produces exactly one `CREDIT_SALE` ledger entry; every other payment produces none. |
 
 ### How the main flows map
 
@@ -1502,6 +2068,12 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 | Complete a return | Per item, 1 `PURCHASE_RETURN` `stock_movements` row (`reference_type='PURCHASE_RETURN'`, `reference_id`=that item's id), whose trigger decrements each batch's `available_quantity`; then `UPDATE purchase_returns SET status='completed'` — all in one transaction, verified at commit by the completion guard |
 | Reverse a completed return | Per item, 1 `PURCHASE_RETURN_REVERSAL` `stock_movements` row (same `reference_type='PURCHASE_RETURN'`/`reference_id` as the original item), whose trigger re-increments each batch's `available_quantity`; then `UPDATE purchase_returns SET status='reversed'` — same atomic pattern as completion. The original `purchase_returns`/`purchase_return_items` rows are untouched |
 | Correct a miscount, damage or loss | 1 `DAMAGED` / `LOST` / `INTERNAL_USE` `stock_movements` row, optionally against a `STOCK_ADJUSTMENT` reference |
+| Add a customer | 1 `customers` row. Not required before a sale — see the next row |
+| Ring up a guest sale | 1 `sales` (`customer_id IS NULL`) + N `sale_items` + N `sale_payments` (no `customer_id` anywhere in the chain) |
+| Ring up a customer sale, split cash/UPI | 1 `sales` (`customer_id` set) + N `sale_items` + 2 `sale_payments` rows, one per method/account used |
+| Sell partly on customer credit | Same as above, plus 1 `sale_payments` row with a `CUSTOMER_CREDIT`-flagged method and `payment_account_id NULL`, plus 1 `customer_credit_ledger` row (`entry_type='CREDIT_SALE'`, positive `amount` equal to that payment's `amount`, `sale_payment_id`=that row's id) — verified to exist together at commit |
+| Customer pays down their balance | 1 `customer_credit_ledger` row (`entry_type='CREDIT_PAYMENT'`, negative `amount`, `sale_id`/`sale_payment_id` both `NULL`) — no `sale_payments` row, because this isn't a payment against any sale |
+| Correct a credit-ledger mistake | 1 `customer_credit_ledger` row (`entry_type='CREDIT_ADJUSTMENT'` or `'CREDIT_REVERSAL'`, signed either direction as needed) |
 
 ### Future path (not Phase 1)
 
@@ -1512,6 +2084,11 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 - **Facets and F&B:** optional child tables keyed on sellables and variants (Stocked, Weighed, Made, Configured, Routed, Timed). `kind` stays a coarse discriminator.
 - **Price history:** an append-only `variant_price_history` table, without touching `variants`.
 - **Also pending:** supplier payables, a `partially_received` purchase status (add to the `CHECK` when needed), and manufacturer barcodes in `variant_barcodes`.
+- **The real sales/order design:** a `sales`/`sale_items` state machine analogous to `purchases` (today's stub is `status IN ('completed')` only), `SOLD`/`SALE_RETURN` `stock_movements` integration (which batch a sale item draws from — FIFO, manual selection, or something else), and discount/tax computation rules for `sale_items`.
+- **Sale returns/refunds and payment reversals:** a `sale_returns`/`sale_return_items` pair mirroring `purchase_returns`/`purchase_return_items`, plus a `sale_payments` reversal/refund mechanism — both explicitly deferred by the customers/payments phase's own requirements, not overlooked.
+- **A payments-sum-to-total constraint**, once split/partial payment is a real Phase 1+ workflow — see `sale_payments`' notes on why this isn't enforced yet.
+- **A dedicated reversal-linkage column on `customer_credit_ledger`** (a `reverses_entry_id` self-reference, mirroring how `purchase_returns`' reversal cites its original via `reference_type`/`reference_id`), if `CREDIT_REVERSAL` becomes a heavily-used feature rather than an occasional correction.
+- **Shared, multi-store payment accounts** — today every store gets its own `payment_accounts` row even for what is conceptually one bank account, the same single-store simplification the rest of Phase 1 already accepts.
 
 ---
 
@@ -1530,7 +2107,7 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 - **`inventory_batches` has no `status` column.** The earlier `active`/`blocked`/`archived` states are superseded by `available_quantity` (zero means sold out) and by `DAMAGED`/`LOST` movements already removing bad stock from the operational balance. A distinct "held out of sale but otherwise fine" state is not modelled yet; it would be an additive column, not a redesign.
 - **`variants` carries its own `store_id`, denormalised from `sellables` and FK-tied to it.** This lets `inventory_batches` enforce tenant/store/variant consistency with one direct composite FK to `variants`, instead of relying only on the transitive path through `purchase_items`. The same "denormalise the parent's store, then FK back to it" pattern `purchase_items.store_id` already used against `purchases`.
 - **Selling price stays variant-first; the sellable is never asked for a price.** No schema change was needed here — `variants.base_price` and a price-less `sellables` were already the Phase 1 design — but the product-creation UX (variant name, SKU, attributes and price entered per-variant) is now an explicit, documented decision rather than an implicit consequence of the schema.
-- **Purchase tax and sales tax are, and remain, separate concepts that never share a column.** `purchase_items.tax_amount` is scoped to tax paid to the supplier; a future `sale_items.sales_tax_amount` will be scoped to tax collected from the customer. `inventory_batches` carries only `unit_cost` (acquisition cost for valuation) — no tax field of either kind, absent a demonstrated accounting need.
+- **Purchase tax and sales tax are, and remain, separate concepts that never share a column.** `purchase_items.tax_amount` is scoped to tax paid to the supplier; `sale_items.sales_tax_amount` (built in the customers/payments phase) is scoped to tax collected from the customer — the column this decision anticipated exists now, unchanged in shape from what was predicted. `inventory_batches` carries only `unit_cost` (acquisition cost for valuation) — no tax field of either kind, absent a demonstrated accounting need.
 - **`stock_movements.quantity` is unsigned; direction comes from `movement_type`.** Eight Phase 1 types (`PURCHASED`, `SOLD`, `PURCHASE_RETURN`, `SALE_RETURN`, `DAMAGED`, `LOST`, `INTERNAL_USE`, `PURCHASE_RETURN_REVERSAL`) each map to a fixed sign via `stock_movement_sign()`, rather than trusting each caller to supply a correctly-signed delta. `reference_type`/`reference_id` trace a movement back to its originating transaction and are deliberately not unique, since one transaction (a multi-line sale, a multi-batch receipt) can post several movements against the same reference — and now also because a reversal deliberately shares its original movement's `reference_id`.
 - **`stock_movements` keeps `occurred_at` (business time) separate from `created_at` (record time).** They usually match, but corrections, delayed entry and future imports can legitimately post a movement whose `occurred_at` is in the past. Ledger and inventory-query indexes are built on `occurred_at`.
 - **The ledger does not enforce "one `PURCHASED` movement per batch."** Receipt integrity (a batch is received exactly once) is a purchasing-workflow rule, checked by the deferred trigger on `inventory_batches` as an existence check, not a `stock_movements`-level uniqueness constraint — keeping the ledger's own shape independent of how any one business process happens to use it today.
@@ -1544,7 +2121,16 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 - **`purchase_return_items` gained a real lifecycle (mutable while `draft`, frozen from `completed` onward) — superseding the earlier "fully immutable and append-only" decision.** That earlier design assumed a return posts its stock effect the instant it's created, with no staging step; the actual requirement is a return can be *drafted* — items added, quantities adjusted — with zero inventory effect until it's explicitly completed. `purchase_return_items` now has `updated_at` and is editable (content columns only; identity columns stay locked) exactly while its parent `purchase_returns.status = 'draft'`, the same `require-open-parent` idiom `purchase_items` already uses against `purchases`. Once `completed`, it is exactly as immutable as the earlier decision described — the earlier design wasn't wrong about the destination, just about when immutability starts.
 - **Purchase returns have a real three-state lifecycle — `draft → completed → reversed` — superseding the earlier `completed`/`cancelled` decision.** The earlier decision had no staging state (a return posted its movements the moment it was created) and no reversal concept (`cancelled` was a paperwork-only annotation that explicitly did *not* undo stock). The actual requirement needed both: a draft stage with no inventory effect, and a real reversal that restores exactly what a completed return removed via a compensating `PURCHASE_RETURN_REVERSAL` movement, never by editing or deleting the original. `reversed` is terminal (no edge leaves it), which is what makes "a completed return can't be reversed twice" true without extra bookkeeping — a second reversal attempt is just an illegal transition, rejected the same way any other disallowed status change is.
 - **`purchases.status` transitions are now validated edge by edge, not just by blocking changes away from the two terminal states.** The original guard only stopped `received`/`cancelled` from changing further; it did not stop an illegal direct `draft → received` jump, since `draft` was never in the blocked-`FROM` list. `trg_purchases_guard_update` now enumerates exactly the four allowed edges (`draft→ordered`, `draft→cancelled`, `ordered→received`, `ordered→cancelled`) and rejects everything else, which is what makes "a purchase can't be cancelled once inventory has arrived" a structural guarantee rather than an incidental side effect: no batch can exist before `status='received'`, and once `received`, `cancelled` is no longer a reachable edge.
+- **A minimal `sales`/`sale_items` stub was introduced to support the customer/payment model, not as the sales design.** No `sales`/`sale_items` table existed anywhere in this document before this phase — "Up next" had always treated the order/sale model as future work — so `customers`, `sale_payments` and `customer_credit_ledger` needed *something* real to reference. The stub carries only what referential integrity requires (tenant/store/customer, header totals, line quantity/price/tax) and explicitly does not attempt the sale lifecycle, `SOLD` stock-movement integration, or batch selection — those remain future work, now itemised in "Future path" above rather than left as a single vague "Up next" line.
+- **`customers` is tenant-level, not store-level**, unlike `sellables`/`variants`/`inventory_batches`. A customer can be attributed to a sale at any of the tenant's stores; nothing about a customer's identity is store-scoped, so it doesn't carry a `store_id` at all.
+- **No lifetime-spend or credit-balance columns on `customers`, ever, as a matter of principle already established elsewhere in this schema.** Purchase history is a query over `sales`/`sale_items`; credit balance is a query over `customer_credit_ledger` (`customer_credit_balance` view). This is the same "no independently-writable cached fact" rule `available_quantity` had to earn a narrow, trigger-only exception to — `customers` gets no exception at all.
+- **`payment_methods` and `payment_accounts` model two different questions and are never merged into one field.** Method answers *how* (tenant-level, small vocabulary, `UPPER_SNAKE_CASE` codes matching this schema's other enum-like values); account answers *where* (store-level, user-named, lowercase-slug codes matching `stores.code`). Both use a reversible `active`/`disabled` toggle rather than the terminal `archived` pattern used elsewhere, because disabling a payment rail is an ordinary settings change, not a lifecycle event — and neither table ever stores credentials.
+- **`sale_payments.payment_account_id` is nullable for exactly one reason: `CUSTOMER_CREDIT`.** A credit-flagged payment method (`payment_methods.is_customer_credit`) represents a receivable, not money landing anywhere, so `trg_sale_payments_validate` requires every other method to name a real account and requires a credit method *not* to. This is the schema-level expression of "do not treat customer credit as cash received into a bank/cash account."
+- **`sale_payments` and `customer_credit_ledger` are append-only, same idiom and same reasoning as `stock_movements`.** Both are historical financial records; a mistake is corrected with a new compensating entry (a future refund/reversal mechanism, or a `CREDIT_ADJUSTMENT`/`CREDIT_REVERSAL` row), never by editing or deleting the original.
+- **A `CUSTOMER_CREDIT` `sale_payments` row is guaranteed, at commit, to have produced a matching `CREDIT_SALE` ledger entry** — `trg_sale_payments_credit_guard`, a deferred completeness check mirroring `purchase_returns`' own completion guard exactly (app inserts both rows in one transaction, in either order; the trigger verifies at commit). This is the same idiom, reused a third time (`inventory_batches`/`PURCHASED`, `purchase_returns`/`PURCHASE_RETURN`, now this), rather than a new mechanism invented for this table.
+- **`customer_credit_ledger.amount` is signed, deliberately breaking from `stock_movements.quantity`'s unsigned-plus-sign-function convention.** The requirement specified the sign convention directly with worked positive/negative examples, a different shape of spec than `stock_movements` had; `CREDIT_SALE`/`CREDIT_PAYMENT` still have their sign hard-`CHECK`ed, while `CREDIT_ADJUSTMENT`/`CREDIT_REVERSAL` are deliberately left free to go either direction, since a correction must be able to undo a mistake regardless of which way the mistake went.
+- **A `CREDIT_PAYMENT` is never a `sale_payments` row.** `sale_payments.sale_id` is `NOT NULL` — every row there is a payment against a specific sale. Paying down an old balance isn't a new sale, so it lives purely in `customer_credit_ledger` with `sale_id`/`sale_payment_id` both `NULL`. Only `CREDIT_SALE` (born from a `sale_payments` row) ties back to a sale at all.
 
 ## Up next
 
-Orders (F-02's state machine) now have something to sell, and their order lines will post `SOLD` `stock_movements` rows against batches, tagged `reference_type='SALE_ITEM'`. Facet tables and store-level pricing follow once the order model is settled.
+The real sales/order design (see "Future path" above) is next: a full `sales`/`sale_items` state machine replacing today's minimal stub, `SOLD`/`SALE_RETURN` `stock_movements` integration against `inventory_batches`, and eventually `sale_returns`/`sale_return_items` mirroring `purchase_returns`/`purchase_return_items`. Facet tables and store-level pricing remain queued behind that, unchanged from before this phase.
