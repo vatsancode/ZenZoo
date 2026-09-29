@@ -1642,12 +1642,18 @@ CREATE TABLE sales (
     status              VARCHAR(20) NOT NULL DEFAULT 'draft'
                             CONSTRAINT sales_status_check
                             CHECK (status IN ('draft', 'completed', 'voided')),
+    -- free text, not an enum — why a sale was voided doesn't need to drive any logic,
+    -- just be visible to a human auditing the sale later
+    void_reason         TEXT,
     created_by          UUID NOT NULL REFERENCES users (id),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT sales_total_amount_check
         CHECK (total_amount = subtotal_amount - discount_amount + tax_amount),
+    -- can only be set once the sale is actually voided
+    CONSTRAINT sales_void_reason_pair_check
+        CHECK (status = 'voided' OR void_reason IS NULL),
 
     -- target for sale_items, sale_payments and customer_credit_ledger
     CONSTRAINT sales_tenant_store_id_unique UNIQUE (tenant_id, store_id, id),
@@ -1698,6 +1704,13 @@ BEGIN
         OR NEW.sold_at <> OLD.sold_at
     ) THEN
         RAISE EXCEPTION 'sale % is % and its commercial details are immutable', OLD.id, OLD.status;
+    END IF;
+    -- void_reason may only be set by the completed -> voided transition itself,
+    -- and is frozen forever after that (voided is already terminal, but this
+    -- also blocks setting it early on a still-draft/completed row)
+    IF NEW.void_reason IS DISTINCT FROM OLD.void_reason
+       AND NOT (OLD.status = 'completed' AND NEW.status = 'voided') THEN
+        RAISE EXCEPTION 'sale % void_reason can only be set when voiding the sale', OLD.id;
     END IF;
     RETURN NEW;
 END;
@@ -1866,7 +1879,7 @@ CREATE CONSTRAINT TRIGGER trg_sales_completion_guard
 - **Lifecycle: `draft` → `completed` → `voided`, each edge one-way, enforced edge by edge** — same idiom as `purchases`/`purchase_returns`. `draft`: freely editable, zero permanent effect (no stock movement, no `available_quantity` change, no ledger entry). `completed`: `trg_sales_completion_guard` verifies, at commit, that every item is fully batch-allocated, every allocation has its `SOLD` movement, payments sum exactly to the total, and every customer-credit payment produced its ledger entry — only then does the transition actually land. `voided`: the mirror image, requiring compensating `SOLD_REVERSAL` movements and `CREDIT_REVERSAL` entries for everything the completion created. `voided` is terminal.
 - **`sale_number` is assigned by the application, typically at completion, not at draft creation** — a cart being built doesn't need a receipt number yet. It stays permanently unique once assigned (see the index comment) even through a later void, because voiding never un-issues a receipt that already went to a customer.
 - **`created_by` names who created the sale record**, not necessarily who completed or voided it — Phase 1 doesn't track a per-transition actor on `sales` itself, the same simplification already accepted on `purchase_returns.created_by`. The `stock_movements` and `customer_credit_ledger` rows posted at completion/void carry their own `created_by`, which is where finer-grained attribution actually lives.
-- **No `void_reason` column.** Not in the requested field list, and Phase 1 doesn't ask for one; if voiding needs a recorded reason later, it's an additive column, not a redesign.
+- **`void_reason` is nullable free text, not an enum** — a voided sale is an operational/audit event worth a human-readable reason, but Phase 1 has no use for the reason as structured data (no reporting or workflow keys off it), so an enum would just be a second thing to keep in sync for no behavioral payoff. `sales_void_reason_pair_check` requires it to be `NULL` on every non-voided row, and `sales_guard_update()` only allows it to be set in the same `UPDATE` that performs the `completed -> voided` transition — it can't be pre-filled on a draft/completed sale, and once set it's frozen (voided is already terminal).
 
 Example queries:
 
@@ -2549,7 +2562,7 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 | Build a sale (either mode) | 1 `sales` (header, `status='draft'`) + 1 `sale_items` row per variant + 1+ `sale_item_batches` row per item — barcode-first writes the scanned batch directly; variant-first has the application run FIFO across eligible batches. No stock effect, no ledger effect, freely editable |
 | Take payment on a draft sale | 1+ `sale_payments` rows (cash/UPI/card/credit, any combination) — still no stock or ledger effect; only checked for completeness at the next step |
 | Complete a sale | Per `sale_item_batches` row, 1 `SOLD` `stock_movements` row (`reference_type='SALE_ITEM'`, `reference_id`=the sale item's id), whose trigger decrements each batch's `available_quantity`; per customer-credit payment, 1 `customer_credit_ledger` row (`entry_type='CREDIT_SALE'`); then `UPDATE sales SET status='completed'` — all in one transaction, verified at commit that allocations are complete, movements exist, payments sum to the total, and credit entries exist |
-| Void a completed sale | Per `sale_item_batches` row, 1 `SOLD_REVERSAL` `stock_movements` row restoring what was sold; per `CREDIT_SALE` entry, 1 `CREDIT_REVERSAL` row (`reverses_entry_id`=the original); then `UPDATE sales SET status='voided'` — same atomic, verified-at-commit pattern. Actual cash/card money already received is **not** reversed here — see "Future path" |
+| Void a completed sale | Per `sale_item_batches` row, 1 `SOLD_REVERSAL` `stock_movements` row restoring what was sold; per `CREDIT_SALE` entry, 1 `CREDIT_REVERSAL` row (`reverses_entry_id`=the original); then `UPDATE sales SET status='voided', void_reason='...'` (reason optional, free text) — same atomic, verified-at-commit pattern. Actual cash/card money already received is **not** reversed here — see "Future path" |
 | Customer pays down their balance | 1 `customer_credit_ledger` row (`entry_type='CREDIT_PAYMENT'`, negative `amount`, `sale_id`/`sale_payment_id` both `NULL`) — no `sale_payments` row, because this isn't a payment against any sale |
 | Correct a credit-ledger mistake | 1 `customer_credit_ledger` row (`entry_type='CREDIT_ADJUSTMENT'` or `'CREDIT_REVERSAL'`, signed either direction as needed) |
 
@@ -2616,6 +2629,7 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 - **`customer_credit_ledger` remains fully append-only** (unlike `sale_payments`, which is now draft-mutable — see above): every entry is a posted financial fact the moment it's inserted, since nothing analogous to a "draft" ledger entry exists or should exist. A mistake is corrected with a new compensating entry (`CREDIT_ADJUSTMENT` or `CREDIT_REVERSAL`), never by editing or deleting the original.
 - **`customer_credit_ledger.amount` is signed, deliberately breaking from `stock_movements.quantity`'s unsigned-plus-sign-function convention.** The requirement specified the sign convention directly with worked positive/negative examples, a different shape of spec than `stock_movements` had; `CREDIT_SALE`/`CREDIT_PAYMENT` still have their sign hard-`CHECK`ed, while `CREDIT_ADJUSTMENT`/`CREDIT_REVERSAL` are deliberately left free to go either direction, since a correction must be able to undo a mistake regardless of which way the mistake went.
 - **A `CREDIT_PAYMENT` is never a `sale_payments` row.** `sale_payments.sale_id` is `NOT NULL` — every row there is a payment against a specific sale. Paying down an old balance isn't a new sale, so it lives purely in `customer_credit_ledger` with `sale_id`/`sale_payment_id` both `NULL`. Only `CREDIT_SALE` (born from a `sale_payments` row) ties back to a sale at all.
+- **Reconciled the sales design against a follow-up review and confirmed five things as-built, with one schema addition.** `SOLD_REVERSAL`/`SALE_RETURN` stay separate movement types (different business events — a cashier voiding vs. a customer returning — even though both restore stock); no-reservation-during-`draft` stays as designed (availability is only re-checked at completion, not reserved when a cart is opened); "payments sum to the total" stays a completion-only check, not continuous; `sale_number` stays permanently unique once assigned, even through a later void; and actual payment reversal/refunds stay explicitly deferred to the future `sale_returns` work, not retrofitted into the current model. The one actual change: **`sales` gained a nullable `void_reason TEXT` column**, deliberately free text rather than an enum (nothing in Phase 1 needs it as structured data), settable only in the same `UPDATE` that performs the `completed → voided` transition (`sales_void_reason_pair_check` plus an extra `sales_guard_update()` clause), and frozen thereafter.
 
 ## Up next
 
