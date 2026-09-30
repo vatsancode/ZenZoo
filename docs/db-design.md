@@ -327,13 +327,13 @@ Scope is deliberately small: **one operational store uses stock at this stage.**
 ```text
 Tenant
   └── Store
-        ├── Sellables
-        │     └── Variants
+        ├── Sellables (ACTIVE / ARCHIVED — reversible)
+        │     └── Variants (ACTIVE / DEACTIVATED — reversible) ──► base_price
         ├── Purchases (also belong to a Supplier)
         │     ├── Purchase Items ──► Variant
         │     └── Purchase Returns ──► Purchase
         │           └── Purchase Return Items ──► Purchase Item, Inventory Batch
-        └── Inventory Batches ──► Variant, Purchase Item
+        └── Inventory Batches ──► Variant, and EITHER Purchase Item OR Sale Return Item
               └── Stock Movements (append-only ledger)
 ```
 
@@ -351,7 +351,7 @@ Purchase ──► Purchase Return (draft → completed → reversed)
 
 - `tenant_id` is an explicit column on every table, for RLS (N-05), composite foreign keys and tenant-scoped uniqueness. Tenant isolation is not left to a join through `stores`.
 - Each parent exposes a `UNIQUE (tenant_id, ...)` key, and each child references `(tenant_id, parent_id)`. The database therefore rejects any row that points at another tenant's parent.
-- Soft-delete via a terminal `status`, no `deleted_at`, as elsewhere. The exceptions are draft purchase lines and draft return lines (working data, deletable while their parent purchase/return is still open), `stock_movements` (never deleted, never updated), and `inventory_batches` (no `status` column at all — see its notes).
+- Soft-delete via `status`, no `deleted_at`, as elsewhere — though not always the *terminal* shape: `purchases`/`purchase_returns` use an edge-by-edge state machine (see their own guards), while `sellables.status`/`variants.status` are freely reversible catalogue toggles, not one-way (see "Product/variant lifecycle and the barcode model"). The remaining exceptions are draft purchase lines and draft return lines (working data, deletable while their parent purchase/return is still open), `stock_movements` (never deleted, never updated), and `inventory_batches` (no `status` column at all — see its notes).
 - Money is `NUMERIC(12,2)` per unit and `NUMERIC(14,2)` for totals. **All quantities are `INTEGER`** — `purchase_items.quantity`, `inventory_batches.received_quantity`/`available_quantity`, and `stock_movements.quantity` — because Phase 1 does not support fractional or weighed goods. If that need arrives, it gets a proper unit-of-measure model designed for it, not a quiet widening of these columns to `NUMERIC`. Amounts are in the store's currency (`COALESCE(stores.currency, tenants.default_currency)`).
 
 ---
@@ -417,6 +417,8 @@ CREATE TABLE sellables (
 );
 
 CREATE INDEX idx_sellables_store ON sellables (tenant_id, store_id);
+-- lifecycle filtering: catalogue browsing filters on exactly this triple
+CREATE INDEX idx_sellables_store_status ON sellables (tenant_id, store_id, status);
 
 CREATE TRIGGER trg_sellables_set_updated_at
     BEFORE UPDATE ON sellables
@@ -443,6 +445,8 @@ CREATE TRIGGER trg_sellables_prevent_identity_change
 
 - **`kind`** (`product` / `service`) is only a **coarse discriminator**: it says whether stock can exist at all. It does **not** replace the capability/facet model from F-01 (Stocked, Weighed, Made, Configured, Routed, Timed). Those arrive later as optional 1:1 child tables keyed on the sellable or variant, and a sellable's capabilities are decided by which facet rows exist, not by `kind`. Adding F&B later (recipes, modifiers, kitchen routing) adds tables; it does not change this one.
 - **`kind` is immutable.** Flipping a product to a service after it has purchases and stock would orphan its inventory.
+- **`status`: `active` / `archived`, a freely reversible catalogue toggle** — same shape as `variants.status` (no transition-guard trigger, either value settable at any time) and, like that column, it never deletes anything: the sellable row, its variants, and all existing inventory stay exactly as they were. `archived` means *this sellable's variants cannot be selected for a new `sale_items` line*, full stop — not "delete," not "hide the history." Archiving a sellable **does not cascade a status change to its variants**: a variant can stay `active` on its own row while its parent sellable is `archived`, and no trigger here rewrites it. That's deliberate, not an oversight — see the next bullet for why it still can't be sold.
+- **Sellable-archived and variant-deactivated combine with `AND`, not `OR`-of-convenience.** A variant is sellable in a new sale only when **both** `sellables.status = 'active'` **and** `variants.status = 'active'` — enforced by one join-based trigger on `sale_items` (see that table), since a `CHECK` constraint can't span two tables. Archiving the parent is enough to block every one of its variants from new sales immediately, without touching a single variant row; reactivating the sellable alone is enough to make an already-`active` variant sellable again, with no bulk-update needed either way.
 - **`store_id`** is where the sellable was created and, in Phase 1, the only store that sells it. When sharing arrives it becomes the provenance column `source_store_id`, alongside a link table. That migration is the price of deferring sharing.
 - Every sellable needs at least one variant, even simple ones (a "Standard" variant for a haircut). This is an application rule and is not enforced by the database yet.
 
@@ -463,9 +467,10 @@ CREATE TABLE variants (
     -- SELLING price charged to customers. Never a purchase cost.
     base_price          NUMERIC(12,2) NOT NULL
                             CONSTRAINT variants_base_price_check CHECK (base_price >= 0),
+    -- 'deactivated', not 'archived': a lighter, explicitly reversible toggle — see notes
     status              VARCHAR(20) NOT NULL DEFAULT 'active'
                             CONSTRAINT variants_status_check
-                            CHECK (status IN ('active', 'archived')),
+                            CHECK (status IN ('active', 'deactivated')),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -487,6 +492,9 @@ CREATE UNIQUE INDEX idx_variants_tenant_sku_unique
 
 CREATE INDEX idx_variants_sellable ON variants (tenant_id, sellable_id);
 CREATE INDEX idx_variants_store ON variants (tenant_id, store_id);
+-- active-variant lookup: catalogue browsing and the sales-eligibility check (see sale_items)
+-- both filter on exactly this triple
+CREATE INDEX idx_variants_store_status ON variants (tenant_id, store_id, status);
 
 CREATE TRIGGER trg_variants_set_updated_at
     BEFORE UPDATE ON variants
@@ -510,11 +518,69 @@ CREATE TRIGGER trg_variants_prevent_parent_change
     EXECUTE FUNCTION variants_prevent_parent_change();
 ```
 
-- **`base_price` is the selling price and lives on the variant**, because Red/6m and a plain 3m variant can be priced differently. It is the master selling price for Phase 1; a later store-level override would sit on top of it without changing this column.
+- **`status`: `active` / `deactivated`, a freely reversible catalogue toggle** — there is no status-transition guard trigger on this table (unlike `sales`/`purchases`' edge-by-edge lifecycles), so either value can be set at any time; a variant that's restocked or brought back into season is simply flipped back to `active`. `deactivated` means exactly one thing: *this variant cannot be selected for a new `sale_items` line* (enforced by `sale_items`' eligibility trigger — see that table). It does **not** touch inventory: existing `inventory_batches` rows, their `available_quantity`, and every historical `sale_items`/`stock_movements` row referencing this variant are completely unaffected — no `stock_movements` row is ever posted merely because a variant was deactivated, and nothing here deletes the variant or its batches. Deactivated stock stays queryable and auditable; it's just not sellable through the normal sales workflow until reactivated. Future workflows (clearance, offers, manual adjustment, disposal) can consume that same stock without any schema change here.
+- **`base_price` is the selling price and lives on the variant**, because Red/6m and a plain 3m variant can be priced differently. It is the master selling price for Phase 1; a later store-level override would sit on top of it without changing this column — see "Future pricing compatibility" below.
 - **Variant-first commercial UX.** A variant is created with its own name, SKU, attributes and `base_price` — the sellable is the umbrella grouping ("Silk Saree") and is never asked for a price. `Red/6m → ₹2,000`, `Blue/6m → ₹2,300`, `Green/6m → ₹1,900` are three variant rows under one sellable, each independently priced.
 - **`name`** is the human label ("Red / 6m") and today doubles as where free-text "attributes" (colour, size, etc.) live. Structured option axes as their own columns are a future `variant_options` design using real tables, not a JSONB blob — that decision is unchanged by variant-first UX; the UX is about *where the user enters the data*, not about how it is normalised in the schema.
 - **`sku`** is unique per tenant. Manufacturer barcodes (EAN) are a separate future `variant_barcodes` table; the barcode on `inventory_batches` is something else (see the comparison table below).
 - **`store_id` is denormalised from the sellable, on purpose** — same pattern as `purchase_items.store_id`. It exists so `inventory_batches` (and any future table hanging off a variant) can enforce tenant/store consistency with a direct composite FK, instead of only transitively through a join to `sellables`. The composite `variants_sellable_fk` still ties `store_id` to the parent sellable's own store, so the two can never disagree — this is not a second, independently-editable store assignment.
+
+---
+
+## Product/variant lifecycle and the barcode model
+
+This section locks two things that were previously implicit: how `sellables` and `variants` move between sellable and not-sellable, and how a barcode identifies stock. No new tables — every piece named here (`sellables.status`, `variants.status`, `sale_items`' eligibility trigger, `inventory_batches.barcode`/origin columns) already exists from this phase and the sale-returns phase before it. This section is the one place that states how they fit together as a single model.
+
+```text
+Sellable/Product ──► Variant ──► Inventory Batch ──► Barcode
+  (ACTIVE/ARCHIVED)    (ACTIVE/DEACTIVATED)  (purchase- or return-origin)  (own value per batch)
+```
+
+### Lifecycle: two independent switches, combined with AND
+
+| | States | Reversible? | What it blocks | What it never touches |
+|---|---|---|---|---|
+| `sellables.status` | `active` / `archived` | Yes — plain column, no transition guard | Every variant under an archived sellable, for new sales — *without* rewriting any variant row | The sellable row, its variants, their inventory, all history |
+| `variants.status` | `active` / `deactivated` | Yes — plain column, no transition guard | Just that one variant, for new sales | Its `inventory_batches` rows, `available_quantity`, all history |
+
+A variant is eligible for a **new** `sale_items` line only when **both** are true at once — `sellables.status = 'active'` **and** `variants.status = 'active'` — checked by `trg_sale_items_require_active_variant` (see `sale_items`). Archiving the sellable is enough on its own to block every one of its variants; no cascading `UPDATE` ever touches `variants.status`, and none of this is enforceable as a single-table `CHECK` since the two columns live on different tables.
+
+Neither switch ever produces a `stock_movements` row, ever changes `available_quantity`, and ever deletes anything. `inventory_batches` has no FK to, or trigger dependency on, either status column — an archived/deactivated variant's stock is exactly as present, and exactly as queryable, the moment after the flip as the moment before. Reactivating either is just flipping the column back; nothing needs "repair."
+
+### Barcode: identifies a batch, never just a variant
+
+```text
+Barcode ──► Inventory Batch ──► Variant ──► Sellable
+```
+
+A barcode is looked up as `(tenant_id, barcode)` against `inventory_batches` — the unique, tenant-scoped index (`inventory_batches_tenant_barcode_unique`, from the catalogue/inventory phase) is the entire mechanism, and it applies identically to both batch origins introduced in the sale-returns phase:
+
+- **Purchase-origin** (`purchase_item_id NOT NULL`, `sale_return_item_id NULL`): receives its barcode when the batch is created at receipt.
+- **Return-origin** (`purchase_item_id NULL`, `sale_return_item_id NOT NULL`): receives its **own newly issued** barcode when the return completes — never the original batch's. `B001`'s barcode is never reassigned to `R001`; scanning `B001`'s old barcode after a partial return still finds `B001` (with its reduced `available_quantity`), and scanning `R001`'s barcode finds `R001` specifically.
+
+Because uniqueness is scoped to the batch, not the variant, `Red Saree` having three open batches (`B001`/barcode A, `B002`/barcode B, `B003`/barcode C) is normal — scanning barcode B finds `B002`, specifically, never "some batch of Red Saree." The database never parses a barcode's *content* to derive `variant_id` or anything else (see `inventory_batches`' barcode note); it's a safe opaque string, looked up by exact match. Nothing here assumes or enforces a particular symbology (EAN-13, Code128, a random internal string) — that choice, and whether a barcode is internally generated or an existing manufacturer code is reused, belongs entirely to the application layer.
+
+**Expected lookup sequence**, restated as one flow (each step below already exists as a real constraint or trigger; this is the order the application walks them in):
+
+```text
+scan barcode
+  → SELECT ... FROM inventory_batches WHERE tenant_id = $1 AND barcode = $2   (unique index)
+  → batch not found?  reject
+  → read variant_id off the batch row
+  → sellables.status = 'active' AND variants.status = 'active'?               (same rule
+                                                                                trg_sale_items_require_active_variant
+                                                                                enforces — see that table)
+  → not eligible?  reject before adding a line
+  → check available_quantity > 0 (application pre-check; CHECK (available_quantity >= 0)
+     on inventory_batches is the real, transaction-failing backstop — see that table)
+  → INSERT sale_items (this variant) + sale_item_batches (this exact batch_id)
+```
+
+A scanned barcode names an exact `batch_id`; it is written straight into `sale_item_batches`, never substituted, never re-resolved through FIFO. This is unchanged from `sale_item_batches`' original design (see that table's "Barcode-first vs. variant-first" note) — this section restates it because the eligibility check above is new, not because the allocation behavior changed. Variant-first selling remains exactly FIFO — oldest `inventory_batches.received_at` first among *active-variant* eligible batches — with FEFO still deferred until expiry-enabled inventory exists. Barcode scanning and variant-first search stay two separate flows that both terminate in the same `sale_items` + `sale_item_batches` shape; nothing about this phase merges or changes either.
+
+### Future pricing compatibility
+
+Phase 1 has exactly one selling price per variant: `variants.base_price`, captured into `sale_items.unit_price` at the time of sale (see that column's note) so a later price change never touches a historical or even in-progress sale. No store-specific override and no price-history/audit trail exist yet — both are deferred (see "Future path") — but nothing here forecloses them: a future `variant_price_overrides`-style table (store-scoped, pointing at a variant) would sit *alongside* `base_price` as the thing the application checks first, and a future `variant_price_history` table (see "Future path", already anticipated before this phase) records who changed a price and when, independent of whichever column holds the *current* price at query time. Neither needs `base_price` to move, be renamed, or change meaning — `base_price` stays the tenant-wide master/default price either way.
 
 ---
 
@@ -1565,7 +1631,7 @@ CREATE TRIGGER trg_customers_set_updated_at
 ### Notes
 
 - **No forced uniqueness on `phone`/`email`.** Same reasoning as `users.phone` and `suppliers`' contact fields: a shared household phone, a customer who gives no email, or a duplicate walk-in entry are all real, and forcing uniqueness would block legitimate data rather than catch a real error. `email` still gets the same lowercase-normalisation `CHECK` used everywhere else in this schema (`users.email`, `suppliers.email`) — not for uniqueness, just consistent casing for the (non-unique) lookup index.
-- **`status`: `active` / `archived` — the standard terminal soft-delete pattern**, same as `suppliers`, `sellables`, `variants`. No `deleted_at`.
+- **`status`: `active` / `archived` — the standard terminal soft-delete pattern**, same as `suppliers`. No `deleted_at`. (`sellables` (`active`/`archived`) and `variants` (`active`/`deactivated`) use a similarly-shaped status column, but — unlike this one — theirs is a freely reversible catalogue toggle, not a terminal soft-delete; see those tables' notes.)
 - **No `lifetime_purchase_amount`, no `lifetime_discount_amount`, no `credit_balance` column — none, on purpose.** These are exactly the kind of value this schema has consistently refused to store as a mutable, independently-writable fact (the same reasoning `inventory_batches.available_quantity` had to earn its way past in an earlier phase, and here the answer is simpler: nothing earns it). Purchase history is derived from `sales`/`sale_items` (see "Customer purchase history" below); credit balance is derived from `customer_credit_ledger` (see that table's `customer_credit_balance` view). A customer row is identity and contact information only, exactly the same role `users` plays for staff identity versus `tenant_memberships` for their transactional/authorization facts.
 - **`address`/`notes` are `TEXT`, not `VARCHAR(500)`** (unlike `reason` fields elsewhere in this schema) — both are open-ended, potentially multi-line content, not a short structured reason code.
 
@@ -2049,6 +2115,36 @@ CREATE TRIGGER trg_sale_items_prevent_parent_change
     FOR EACH ROW
     EXECUTE FUNCTION sale_items_prevent_parent_change();
 
+-- the sales-eligibility rule: a variant can be added to a sale only when BOTH it and its
+-- parent sellable are active. Fires on INSERT (adding a line) and whenever variant_id itself
+-- changes (fixing a wrong variant while still draft) — never on any other UPDATE, since every
+-- other content column's own trigger already restricts changes to draft anyway
+CREATE FUNCTION sale_items_require_active_variant() RETURNS TRIGGER AS $$
+DECLARE
+    v_variant_status  VARCHAR(20);
+    v_sellable_status VARCHAR(20);
+BEGIN
+    SELECT v.status, s.status INTO v_variant_status, v_sellable_status
+      FROM variants v
+      JOIN sellables s ON s.id = v.sellable_id AND s.tenant_id = v.tenant_id
+     WHERE v.id = NEW.variant_id AND v.tenant_id = NEW.tenant_id;
+
+    IF v_variant_status <> 'active' THEN
+        RAISE EXCEPTION 'variant % is % and cannot be sold', NEW.variant_id, v_variant_status;
+    END IF;
+    IF v_sellable_status <> 'active' THEN
+        RAISE EXCEPTION 'variant % belongs to a % sellable and cannot be sold', NEW.variant_id, v_sellable_status;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_sale_items_require_active_variant
+    BEFORE INSERT OR UPDATE OF variant_id ON sale_items
+    FOR EACH ROW
+    EXECUTE FUNCTION sale_items_require_active_variant();
+
 -- any line change re-verifies the header totals at commit
 CREATE CONSTRAINT TRIGGER trg_sale_items_totals_guard
     AFTER INSERT OR UPDATE OR DELETE ON sale_items
@@ -2063,6 +2159,8 @@ CREATE CONSTRAINT TRIGGER trg_sale_items_totals_guard
 - **A sale item does not, by itself, name a batch.** `variant_id` is the commercial unit being sold; *which physical stock* fulfils it is `sale_item_batches`' job (next table), deliberately kept separate so the allocation strategy (barcode-exact, FIFO, future FEFO) never has to live on this table — see that table's notes and "Future FEFO compatibility" below.
 - **No discount/tax *rate* fields**, same reasoning as `purchase_items`/`purchase_return_items`: these are absolute amounts, computed by the application, not percentages stored and reproduced here.
 - **`line_total = round(quantity × unit_price − discount + tax, 2)`** — gross line amount (`quantity × unit_price`) minus discount plus sales tax, the same shape `purchase_items.line_total` uses (minus the direction of tax's sign, since purchase tax and sales tax are unrelated concepts that happen to both get added here — see `purchase_items`' tax-scoping note).
+- **`trg_sale_items_require_active_variant` is what actually enforces "archived/deactivated can't be sold," for both selling flows at once.** Barcode-first and variant-first selling both end up inserting a `sale_items` row for the commercial line before (or as) they insert its `sale_item_batches` allocation, so one trigger here covers a scanned barcode exactly the same as a variant search — there's no second check needed on `sale_item_batches` or on the barcode-lookup path. It fires on `INSERT` and on a `variant_id` change, never on any other `UPDATE` — `quantity`/`unit_price`/etc. changing doesn't re-name a variant, so there's nothing new to check. It's deliberately silent about `sale_return_items`: a return must always be acceptable against a variant or sellable that's since been deactivated or archived, the same "never break history" principle "Historical integrity" already establishes — Phase 1 has no analogous eligibility check anywhere on the return path, by design.
+- **Purchasing is untouched.** Nothing stops `purchase_items` from naming a deactivated variant or an archived sellable's variant — receiving already-ordered stock, or restocking a variant you're about to reactivate, is a purchasing concern, not a sales-eligibility one, and this phase's eligibility rule was scoped to selling only.
 
 ---
 
@@ -2925,6 +3023,8 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 | Flow | Rows written |
 |---|---|
 | Create a product | 1 `sellables` (no price) + ≥1 `variants` (each with its own `base_price`, SKU and name) |
+| Archive / reactivate a product | `UPDATE sellables SET status='archived'`(or back to `'active'`) — no cascade to its variants, no stock effect, nothing else written |
+| Deactivate / reactivate a variant | `UPDATE variants SET status='deactivated'` (or back to `'active'`) — no stock effect, `inventory_batches` completely untouched, nothing else written |
 | Record a purchase | 1 `purchases` + N `purchase_items` (header totals recomputed in the same transaction) |
 | Receive stock | Mark the purchase `received`; per batch, 1 `inventory_batches` (`available_quantity` starts at 0) + 1 `PURCHASED` `stock_movements` row (`reference_type='PURCHASE_ITEM'`), whose trigger brings `available_quantity` up to `received_quantity` — all in one transaction |
 | Same variant bought at a new cost | A new purchase line and a new batch with its own barcode. Nothing existing changes |
@@ -2933,7 +3033,7 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 | Reverse a completed purchase return | Per item, 1 `PURCHASE_RETURN_REVERSAL` `stock_movements` row (same `reference_type='PURCHASE_RETURN'`/`reference_id` as the original item), whose trigger re-increments each batch's `available_quantity`; then `UPDATE purchase_returns SET status='reversed'` — same atomic pattern as completion. The original `purchase_returns`/`purchase_return_items` rows are untouched |
 | Correct a miscount, damage or loss | 1 `DAMAGED` / `LOST` / `INTERNAL_USE` `stock_movements` row, optionally against a `STOCK_ADJUSTMENT` reference |
 | Add a customer | 1 `customers` row. Not required before a sale — see the next row |
-| Build a sale (either mode) | 1 `sales` (header, `status='draft'`) + 1 `sale_items` row per variant + 1+ `sale_item_batches` row per item — barcode-first writes the scanned batch directly; variant-first has the application run FIFO across eligible batches. No stock effect, no ledger effect, freely editable |
+| Build a sale (either mode) | 1 `sales` (header, `status='draft'`) + 1 `sale_items` row per variant + 1+ `sale_item_batches` row per item — barcode-first writes the scanned batch directly; variant-first has the application run FIFO across eligible batches. Each `sale_items` insert is rejected if its variant or the variant's sellable isn't `active` (see "Product/variant lifecycle and the barcode model"). No stock effect, no ledger effect, freely editable |
 | Take payment on a draft sale | 1+ `sale_payments` rows (cash/UPI/card/credit, any combination) — still no stock or ledger effect; only checked for completeness at the next step |
 | Complete a sale | Per `sale_item_batches` row, 1 `SOLD` `stock_movements` row (`reference_type='SALE_ITEM'`, `reference_id`=the sale item's id), whose trigger decrements each batch's `available_quantity`; per customer-credit payment, 1 `customer_credit_ledger` row (`entry_type='CREDIT_SALE'`); then `UPDATE sales SET status='completed'` — all in one transaction, verified at commit that allocations are complete, movements exist, payments sum to the total, and credit entries exist |
 | Void a completed sale | Per `sale_item_batches` row, 1 `SOLD_REVERSAL` `stock_movements` row restoring what was sold; per `CREDIT_SALE` entry, 1 `CREDIT_REVERSAL` row (`reverses_entry_id`=the original); then `UPDATE sales SET status='voided', void_reason='...'` (reason optional, free text) — same atomic, verified-at-commit pattern. Actual cash/card money already received is **not** reversed here — see "Future path". Blocked entirely if the sale has any `completed` `sale_returns` row against it (see `sales`' guard) |
@@ -2945,11 +3045,12 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 ### Future path (not Phase 1)
 
 - **Multi-store sharing:** `sellables.store_id` becomes `source_store_id`, plus a `store_sellables` link, `store_variants` for store-level price overrides, and the store checks in the variant guard and in `variants`/`inventory_batches`' composite FKs are relaxed.
+- **Store-specific price overrides and price history:** see "Future pricing compatibility" (under "Product/variant lifecycle and the barcode model") for why neither needs `variants.base_price` to change shape — a future `store_variants`-style override table (folded into multi-store sharing above) and an append-only `variant_price_history` table (who changed a price, when, without touching `variants`) both sit alongside it.
 - **Transfers:** paired `stock_movements` rows between stores, with new movement types.
 - **Batch splitting:** an existing batch's `available_quantity` divided into several new whole-number batches that preserve `variant_id` and `purchase_item_id`; needs a `parent_batch_id`-style lineage column and one or two new `stock_movements` types, not a redesign of `inventory_batches`.
 - **Serial-number tracking:** a `stock_units` table beneath batches, without changing batches.
 - **Facets and F&B:** optional child tables keyed on sellables and variants (Stocked, Weighed, Made, Configured, Routed, Timed). `kind` stays a coarse discriminator.
-- **Price history:** an append-only `variant_price_history` table, without touching `variants`.
+- **Deactivated/archived-stock workflows:** clearance, offers, manual adjustment, transfer, disposal and "special resale" for stock sitting under a deactivated variant or archived sellable are all explicitly out of Phase 1 (see "Product/variant lifecycle and the barcode model") — the stock is fully queryable and untouched today, just not sellable through the normal flow; none of these need a schema change to become reachable, only new application workflows (and, eventually, the same `condition`/`disposition` column already anticipated for returned-origin batches).
 - **Also pending:** supplier payables, a `partially_received` purchase status (add to the `CHECK` when needed), and manufacturer barcodes in `variant_barcodes`.
 - **Sale return reversal:** unlike `purchase_returns`, `sale_returns` has no `reversed` state in Phase 1 — a mistaken return is corrected manually, out-of-band, not through a schema-supported reversal. If this becomes a real need, it's the same additive shape `purchase_returns` already proved (a third status value plus a compensating movement type), not a redesign of `sale_returns`.
 - **Refund / payment reversal mechanism (the biggest remaining financial gap):** neither voiding a sale nor completing a `sale_return` touches actual cash/UPI/card money already received — voiding reverses inventory (`SOLD_REVERSAL`) and customer credit (`CREDIT_REVERSAL`) only, and a completed return records the returned goods and restores inventory (via a new batch) only. `sale_return_items` deliberately carries no money columns of its own so a future refund system can compute the refundable amount straight from the (frozen) original `sale_items` row it points at — see that table's notes. A `sale_payment_reversals`-style table (mirroring how `purchase_returns` was added without touching `purchases`) is the next dependent piece, named rather than invented here.
@@ -3014,7 +3115,12 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 - **A sale with a completed return can never be voided, and a return can never complete against a sale that's no longer completed — both directions of the same guard.** Voiding restores the *full* originally-sold quantity via `SOLD_REVERSAL`; a completed return has already restored part or all of that same quantity via its own new batch, so allowing both would double-count stock (10 sold, 4 returned, then voided would wrongly restore 10 on top of the 4 already back, for 14). `sales_guard_update()` blocks `completed → voided` if a `completed` `sale_returns` row exists against the sale; `sale_returns`' own completion guard re-checks, at commit, that the sale is *still* `completed` (not just was, at draft creation) — necessary specifically because a sale's `completed` status, unlike a purchase's `received` status, is not terminal.
 - **The over-return ceiling is checked once, at a return's own completion, against completed returns only — no reservation during draft, mirroring the sales design's own choice exactly.** Two draft returns can be built against overlapping quantities from the same original batch allocation; whichever completes first succeeds, and the second fails its own completion guard with a clear error, rather than either being blocked at draft time or silently reserving stock.
 - **`sale_item_batches` gained a second unique target, `(tenant_id, store_id, id, sale_item_id, variant_id)`, purely so `sale_return_items` has something valid to reference.** This adds no behavior to `sale_item_batches` itself — it's a superset of the existing `sale_item_batches_sale_item_fk`'s own shape, just exposed as a constraint another table's FK can point at.
+- **`variants.status`'s `archived` value was renamed to `deactivated`, and it — along with `sellables.status` — was made explicitly a freely reversible catalogue toggle, correcting an earlier, overstated cross-reference** (`customers`' Notes had called it "the standard terminal soft-delete pattern, same as suppliers, sellables, variants," which was never accurate for these two: neither table has ever had a status-transition guard trigger). The rename gives variant deactivation its own vocabulary, distinct in weight from a sellable being archived, matching how the requirement described the two: archiving reads as "no longer offered or maintained," deactivating reads as "temporarily not sellable, stock untouched." Both remain plain columns either value can be set on at any time; reactivation is just flipping it back, nothing to repair.
+- **Sales eligibility (`sellable.status = 'active' AND variant.status = 'active'`) is enforced by one new trigger on `sale_items`, not a `CHECK` constraint.** A `CHECK` can't span two tables, and there was already exactly one place both selling flows (barcode-first and variant-first) converge before touching inventory — the `sale_items` insert. `trg_sale_items_require_active_variant` fires on `INSERT` and on a `variant_id` change (the only way a sale item's eligibility could ever change), leaving `sale_item_batches`, `purchase_items` and `sale_return_items` untouched: purchasing was never in scope, and a return must always be acceptable regardless of current catalogue status, the same "never break history" principle the rest of this schema already lives by.
+- **Archiving a sellable never cascades a status write to its variants, by design, not by omission.** The requirement was explicit about this, and it falls out naturally from checking both columns independently at the point of sale rather than trying to keep them in sync: a variant can stay `active` on its own row while its parent sellable is `archived` and still correctly fail the eligibility check, because the check reads both tables itself. No trigger was added to `sellables` to rewrite `variants.status`, and none is needed.
+- **Two additive, status-filtered indexes** — `idx_sellables_store_status` and `idx_variants_store_status`, both `(tenant_id, store_id, status)` — were added for catalogue-lifecycle filtering and the new eligibility trigger's lookup. Barcode lookup and tenant isolation needed nothing new: `inventory_batches_tenant_barcode_unique` (from the catalogue/inventory phase) and the composite tenant/store FKs throughout already covered both origins.
+- **The barcode model itself required no schema change** — `inventory_batches.barcode`, its tenant-scoped uniqueness, and the purchase-vs-return origin split (from the sale-returns phase) already satisfied every requirement here (batch-level identity, opaque string storage, no assumed symbology, a new barcode per return batch, never a reused one). This phase's work on barcodes was entirely documentation: consolidating the barcode → batch → variant → sellable chain and the scan-to-sale lookup sequence into one place ("Product/variant lifecycle and the barcode model") rather than leaving it scattered across `inventory_batches`' and `sale_item_batches`' individual notes.
 
 ## Up next
 
-The core sales transaction (`sales`/`sale_items`/`sale_item_batches`, barcode-first and variant-first selling, payment completion, void/reversal) and sale returns (`sale_returns`/`sale_return_items`, partial/full/multi-batch returns, return-origin `inventory_batches`) are now both built — see "Future path" above for what's still deliberately left for later: a `sale_payments`/refund reversal mechanism for actual money already received (the biggest remaining financial gap), sale return reversal, returned-batch condition/classification, and FEFO allocation once expiry-enabled inventory exists. Next up: the product/variant lifecycle and barcode rules, followed by a final schema review.
+The core sales transaction, sale returns, and now the product/variant lifecycle and barcode model are all built and documented. What's still deliberately left for later (see "Future path" above for each): a `sale_payments`/refund reversal mechanism for actual money already received (the biggest remaining financial gap), sale return reversal, returned-batch condition/classification, deactivated/archived-stock workflows (clearance, offers, disposal, special resale), store-specific price overrides and price history, and FEFO allocation once expiry-enabled inventory exists. Next up: a final schema review.
