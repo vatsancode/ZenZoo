@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "ZenZoo POS",
+    "slug": "zenzoo-pos",
+    "scheme": "zenzoopos",
+    "version": "0.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "plugins": ["expo-router"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.zenzoo.pos"
+    },
+    "android": {
+      "package": "com.zenzoo.pos"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

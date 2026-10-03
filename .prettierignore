@@ -1,0 +1,10 @@
+node_modules
+dist
+build
+.next
+.expo
+.turbo
+pnpm-lock.yaml
+prisma/migrations/**/migration.sql
+# Pre-existing source-of-truth specs; not reformatted as part of this change.
+docs
