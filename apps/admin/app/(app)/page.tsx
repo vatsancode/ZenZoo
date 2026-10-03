@@ -2,7 +2,6 @@
 
 import { useTheme } from "@zenzoo/design-tokens";
 import { Badge, Button, Card, textStyle } from "@zenzoo/ui-web";
-import Link from "next/link";
 
 export default function HomePage() {
   const { colors, spacing } = useTheme();
@@ -20,28 +19,6 @@ export default function HomePage() {
           <Button variant="primary">Get started</Button>
           <Badge tone="success">Connected</Badge>
         </div>
-        <Link
-          href="/style-guide"
-          style={{
-            ...textStyle("callout"),
-            color: colors.accent,
-            marginTop: spacing[5],
-            display: "block",
-          }}
-        >
-          View the style guide &rarr;
-        </Link>
-        <Link
-          href="/sign-in"
-          style={{
-            ...textStyle("callout"),
-            color: colors.accent,
-            marginTop: spacing[2],
-            display: "block",
-          }}
-        >
-          Sign in &rarr;
-        </Link>
       </Card>
     </main>
   );
