@@ -1,5 +1,12 @@
-import { colors, radius, spacing, typography } from "@zenzoo/design-tokens";
-import { ActivityIndicator, Pressable, StyleSheet, Text, type PressableProps } from "react-native";
+import { useTheme, type ColorTokens } from "@zenzoo/design-tokens";
+import {
+  ActivityIndicator,
+  Pressable,
+  Text,
+  type PressableProps,
+  type ViewStyle,
+} from "react-native";
+import { textStyle } from "../internal/textStyle";
 
 export type ButtonVariant = "primary" | "secondary" | "danger";
 
@@ -9,59 +16,46 @@ export interface ButtonProps extends Omit<PressableProps, "style"> {
   loading?: boolean;
 }
 
+function fillStyle(
+  variant: ButtonVariant,
+  colors: ColorTokens,
+): { container: ViewStyle; text: string } {
+  switch (variant) {
+    case "primary":
+      return { container: { backgroundColor: colors.accent }, text: colors.onAccent };
+    case "secondary":
+      return { container: { backgroundColor: colors.surfaceSunken }, text: colors.ink };
+    case "danger":
+      return { container: { backgroundColor: colors.danger }, text: colors.onAccent };
+  }
+}
+
 export function Button({ label, variant = "primary", loading, disabled, ...props }: ButtonProps) {
-  const variantStyle = variantStyles[variant];
+  const { colors, radius, spacing } = useTheme();
+  const fill = fillStyle(variant, colors);
   const isDisabled = disabled || loading;
 
   return (
     <Pressable
       {...props}
       disabled={isDisabled}
-      style={[styles.base, variantStyle.container, isDisabled && styles.disabled]}
+      style={({ pressed }) => [
+        {
+          height: 44,
+          paddingHorizontal: spacing[6],
+          borderRadius: radius.full,
+          alignItems: "center",
+          justifyContent: "center",
+          opacity: isDisabled ? 0.4 : pressed ? 0.85 : 1,
+        },
+        fill.container,
+      ]}
     >
       {loading ? (
-        <ActivityIndicator color={variantStyle.text.color} />
+        <ActivityIndicator color={fill.text} />
       ) : (
-        <Text style={[styles.label, variantStyle.text]}>{label}</Text>
+        <Text style={[textStyle("headline"), { color: fill.text }]}>{label}</Text>
       )}
     </Pressable>
   );
 }
-
-const styles = StyleSheet.create({
-  base: {
-    paddingVertical: spacing[2],
-    paddingHorizontal: spacing[4],
-    borderRadius: radius.md,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  disabled: {
-    opacity: 0.5,
-  },
-  label: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-  },
-});
-
-const variantStyles: Record<
-  ButtonVariant,
-  {
-    container: { backgroundColor: string; borderWidth?: number; borderColor?: string };
-    text: { color: string };
-  }
-> = {
-  primary: {
-    container: { backgroundColor: colors.primary },
-    text: { color: colors.textInverse },
-  },
-  secondary: {
-    container: { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border },
-    text: { color: colors.textPrimary },
-  },
-  danger: {
-    container: { backgroundColor: colors.danger },
-    text: { color: colors.textInverse },
-  },
-};

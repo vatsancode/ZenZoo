@@ -1,4 +1,4 @@
-import { colors, radius, spacing, elevation } from "@zenzoo/design-tokens";
+import { useTheme } from "@zenzoo/design-tokens";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -9,6 +9,8 @@ export interface ModalProps {
 }
 
 export function Modal({ open, onClose, children }: ModalProps) {
+  const { colors, radius, spacing, elevation } = useTheme();
+
   if (!open || typeof document === "undefined") {
     return null;
   }
@@ -20,10 +22,12 @@ export function Modal({ open, onClose, children }: ModalProps) {
       style={{
         position: "fixed",
         inset: 0,
-        backgroundColor: "rgba(18, 19, 23, 0.4)",
+        backgroundColor: `color-mix(in srgb, ${colors.ink} 40%, transparent)`,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+        padding: spacing[8],
+        boxSizing: "border-box",
         zIndex: 1000,
       }}
     >
@@ -32,12 +36,13 @@ export function Modal({ open, onClose, children }: ModalProps) {
         aria-modal="true"
         onClick={(event) => event.stopPropagation()}
         style={{
-          backgroundColor: colors.background,
-          borderRadius: radius.lg,
-          padding: spacing[6],
+          backgroundColor: colors.surfaceRaised,
+          borderRadius: radius.xl,
+          padding: spacing[8],
           boxShadow: elevation.lg.web,
           minWidth: 320,
           maxWidth: "90vw",
+          boxSizing: "border-box",
         }}
       >
         {children}

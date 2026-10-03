@@ -1,10 +1,12 @@
-import { colors, spacing, typography } from "@zenzoo/design-tokens";
+import { useTheme } from "@zenzoo/design-tokens";
 import type { ReactNode } from "react";
+import { textStyle } from "../internal/textStyle";
 
 export interface TableColumn<Row> {
   key: string;
   header: ReactNode;
   render: (row: Row) => ReactNode;
+  align?: "left" | "right";
 }
 
 export interface TableProps<Row> {
@@ -14,9 +16,16 @@ export interface TableProps<Row> {
 }
 
 export function Table<Row>({ columns, rows, getRowKey }: TableProps<Row>) {
+  const { colors, radius, spacing } = useTheme();
+
   return (
     <table
-      style={{ width: "100%", borderCollapse: "collapse", fontFamily: typography.fontFamily.base }}
+      style={{
+        width: "100%",
+        borderCollapse: "collapse",
+        backgroundColor: colors.surfaceRaised,
+        borderRadius: radius.lg,
+      }}
     >
       <thead>
         <tr>
@@ -24,11 +33,11 @@ export function Table<Row>({ columns, rows, getRowKey }: TableProps<Row>) {
             <th
               key={column.key}
               style={{
-                textAlign: "left",
-                fontSize: typography.fontSize.xs,
-                fontWeight: typography.fontWeight.semibold,
-                color: colors.textSecondary,
-                padding: spacing[2],
+                ...textStyle("caption"),
+                textAlign: column.align ?? "left",
+                textTransform: "uppercase",
+                color: colors.inkMuted,
+                padding: `${spacing[3]}px ${spacing[5]}px`,
                 borderBottom: `1px solid ${colors.border}`,
               }}
             >
@@ -38,16 +47,17 @@ export function Table<Row>({ columns, rows, getRowKey }: TableProps<Row>) {
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => (
+        {rows.map((row, index) => (
           <tr key={getRowKey(row)}>
             {columns.map((column) => (
               <td
                 key={column.key}
                 style={{
-                  fontSize: typography.fontSize.sm,
-                  color: colors.textPrimary,
-                  padding: spacing[2],
-                  borderBottom: `1px solid ${colors.border}`,
+                  ...textStyle("body"),
+                  textAlign: column.align ?? "left",
+                  color: colors.ink,
+                  padding: `${spacing[4]}px ${spacing[5]}px`,
+                  borderBottom: index === rows.length - 1 ? "none" : `1px solid ${colors.border}`,
                 }}
               >
                 {column.render(row)}

@@ -1,10 +1,14 @@
 /**
  * Web (box-shadow) and native (shadow* / elevation) use genuinely different
  * APIs, so each elevation level carries both representations rather than
- * forcing one shape onto both platforms. `ui-web` reads `.web`, `ui-native`
- * reads `.native` - the *meaning* of "elevation 2" stays the same platform
- * to platform, only its expression differs.
+ * forcing one shape onto both platforms. Shadows are also theme-aware: a
+ * dark surface needs a stronger, higher-opacity shadow than a light one to
+ * read as the same lift. Soft and shallow by design - reach for the next
+ * step up rather than increasing an existing shadow's opacity, and never
+ * pair a shadow with a border on the same edge.
  */
+
+import type { ThemeName } from "../colors";
 
 export interface NativeShadow {
   shadowColor: string;
@@ -19,47 +23,95 @@ export interface ElevationLevel {
   native: NativeShadow;
 }
 
-export const elevation: Record<"none" | "sm" | "md" | "lg", ElevationLevel> = {
-  none: {
-    web: "none",
+export type ElevationName = "xs" | "sm" | "md" | "lg";
+
+const lightElevation: Record<ElevationName, ElevationLevel> = {
+  xs: {
+    web: "0 1px 2px rgba(28, 28, 30, 0.04)",
     native: {
-      shadowColor: "transparent",
-      shadowOffset: { width: 0, height: 0 },
-      shadowOpacity: 0,
-      shadowRadius: 0,
-      elevation: 0,
-    },
-  },
-  sm: {
-    web: "0 1px 2px rgba(18, 19, 23, 0.08)",
-    native: {
-      shadowColor: "#121317",
+      shadowColor: "#1c1c1e",
       shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.08,
+      shadowOpacity: 0.04,
       shadowRadius: 2,
       elevation: 1,
     },
   },
-  md: {
-    web: "0 4px 8px rgba(18, 19, 23, 0.12)",
+  sm: {
+    web: "0 2px 8px rgba(28, 28, 30, 0.06)",
     native: {
-      shadowColor: "#121317",
+      shadowColor: "#1c1c1e",
       shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.12,
+      shadowOpacity: 0.06,
       shadowRadius: 8,
-      elevation: 4,
+      elevation: 2,
+    },
+  },
+  md: {
+    web: "0 8px 24px rgba(28, 28, 30, 0.10)",
+    native: {
+      shadowColor: "#1c1c1e",
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.1,
+      shadowRadius: 16,
+      elevation: 6,
     },
   },
   lg: {
-    web: "0 8px 24px rgba(18, 19, 23, 0.16)",
+    web: "0 24px 48px rgba(28, 28, 30, 0.16)",
     native: {
-      shadowColor: "#121317",
-      shadowOffset: { width: 0, height: 4 },
+      shadowColor: "#1c1c1e",
+      shadowOffset: { width: 0, height: 8 },
       shadowOpacity: 0.16,
-      shadowRadius: 16,
-      elevation: 8,
+      shadowRadius: 32,
+      elevation: 12,
     },
   },
 };
 
-export type Elevation = typeof elevation;
+const darkElevation: Record<ElevationName, ElevationLevel> = {
+  xs: {
+    web: "0 1px 2px rgba(0, 0, 0, 0.5)",
+    native: {
+      shadowColor: "#000000",
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.5,
+      shadowRadius: 2,
+      elevation: 1,
+    },
+  },
+  sm: {
+    web: "0 2px 8px rgba(0, 0, 0, 0.55)",
+    native: {
+      shadowColor: "#000000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.55,
+      shadowRadius: 8,
+      elevation: 2,
+    },
+  },
+  md: {
+    web: "0 8px 24px rgba(0, 0, 0, 0.6)",
+    native: {
+      shadowColor: "#000000",
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.6,
+      shadowRadius: 16,
+      elevation: 6,
+    },
+  },
+  lg: {
+    web: "0 24px 48px rgba(0, 0, 0, 0.7)",
+    native: {
+      shadowColor: "#000000",
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.7,
+      shadowRadius: 32,
+      elevation: 12,
+    },
+  },
+};
+
+export const elevationThemes: Record<ThemeName, Record<ElevationName, ElevationLevel>> = {
+  light: lightElevation,
+  dark: darkElevation,
+};

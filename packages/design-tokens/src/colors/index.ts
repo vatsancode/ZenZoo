@@ -1,62 +1,88 @@
 /**
- * A small, coherent color system: one neutral scale, one brand scale, and a
- * handful of semantic colors - not hundreds of one-off values. Add a shade
- * only when a real component needs it.
+ * Color roles, defined once per theme. Components should always read these
+ * through `useTheme()` rather than importing `lightColors`/`darkColors`
+ * directly, so a screen follows the viewer's light/dark preference instead
+ * of being pinned to one theme.
  */
 
-export const neutral = {
-  0: "#FFFFFF",
-  50: "#F7F7F8",
-  100: "#EEEEF0",
-  200: "#D8D9DD",
-  300: "#B6B8BF",
-  400: "#8A8D96",
-  500: "#63666F",
-  600: "#484A52",
-  700: "#313339",
-  800: "#1E1F24",
-  900: "#121317",
-  1000: "#000000",
-} as const;
+export type ThemeName = "light" | "dark";
 
-export const brand = {
-  50: "#EFF6FF",
-  100: "#DBEAFE",
-  200: "#BFDBFE",
-  300: "#93C5FD",
-  400: "#60A5FA",
-  500: "#3B82F6",
-  600: "#2563EB",
-  700: "#1D4ED8",
-  800: "#1E40AF",
-  900: "#1E3A8A",
-} as const;
+export interface ColorTokens {
+  /** App background, behind every screen. */
+  surfaceCanvas: string;
+  /** Cards, sheets, modals, menus - anything sitting above the canvas. */
+  surfaceRaised: string;
+  /** Inputs, selects, chips - controls recessed into a surface. */
+  surfaceSunken: string;
+  /** Soft wash behind empty states, onboarding and callouts. Used sparingly. */
+  surfacePlayful: string;
+  /** Hairline dividers and resting input outlines. Pair with elevation, not both. */
+  border: string;
+  /** Primary text and icons. */
+  ink: string;
+  /** Secondary text and metadata. */
+  inkMuted: string;
+  /** Placeholder text and disabled labels only - never body copy. */
+  inkFaint: string;
+  /** Primary action: filled buttons, links, the active state of a control. */
+  accent: string;
+  /** `accent` while pressed or active. */
+  accentPressed: string;
+  /** Text and icons on an `accent` or `accentPressed` fill. */
+  onAccent: string;
+  /** The one warm accent: celebrations, highlighted tips, illustration fills. */
+  playful: string;
+  /** Text and icons on a `playful` fill. */
+  onPlayful: string;
+  /** Status: stock levels, confirmations. */
+  success: string;
+  /** Status: form errors, caution states. */
+  warning: string;
+  /** Status: destructive actions, failures. */
+  danger: string;
+}
 
-export const semantic = {
-  success: "#16A34A",
-  warning: "#D97706",
-  danger: "#DC2626",
-  info: brand[600],
-} as const;
+export const lightColors: ColorTokens = {
+  surfaceCanvas: "#fafafc",
+  surfaceRaised: "#ffffff",
+  surfaceSunken: "#f2f2f6",
+  surfacePlayful: "#f1eeff",
+  border: "#e3e3e8",
+  ink: "#1c1c1e",
+  inkMuted: "#6e6e73",
+  inkFaint: "#aeaeb2",
+  accent: "#0f66e0",
+  accentPressed: "#0b4fb0",
+  onAccent: "#ffffff",
+  playful: "#ff7a47",
+  onPlayful: "#1c1c1e",
+  success: "#198754",
+  warning: "#9c5700",
+  danger: "#c62828",
+};
 
-/**
- * Role-based aliases components should reach for first. Prefer these over
- * reaching into `neutral`/`brand` directly, so a future palette change is a
- * one-file edit here rather than a search-and-replace across components.
- */
-export const colors = {
-  background: neutral[0],
-  surface: neutral[50],
-  border: neutral[200],
-  textPrimary: neutral[900],
-  textSecondary: neutral[600],
-  textInverse: neutral[0],
-  primary: brand[600],
-  primaryHover: brand[700],
-  primaryPressed: brand[800],
-  ...semantic,
-  neutral,
-  brand,
-} as const;
+export const darkColors: ColorTokens = {
+  surfaceCanvas: "#000000",
+  surfaceRaised: "#1c1c1e",
+  surfaceSunken: "#2c2c2e",
+  surfacePlayful: "#241f33",
+  border: "#3a3a3c",
+  ink: "#f5f5f7",
+  inkMuted: "#98989d",
+  inkFaint: "#68686d",
+  // Brighter than the light-theme accent for the same visual weight against
+  // black; pairs with onAccent flipping to dark text below.
+  accent: "#3d9bff",
+  accentPressed: "#2b86ff",
+  onAccent: "#1c1c1e",
+  playful: "#ff8f66",
+  onPlayful: "#1c1c1e",
+  success: "#3ddc84",
+  warning: "#ffc35c",
+  danger: "#ff6b6b",
+};
 
-export type Colors = typeof colors;
+export const colorThemes: Record<ThemeName, ColorTokens> = {
+  light: lightColors,
+  dark: darkColors,
+};

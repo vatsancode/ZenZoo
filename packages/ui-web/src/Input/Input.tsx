@@ -1,21 +1,28 @@
-import { colors, radius, spacing, typography } from "@zenzoo/design-tokens";
+import { useTheme } from "@zenzoo/design-tokens";
 import type { InputHTMLAttributes } from "react";
+import { textStyle } from "../internal/textStyle";
 
 export type InputProps = InputHTMLAttributes<HTMLInputElement>;
 
-export function Input({ style, ...props }: InputProps) {
+export function Input({ style, disabled, ...props }: InputProps) {
+  const { colors, radius, spacing } = useTheme();
+  const invalid = props["aria-invalid"] === true || props["aria-invalid"] === "true";
+
   return (
     <input
       {...props}
+      disabled={disabled}
       style={{
-        fontFamily: typography.fontFamily.base,
-        fontSize: typography.fontSize.sm,
-        paddingBlock: spacing[2],
-        paddingInline: spacing[3],
-        borderRadius: radius.sm,
-        border: `1px solid ${colors.border}`,
-        color: colors.textPrimary,
-        backgroundColor: colors.background,
+        ...textStyle("body"),
+        height: 44,
+        paddingInline: spacing[4],
+        borderRadius: radius.md,
+        border: `1px solid ${invalid ? colors.danger : "transparent"}`,
+        color: disabled ? colors.inkFaint : colors.ink,
+        backgroundColor: colors.surfaceSunken,
+        boxSizing: "border-box",
+        width: "100%",
+        cursor: disabled ? "not-allowed" : "text",
         ...style,
       }}
     />

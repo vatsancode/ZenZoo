@@ -76,6 +76,12 @@ importers:
 
   apps/pos:
     dependencies:
+      '@expo-google-fonts/jetbrains-mono':
+        specifier: ^0.4.1
+        version: 0.4.1
+      '@expo-google-fonts/manrope':
+        specifier: ^0.4.2
+        version: 0.4.2
       '@zenzoo/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
@@ -152,12 +158,18 @@ importers:
 
   packages/design-tokens:
     devDependencies:
+      '@types/react':
+        specifier: ^19.0.7
+        version: 19.3.0
       '@zenzoo/config':
         specifier: workspace:*
         version: link:../config
       eslint:
         specifier: ^9.18.0
         version: 9.39.5(jiti@2.7.0)
+      react:
+        specifier: ^19.0.0
+        version: 19.3.0
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
@@ -1200,6 +1212,12 @@ packages:
   '@eslint/plugin-kit@0.4.1':
     resolution: {integrity: sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+
+  '@expo-google-fonts/jetbrains-mono@0.4.1':
+    resolution: {integrity: sha512-CslACrtMOcRwoWXCO7OMEI+9w3fukWSoBtvNz46OqPoogEuuoY0tkDY1O8sFumk8t0pC6Cx0Xr95O0TOQhpkug==}
+
+  '@expo-google-fonts/manrope@0.4.2':
+    resolution: {integrity: sha512-BZsKe8d9BJrVnIQIZcTS7/Kac0TbXnqs/+8EBSiQxrmK6GoCO6eTkmr50D1weIk/EoF20pTmAkpWICnovATr/g==}
 
   '@expo/bunyan@4.0.1':
     resolution: {integrity: sha512-+Lla7nYSiHZirgK+U/uYzsLv/X+HaJienbD5AKX1UQZHYfWaP+9uuQluRB4GrEVWF0GZ7vEVp/jzaOT9k/SQlg==}
@@ -6535,6 +6553,10 @@ snapshots:
     dependencies:
       '@eslint/core': 0.17.0
       levn: 0.4.1
+
+  '@expo-google-fonts/jetbrains-mono@0.4.1': {}
+
+  '@expo-google-fonts/manrope@0.4.2': {}
 
   '@expo/bunyan@4.0.1':
     dependencies:

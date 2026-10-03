@@ -5,3 +5,5 @@ export * from "./Modal";
 export * from "./Card";
 export * from "./Table";
 export * from "./Badge";
+export * from "./ThemeProvider";
+export * from "./internal/textStyle";

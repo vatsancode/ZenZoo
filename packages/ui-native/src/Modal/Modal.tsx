@@ -1,6 +1,6 @@
-import { colors, radius, spacing } from "@zenzoo/design-tokens";
+import { useTheme } from "@zenzoo/design-tokens";
 import type { ReactNode } from "react";
-import { Modal as RNModal, Pressable, StyleSheet } from "react-native";
+import { Modal as RNModal, Pressable } from "react-native";
 
 export interface ModalProps {
   open: boolean;
@@ -9,27 +9,33 @@ export interface ModalProps {
 }
 
 export function Modal({ open, onClose, children }: ModalProps) {
+  const { colors, radius, spacing, elevation } = useTheme();
+
   return (
     <RNModal visible={open} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.content}>{children}</Pressable>
+      <Pressable
+        style={{
+          flex: 1,
+          backgroundColor: "rgba(0, 0, 0, 0.4)",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: spacing[8],
+        }}
+        onPress={onClose}
+      >
+        <Pressable
+          style={{
+            backgroundColor: colors.surfaceRaised,
+            borderRadius: radius.xl,
+            padding: spacing[8],
+            minWidth: 280,
+            maxWidth: "90%",
+            ...elevation.lg.native,
+          }}
+        >
+          {children}
+        </Pressable>
       </Pressable>
     </RNModal>
   );
 }
-
-const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: "rgba(18, 19, 23, 0.4)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  content: {
-    backgroundColor: colors.background,
-    borderRadius: radius.lg,
-    padding: spacing[6],
-    minWidth: 280,
-    maxWidth: "90%",
-  },
-});
