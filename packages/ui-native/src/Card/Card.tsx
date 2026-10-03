@@ -12,7 +12,7 @@ export function Card({ style, ...props }: CardProps) {
       style={[
         {
           backgroundColor: colors.surfaceRaised,
-          borderRadius: radius.xl,
+          borderRadius: radius.lg,
           padding: spacing[6],
           ...elevation.sm.native,
         },

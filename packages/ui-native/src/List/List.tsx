@@ -15,7 +15,7 @@ export function List<Item>(props: ListProps<Item>) {
       style={[
         {
           backgroundColor: colors.surfaceRaised,
-          borderRadius: radius.xl,
+          borderRadius: radius.lg,
           overflow: "hidden",
           ...elevation.sm.native,
         },

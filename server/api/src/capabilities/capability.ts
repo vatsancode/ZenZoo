@@ -1,3 +1,4 @@
+import { hasPermission } from "../auth/actor";
 import type { CapabilityActor, CapabilityResult } from "@zenzoo/types";
 
 /**
@@ -43,8 +44,6 @@ export interface CapabilityDefinition<Input, Output> {
   /** Business rules checked after the permission check - see server/api/policies. */
   policies?: Policy<Input>[];
   handler: (actor: CapabilityActor, input: Input) => Promise<Output>;
-  /** Called only after a successful execution - see server/api/events. */
-  hasPermission: (actor: CapabilityActor, permission: Permission) => boolean | Promise<boolean>;
 }
 
 export interface Capability<Input, Output> {
@@ -66,7 +65,7 @@ export function defineCapability<Input, Output>(
     name: definition.name,
     kind: definition.kind,
     async execute(actor, input) {
-      const allowed = await definition.hasPermission(actor, definition.requiredPermission);
+      const allowed = await hasPermission(actor, definition.requiredPermission);
       if (!allowed) {
         return {
           ok: false,
