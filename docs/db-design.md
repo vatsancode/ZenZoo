@@ -65,7 +65,7 @@ CREATE TRIGGER trg_tenants_prevent_slug_change
 - **`status`** — lifecycle: `trial` → `active` → `suspended` (non-payment/abuse, reversible) → `archived` (terminal soft-delete). **No hard delete and no `deleted_at` column** — `archived` is the delete state. The row and all its tenant-scoped data stay in place, governed by whatever compliance retention rules apply (N-09's six-year invoice retention, N-10's DPDP deletion obligations) rather than by a Postgres `DELETE`. If a "right to erasure" request ever requires actually scrubbing PII, that's a deliberate, audited data-scrubbing job against an `archived` tenant — not a schema-level delete. `cancelled` is deliberately **not** a separate status: a subscription being cancelled and a tenant's data being archived are different facts (one is a billing-system concept, one is a data-lifecycle concept) and conflating them into one status column was a mistake in the earlier draft. Billing/subscription state belongs on a future `subscriptions` table; `archived` here means only "this tenant is done, data retained per policy." Revisit if billing needs finer states (e.g. `past_due`) — those still belong off this table.
 - **`default_currency` / `country_code`** — tenant-level defaults; per-store overrides (for multi-country chains) belong on a future `stores` table, not here.
 - **`updated_at`** — auto-maintained by trigger above; no application code should set it directly.
-- **RLS** — `tenants` is the one table *without* a `tenant_id` column (it *is* the tenant), so it sits outside the standard per-tenant RLS pattern used elsewhere (N-05). Access should instead be gated by a platform-admin role/claim, decided when the auth model is designed.
+- **RLS** — `tenants` is the one table *without* a `tenant_id` column (it *is* the tenant), so it sits outside the standard per-tenant RLS pattern used elsewhere (N-05) and is deliberately left out of "Row-level security" below. Access should instead be gated by a platform-admin role/claim, decided when the auth model is designed.
 - Deliberately **excluded for now**: `owner_user_id` / `owner_email` (waiting on the users/auth model) and a `metadata JSONB` catch-all (adding one prematurely invites unstructured drift — add it only when a concrete unstructured need shows up).
 
 ---
@@ -104,6 +104,7 @@ CREATE TRIGGER trg_users_set_updated_at
 - **`phone`** — optional, not unique. A shared shop phone or a household number can legitimately belong to more than one person; don't force uniqueness the data doesn't have.
 - **`status`** — `active` / `suspended` (temporary, e.g. security concern) / `deactivated` (terminal soft-delete, same reasoning as `tenants.archived` — no `deleted_at`, no hard delete). Note this is the person's global account status, independent of any particular tenant relationship — a deactivated user's memberships should be handled separately (see `tenant_memberships.status`), not inferred from this field.
 - Deliberately **excluded**: password hash / auth provider fields (belongs to whatever auth system — Supabase Auth, Clerk, custom — is chosen; this table models the user record the app owns, not the credential store), and anything tenant- or role-shaped.
+- **RLS** — this is the one tenant-owned-elsewhere table with no `tenant_id` column of its own, by design (see above). Its policy is membership-based instead of column-based; see "Row-level security" for the actual `CREATE POLICY` statement and why account creation sits outside it.
 
 ---
 
@@ -146,8 +147,8 @@ CREATE TRIGGER trg_stores_set_updated_at
 
 - **`code`** — a short internal identifier ("main", "branch-2"), unique *per tenant* (not globally, unlike `tenants.slug`) — used in receipts, reports, and staff-facing pickers. Same lowercase discipline as `slug`; not marked immutable here since it's an internal label with a narrower blast radius than a public URL slug, but revisit if it ends up in anything externally addressable.
 - **`timezone` / `currency`** — nullable overrides of `tenants.default_timezone` / `default_currency`, for the (currently rare) multi-country or multi-timezone chain. `NULL` means "inherit from tenant" — resolve with `COALESCE(store.timezone, tenant.default_timezone)` at read time rather than copying the value in at store-creation time, so a tenant-level default change propagates to stores that haven't overridden it.
-- **`status`** — mirrors the tenant pattern: `archived` is the soft-delete terminal state, no `deleted_at`.
-- **RLS** — standard pattern applies here (N-05): policy scoped to `tenant_id` matching the caller's tenant claim.
+- **`status`** — mirrors the tenant pattern: `active` → `suspended` (temporary, reversible) → `archived` (soft-delete terminal state, no `deleted_at`). A *store* gets this three-value shape, like `tenants`, because it's the thing that can be temporarily paused as a whole operational unit (a billing hold, a renovation, a temporary closure) without being gone — a fact distinct from "permanently shut." Catalogue-level entities one level down (`sellables`, `variants`) don't need a third state for the same situation: their `archived`/`deactivated` is *itself* freely reversible (see "Product/variant lifecycle and the barcode model"), so "pause this" and "bring it back" are already just the same two-value column flipped and flipped back — a `suspended` state would duplicate what `archived ⇄ active` already does for them. `customers`/`suppliers` stay two-valued for a different reason: their `archived` is a genuine terminal soft-delete (see `customers`' notes), and there's no demonstrated Phase 1 need for a "temporarily paused customer/supplier" state distinct from that.
+- **RLS** — standard pattern applies here (N-05): policy scoped to `tenant_id` matching the caller's tenant claim; see "Row-level security" for the actual `CREATE POLICY` statement.
 
 ---
 
@@ -176,7 +177,10 @@ CREATE TABLE tenant_memberships (
         CHECK (
             (status = 'invited' AND user_id IS NULL AND invited_email IS NOT NULL)
             OR (status != 'invited' AND user_id IS NOT NULL)
-        )
+        ),
+
+    -- target for membership_store_access's composite FK
+    CONSTRAINT tenant_memberships_tenant_id_id_unique UNIQUE (tenant_id, id)
 );
 
 -- one active/invited membership per real user per tenant
@@ -204,7 +208,7 @@ CREATE TRIGGER trg_tenant_memberships_set_updated_at
 - **`role`** — three values for now (`owner`, `manager`, `cashier`), matching the operator language in the requirements doc. Kept as a `CHECK` rather than a lookup table for the same reason as `tenants.status` — cheap to extend by migration, no need for a join until roles need to be tenant-customizable.
 - **`status`** — `invited` → `active` → `suspended` (temporarily blocked, e.g. staff on leave, reversible) → `removed` (terminal soft-delete, no `deleted_at`, same pattern as everywhere else). A `removed` membership is history, not deleted — useful for "who used to work here" audit trails.
 - **No `permissions` JSONB.** Role alone drives authorization for now. If a specific merchant needs a one-off exception, that's a future `membership_overrides` table, not a schema change here.
-- **RLS** — scoped to `tenant_id` per N-05, same as every other tenant-owned table.
+- **RLS** — scoped to `tenant_id` per N-05, same as every other tenant-owned table; see "Row-level security" for the actual `CREATE POLICY` statement.
 
 ### The owner invariant
 
@@ -288,7 +292,13 @@ CREATE CONSTRAINT TRIGGER trg_tenants_owner_guard
 
 **Why deferred, specifically:** because the check runs at `COMMIT` (or at an explicit `SET CONSTRAINTS ... IMMEDIATE`) rather than after each individual statement, an atomic "swap owner" — `UPDATE ... SET role='manager' WHERE id=<old-owner>` then `INSERT ...` a new owner row, both inside one transaction — passes, because only the *final* state at commit is checked. A bare single-statement removal of the last owner (the common accidental case) still fails, because in autocommit mode each statement is its own transaction and the deferred check fires at the end of it. This is the standard Postgres pattern for exactly this shape of invariant — an aggregate condition over sibling rows that a row-level `CHECK` cannot see.
 
-**Open item:** the freshly-created-tenant path needs to insert the tenant row and its first owner membership in the same transaction (tenant starts `trial`, which already requires an owner under this rule) — the tenant-provisioning flow must account for that ordering, or provisioning always fails at the first commit. Worth confirming with whoever builds signup/onboarding before this ships.
+**Required provisioning order, not optional:** a tenant starts `trial`, which this invariant already requires an active owner for — so tenant creation and its first owner membership **must** be created in one transaction, in this order:
+
+1. `INSERT INTO tenants (...)` (`status` defaults to whatever the application sets — typically `trial`), getting back the new `id`.
+2. In the same transaction, `INSERT INTO tenant_memberships (tenant_id, user_id, role, status) VALUES (<id from step 1>, <the new owner>, 'owner', 'active')`.
+3. `COMMIT`.
+
+`trg_tenants_owner_guard` fires `AFTER INSERT` on `tenants` but is `DEFERRABLE INITIALLY DEFERRED`, so it only actually checks at `COMMIT` (or an explicit `SET CONSTRAINTS ... IMMEDIATE`) — which is exactly what makes step 2 able to follow step 1 as a later statement in the same transaction rather than needing to happen first. A tenant row committed *without* a same-transaction owner membership fails at commit, by construction. That is the invariant doing its job, not a bug to route around — the provisioning/signup flow must be built around this ordering from day one, not discovered by it failing in production. This also means provisioning must always be a single transaction, never two separate round-trips (e.g. "create the tenant" as one request and "add the owner" as a second, later one) — the tenant would be uncommittable in between.
 
 ---
 
@@ -299,22 +309,193 @@ Restricts a tenant membership to specific stores. **Absence of rows for a member
 ```sql
 CREATE TABLE membership_store_access (
     id                  UUID PRIMARY KEY DEFAULT uuidv7(),
-    membership_id       UUID NOT NULL REFERENCES tenant_memberships (id),
-    store_id            UUID NOT NULL REFERENCES stores (id),
+    tenant_id           UUID NOT NULL REFERENCES tenants (id),
+    membership_id       UUID NOT NULL,
+    store_id            UUID NOT NULL,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    CONSTRAINT membership_store_access_unique UNIQUE (membership_id, store_id)
+    CONSTRAINT membership_store_access_unique UNIQUE (membership_id, store_id),
+
+    -- the membership being narrowed: tenant must agree, closing the "membership from
+    -- tenant A, store from tenant B" gap a plain FK on membership_id alone couldn't
+    CONSTRAINT membership_store_access_membership_fk
+        FOREIGN KEY (tenant_id, membership_id)
+        REFERENCES tenant_memberships (tenant_id, id),
+    -- the store being granted: tenant must agree too — this is what actually makes
+    -- a cross-tenant grant impossible, not just a cross-tenant membership reference
+    CONSTRAINT membership_store_access_store_fk
+        FOREIGN KEY (tenant_id, store_id)
+        REFERENCES stores (tenant_id, id)
 );
 
-CREATE INDEX idx_membership_store_access_membership_id ON membership_store_access (membership_id);
-CREATE INDEX idx_membership_store_access_store_id ON membership_store_access (store_id);
+CREATE INDEX idx_membership_store_access_membership ON membership_store_access (tenant_id, membership_id);
+CREATE INDEX idx_membership_store_access_store ON membership_store_access (tenant_id, store_id);
 ```
 
 ### Notes
 
 - **No `updated_at`** — rows here are grants, not mutable records; you add or remove a row rather than editing one. No `role_override` column yet either — the design leaves room for one (a manager tenant-wide but only cashier-level at a second store) without needing a migration to add the column when that need actually arrives.
-- **Application-level responsibility**: enforce `stores.tenant_id = tenant_memberships.tenant_id` for the referenced membership — a plain FK can't express "same tenant on both sides" across two tables. Worth a `CHECK` via a small trigger if this constraint is ever violated in practice; not adding it preemptively.
+- **`tenant_id` is denormalised onto this table specifically to close a real gap, not just for convention.** The earlier design relied on "application-level responsibility: enforce `stores.tenant_id = tenant_memberships.tenant_id`" — true, but a plain FK on `membership_id` alone (referencing just `tenant_memberships.id`) can't express "and the referenced membership's tenant must equal the referenced store's tenant" across two unrelated columns. With `tenant_id` now a real column here, both `membership_store_access_membership_fk` and `membership_store_access_store_fk` independently require their target to match *this row's* `tenant_id` — so a membership from tenant A can never be paired with a store from tenant B: either FK would have no matching row to satisfy, and the insert fails outright. This also gives the table a normal column to apply the standard tenant-isolation RLS policy to (see "Row-level security") — before this change it had no direct tenant_id at all.
 - Owners and managers with tenant-wide access simply have zero rows here. This keeps the common case (a single-store shop, one owner, maybe one cashier) free of any rows in this table at all.
+
+---
+
+## Row-level security
+
+N-05 names RLS as "the safety net, not the mechanism" — the application is still expected to scope every query by tenant, and RLS exists to catch it if that ever fails. Until now, every table's own notes asserted that a policy exists ("RLS scoped to `tenant_id` per N-05") without the policy itself ever being written down. This section is that policy, made real: the actual tenant-context mechanism, and the actual `CREATE POLICY` statements, in one place, rather than a claim repeated per table.
+
+### The tenant-context mechanism
+
+Two session-local settings, both set by the application **once per request/transaction**, after it has independently verified the caller's signed JWT (per N-05 — RLS never substitutes for that verification, it only trusts what the application already validated):
+
+```sql
+-- set once, at the start of every request's transaction, by the application —
+-- never by anything a caller can influence directly
+SELECT set_config('app.current_tenant_id', '<tenant-uuid-from-verified-jwt-claim>', true);
+SELECT set_config('app.current_user_id',   '<user-uuid-from-verified-jwt-claim>',   true);
+```
+
+`set_config(..., true)` sets it `LOCAL` — scoped to the current transaction, automatically cleared at `COMMIT`/`ROLLBACK`, so a pooled connection can never leak one request's tenant context into the next request that reuses it. Every policy below reads these back with `current_setting(name, true)` — the second argument makes a missing setting return `NULL` rather than raise an error, and every policy is written so that a `NULL` tenant/user context satisfies *no* row, ever (comparing anything to `NULL` is `NULL`, which `USING`/`WITH CHECK` both treat as "deny"). **An unset context is a closed door, not an open one** — this is the one property that must never regress, so it's stated here explicitly rather than left to be inferred from reading every policy.
+
+```sql
+-- the exact two expressions every policy below is built from
+CREATE FUNCTION app_current_tenant_id() RETURNS UUID AS $$
+    SELECT current_setting('app.current_tenant_id', true)::UUID;
+$$ LANGUAGE sql STABLE;
+
+CREATE FUNCTION app_current_user_id() RETURNS UUID AS $$
+    SELECT current_setting('app.current_user_id', true)::UUID;
+$$ LANGUAGE sql STABLE;
+```
+
+These two functions exist purely so the 22 policies below read `app_current_tenant_id()` instead of repeating the `current_setting(...)::UUID` cast 22 times — they carry no logic of their own beyond that, and `STABLE` (not `VOLATILE`) lets the planner call each once per statement rather than once per row.
+
+### The standard policy, applied to every tenant-owned table
+
+Every table below has an explicit `tenant_id` column (this is exactly what N-05's "tenant_id everywhere" bought). Each gets the identical pattern: enable RLS, then one policy covering every command, using the same expression for both the row-visibility check (`USING`, which also governs `UPDATE`/`DELETE`) and the row-write check (`WITH CHECK`, which governs `INSERT` and the new values of an `UPDATE`) — a row is visible, and a row can only ever be written, inside the caller's own tenant:
+
+```sql
+ALTER TABLE stores                  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_memberships      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE membership_store_access ENABLE ROW LEVEL SECURITY;
+ALTER TABLE suppliers               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sellables               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE variants                ENABLE ROW LEVEL SECURITY;
+ALTER TABLE purchases               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE purchase_items          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inventory_batches       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stock_movements         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE purchase_returns        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE purchase_return_items   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customers               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payment_methods         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payment_accounts        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sales                   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sale_items              ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sale_item_batches       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sale_returns            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sale_return_items       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sale_payments           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customer_credit_ledger  ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON stores
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON tenant_memberships
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON membership_store_access
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON suppliers
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON sellables
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON variants
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON purchases
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON purchase_items
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON inventory_batches
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON stock_movements
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON purchase_returns
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON purchase_return_items
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON customers
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON payment_methods
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON payment_accounts
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON sales
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON sale_items
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON sale_item_batches
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON sale_returns
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON sale_return_items
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON sale_payments
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON customer_credit_ledger
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+```
+
+That's every table this document defines that carries a direct `tenant_id` column — the same 22 tables section 2 of the audit asked about, `membership_store_access` now included now that it has one (see that table's notes).
+
+### The two tables without a direct `tenant_id`
+
+**`tenants`** is deliberately excluded from the list above — it isn't tenant-*owned*, it *is* the tenant, so "restrict to the caller's tenant" is a meaningless policy on this one table (see its own notes: access here is a platform-admin concern, "decided when the auth model is designed," unchanged by this pass). No policy is added here; this is a gap left open on purpose, not an oversight.
+
+**`users`** has no `tenant_id` at all, by design (see that table's notes — identity is tenant-independent, since one person can belong to several tenants). Its policy can't compare a column to `app_current_tenant_id()`; instead, a `users` row is visible exactly when the current tenant context has a membership linking to it — the same relationship the application already walks to enforce this today, just made a backstop instead of a convention:
+
+```sql
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_membership_or_self ON users
+    USING (
+        id = app_current_user_id()
+        OR EXISTS (
+            SELECT 1 FROM tenant_memberships tm
+             WHERE tm.user_id = users.id
+               AND tm.tenant_id = app_current_tenant_id()
+        )
+    );
+```
+
+`id = app_current_user_id()` is there so a caller can always read their own account row regardless of which (or whether any) tenant context is active — needed for account-level screens that aren't scoped to one tenant. There is deliberately **no `WITH CHECK`** on this policy: `users` rows are written through account management (signup, profile edits), not through tenant-scoped business transactions, and the shape of that write path — in particular, **creating** a new `users` row for someone who by definition has no membership yet and no session of their own yet — is an auth-system/signup concern outside this schema's scope, the same way password hashes and the credential store are (see `users`' own notes). Whatever that path turns out to be (a `SECURITY DEFINER` signup function, a backend role with `BYPASSRLS`, or similar), it is explicitly **not resolved by this schema** — flagging that plainly rather than writing a `WITH CHECK` that would just be guessing at a mechanism nobody asked for.
+
+### How this enforces isolation, concretely
+
+- **A missing or wrong tenant context denies everything**, not just the tables it happens to touch: since every policy's `USING`/`WITH CHECK` compares a real column to `app_current_tenant_id()`, and that function returns `NULL` when the session setting was never set, *zero* rows satisfy the policy anywhere. A connection that forgets to call `set_config('app.current_tenant_id', ...)` sees an empty database, not another tenant's data and not its own — fully closed, not fully open.
+- **Composite tenant FKs (already in place throughout this document) and RLS are two different layers, not duplicates.** The FKs stop a row from being *inserted* pointing at another tenant's parent, regardless of who's connected. RLS stops a row from being *read or written at all* by a session whose context doesn't match, regardless of what the row points at. A query that forgets a `WHERE tenant_id = $1` clause is exactly the failure RLS exists to catch — the FK layer alone never would, since it only ever constrains relationships between rows, never which rows a `SELECT` returns.
+- **No policy here ever compares two different tenants' data to each other, and no policy references another tenant's `app_current_tenant_id()` value** (there's only ever one, per session) — so there's no path by which one tenant's policy evaluation can expose a condition derived from a different tenant's rows.
+- **`FORCE ROW LEVEL SECURITY` is not included above, and that's an operational decision the deploying role must get right, not a gap in the policies themselves.** By default, Postgres RLS policies don't apply to a table's *owner* — only to other roles. If the application connects as the table owner, every policy above is silently bypassed. The correct setup (and the one every `REVOKE` note elsewhere in this document already assumes) is for the application to connect as a separate, non-owning `app_role`, which gets these policies enforced automatically with no `FORCE` needed; `ALTER TABLE ... FORCE ROW LEVEL SECURITY` is the fallback only if the application must, for some other reason, connect as the owning role.
 
 ---
 
@@ -914,8 +1095,11 @@ CREATE TABLE inventory_batches (
 CREATE INDEX idx_inventory_batches_store_variant
     ON inventory_batches (tenant_id, store_id, variant_id, received_at);
 
--- purchase-item lookup (traceability: purchase → purchase item → its batches)
-CREATE INDEX idx_inventory_batches_purchase_item ON inventory_batches (purchase_item_id);
+-- purchase-item lookup (traceability: purchase → purchase item → its batches) — tenant_id
+-- first, consistent with every other index in this schema (functionally redundant today,
+-- since purchase_item_id is already a globally unique UUID, but kept consistent so this
+-- index also benefits from RLS-aware tenant-scoped query plans, same as its siblings)
+CREATE INDEX idx_inventory_batches_purchase_item ON inventory_batches (tenant_id, purchase_item_id);
 
 -- barcode lookup is already served by inventory_batches_tenant_barcode_unique above;
 -- batch lookup by id is already served by the primary key
@@ -1102,6 +1286,19 @@ CREATE INDEX idx_stock_movements_reference
 CREATE INDEX idx_stock_movements_occurred_at
     ON stock_movements (tenant_id, occurred_at);
 
+-- a reversal of one specific prior action may post at most once per (batch, reference)
+-- pair — closes, for the ledger's own reversal types, the same "can this happen twice"
+-- gap customer_credit_ledger's reversal already closes via
+-- idx_customer_credit_ledger_reverses_entry_unique. Deliberately scoped to ONLY
+-- SOLD_REVERSAL and PURCHASE_RETURN_REVERSAL: PURCHASED, SOLD, SALE_RETURN and
+-- PURCHASE_RETURN all legitimately post more than once against the same batch (multi-batch
+-- receiving, repeat sales from one batch over time, multiple partial returns — see this
+-- table's own notes on why no uniqueness constraint exists for those), so this index must
+-- never be widened to cover them.
+CREATE UNIQUE INDEX idx_stock_movements_reversal_unique
+    ON stock_movements (batch_id, movement_type, reference_type, reference_id)
+    WHERE movement_type IN ('SOLD_REVERSAL', 'PURCHASE_RETURN_REVERSAL');
+
 -- append-only: no updates, no deletes, ever — a correction is a new, compensating row
 CREATE FUNCTION stock_movements_reject_change() RETURNS TRIGGER AS $$
 BEGIN
@@ -1176,10 +1373,11 @@ CREATE TRIGGER trg_stock_movements_apply_to_batch
   - **Removes stock:** `SOLD`, `PURCHASE_RETURN`, `DAMAGED`, `LOST`, `INTERNAL_USE`
   - This is deliberately simpler than an application-supplied signed delta: the direction is a property of the *type*, not something each caller can get backwards. A caller only ever writes "10 units, `SOLD`", never "-10 units."
 - **No `updated_at`, no updates, no deletes — enforced twice.** The `BEFORE UPDATE OR DELETE` trigger rejects every attempt at the row level; production should also `REVOKE UPDATE, DELETE, TRUNCATE` on this table from the application role, as a second line of defence. A posting mistake is fixed by inserting a new row with the opposite-direction movement type (e.g. a wrongly posted `SOLD` is corrected with a `SALE_RETURN`, or a wrongly posted `DAMAGED` with a manually justified `PURCHASE`-side adjustment through `STOCK_ADJUSTMENT`), never by touching the original row. History is never rewritten, so an audit trail and a stock count always agree with what was actually posted.
-- **`reference_type` + `reference_id` trace a movement back to the business transaction that caused it** — a purchase line, a sale line, a return document, or a manual stock adjustment. Phase 1's values: `PURCHASE_ITEM`, `SALE_ITEM`, `PURCHASE_RETURN`, `SALE_RETURN`, `STOCK_ADJUSTMENT`. The pair is polymorphic (it can point at rows in different tables depending on `reference_type`), so — like `membership_store_access`'s cross-table tenant check — it cannot be a real foreign key; the application is responsible for `reference_id` actually existing in the table `reference_type` names, scoped to the same `tenant_id`.
-- **`reference_id` is intentionally *not* unique**, globally or per tenant. One business transaction routinely produces several movement rows — a `sale_items` line spanning two batches posts two `SOLD` movements sharing the same `SALE_ITEM` `reference_id` (see `sale_item_batches`), one per batch it drew from; a multi-batch purchase receipt posts one `PURCHASED` movement per batch, all sharing the same `reference_id` when it identifies the purchase line rather than a single batch. `idx_stock_movements_reference` is a plain (non-unique) index for exactly this "fetch every movement this transaction produced" query.
+- **`reference_type` + `reference_id` trace a movement back to the business transaction that caused it** — a purchase line, a sale line, a return document, or a manual stock adjustment. Phase 1's values: `PURCHASE_ITEM`, `SALE_ITEM`, `PURCHASE_RETURN`, `SALE_RETURN`, `STOCK_ADJUSTMENT`. The pair is polymorphic (it can point at rows in different tables depending on `reference_type`), so it cannot be a real foreign key the way, say, `sale_items.sale_id` is — the application is responsible for `reference_id` actually existing in the table `reference_type` names, scoped to the same `tenant_id`.
+- **`reference_id` is intentionally *not* unique, with one narrow exception.** One business transaction routinely produces several movement rows — a `sale_items` line spanning two batches posts two `SOLD` movements sharing the same `SALE_ITEM` `reference_id` (see `sale_item_batches`), one per batch it drew from; a multi-batch purchase receipt posts one `PURCHASED` movement per batch, all sharing the same `reference_id` when it identifies the purchase line rather than a single batch. `idx_stock_movements_reference` is a plain (non-unique) index for exactly this "fetch every movement this transaction produced" query. The one exception is `idx_stock_movements_reversal_unique` (below), which *does* enforce uniqueness, but only for `SOLD_REVERSAL`/`PURCHASE_RETURN_REVERSAL` and only on the combination `(batch_id, movement_type, reference_type, reference_id)` together — a reversal of one specific prior action should only ever happen once, which is a narrower, different claim than "`reference_id` alone is unique."
 - **`reference_type`/`reference_id` are both optional together.** Some movements — a shrinkage write-off, a stock take done by feel rather than a formal `STOCK_ADJUSTMENT` record — have no upstream document to point at. `reason` (free text) carries the justification instead. The pair-check constraint only guarantees the two columns move together: never a `reference_type` with no `reference_id` or vice versa.
 - **Receipt is part of the foundation, but the ledger itself does not enforce "exactly one."** Every batch must have at least one `PURCHASED` movement equal to its `received_quantity` — enforced by the deferred trigger on `inventory_batches` (which checks `movement_type = 'PURCHASED' AND quantity = received_quantity`), so a batch can never exist without a matching receipt in the ledger. There is deliberately **no uniqueness constraint** tying a batch to a single `PURCHASED` row: that would couple the ledger's shape to the current purchase workflow. Purchase-receipt integrity (a batch is received exactly once today) is a rule of the *purchasing* workflow, enforced there; the ledger's job is only to record what happened, not to police how many times a given business process is allowed to write to it. This also keeps the door open for a batch to legitimately gain more `PURCHASED` rows later (e.g. a correction, or a future batch-split flow) without a schema change.
+- **A reversal is the opposite case, and does get a real uniqueness constraint: `idx_stock_movements_reversal_unique`.** Unlike receiving (open-ended by design) or selling/returning (legitimately repeatable against one batch), a `SOLD_REVERSAL` or `PURCHASE_RETURN_REVERSAL` is defined as undoing one specific, already-posted action — voiding *this* sale's allocation from *this* batch, or reversing *this* return line. There's no legitimate reason for that exact pairing to ever post twice, so the index enforces it, the same way `customer_credit_ledger`'s own reversal gets `idx_customer_credit_ledger_reverses_entry_unique`. Without it, nothing stops a retried or double-submitted void/reversal request from posting the same compensating movement twice — the completion/void guards elsewhere in this document (`check_sale_item_batch_movements`, `check_purchase_return_movements`) only ever check that a matching movement *exists*, never that it exists *exactly once*, so this index is what actually closes that gap rather than the guards doing it incidentally.
 - **Batch balance vs. the ledger: every insert applies itself, in the same transaction, by construction.** `trg_stock_movements_apply_to_batch` fires `AFTER INSERT` (not deferred) and updates the matching batch's `available_quantity` before the statement completes. Because that update is subject to `inventory_batches`' `CHECK (available_quantity >= 0)`, a movement that would take a batch's balance negative makes the **whole transaction fail** — the `stock_movements` row is never actually committed either. This is a deliberate reversal from the ledger-only design: on-hand is no longer allowed to drift negative as an "estimate" the way a pure `SUM()`-based ledger could. `available_quantity >= 0` is the validation named in the stock-movement integration requirements ("validate sufficient available stock where applicable"), enforced uniformly for every movement type via one `CHECK`, rather than bespoke per-type application logic. The application should still pre-check `available_quantity` before attempting the insert for a good error message — the `CHECK` is the non-negotiable backstop, not the primary UX.
 - **`created_by` is required** (`NOT NULL`), unlike most other tables' optional audit columns — every ledger entry must be attributable to the user or system actor that posted it, since a ledger with anonymous entries is not auditable.
 - **`occurred_at` (business time) and `created_at` (record time) are both kept, and can diverge.** Inventory movements are financial/operational history, and delayed entry, corrections and future imports are plausible — a cashier fixing yesterday's miscount today should be able to say the event happened yesterday even though the row is inserted now. `occurred_at` defaults to `now()` for the common synchronous case (a sale posts its movement at the moment of sale) but the application may set it explicitly for a backdated or imported entry. `created_at` is never backdated — it is strictly "when this row entered the table," which is what the append-only/audit guarantees above are actually about. Chronological ledger and inventory-query indexes are built on `occurred_at`, since that is the axis a ledger reader cares about; `created_at` remains for audit ordering ("what did we actually insert, and in what order").
@@ -2145,6 +2343,32 @@ CREATE TRIGGER trg_sale_items_require_active_variant
     FOR EACH ROW
     EXECUTE FUNCTION sale_items_require_active_variant();
 
+-- the variant must belong to the same store as the sale itself — the sales-side mirror of
+-- purchase_items_validate_variant's store check. Fires only on INSERT and on a variant_id
+-- change, not on every UPDATE: store_id itself is already immutable on this table
+-- (sale_items_prevent_parent_change), so a mismatch can only ever be introduced by naming
+-- a different variant, never by store_id moving to meet one
+CREATE FUNCTION sale_items_validate_variant_store() RETURNS TRIGGER AS $$
+DECLARE
+    v_store_id UUID;
+BEGIN
+    SELECT store_id INTO v_store_id
+      FROM variants
+     WHERE id = NEW.variant_id AND tenant_id = NEW.tenant_id;
+
+    IF v_store_id IS DISTINCT FROM NEW.store_id THEN
+        RAISE EXCEPTION 'variant % does not belong to store %', NEW.variant_id, NEW.store_id;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_sale_items_validate_variant_store
+    BEFORE INSERT OR UPDATE OF variant_id ON sale_items
+    FOR EACH ROW
+    EXECUTE FUNCTION sale_items_validate_variant_store();
+
 -- any line change re-verifies the header totals at commit
 CREATE CONSTRAINT TRIGGER trg_sale_items_totals_guard
     AFTER INSERT OR UPDATE OR DELETE ON sale_items
@@ -2161,6 +2385,7 @@ CREATE CONSTRAINT TRIGGER trg_sale_items_totals_guard
 - **`line_total = round(quantity × unit_price − discount + tax, 2)`** — gross line amount (`quantity × unit_price`) minus discount plus sales tax, the same shape `purchase_items.line_total` uses (minus the direction of tax's sign, since purchase tax and sales tax are unrelated concepts that happen to both get added here — see `purchase_items`' tax-scoping note).
 - **`trg_sale_items_require_active_variant` is what actually enforces "archived/deactivated can't be sold," for both selling flows at once.** Barcode-first and variant-first selling both end up inserting a `sale_items` row for the commercial line before (or as) they insert its `sale_item_batches` allocation, so one trigger here covers a scanned barcode exactly the same as a variant search — there's no second check needed on `sale_item_batches` or on the barcode-lookup path. It fires on `INSERT` and on a `variant_id` change, never on any other `UPDATE` — `quantity`/`unit_price`/etc. changing doesn't re-name a variant, so there's nothing new to check. It's deliberately silent about `sale_return_items`: a return must always be acceptable against a variant or sellable that's since been deactivated or archived, the same "never break history" principle "Historical integrity" already establishes — Phase 1 has no analogous eligibility check anywhere on the return path, by design.
 - **Purchasing is untouched.** Nothing stops `purchase_items` from naming a deactivated variant or an archived sellable's variant — receiving already-ordered stock, or restocking a variant you're about to reactivate, is a purchasing concern, not a sales-eligibility one, and this phase's eligibility rule was scoped to selling only.
+- **`trg_sale_items_validate_variant_store` closes an asymmetry with `purchase_items`, which has always had this check (`purchase_items_validate_variant`) and `sale_items` never did.** Both `sale_items_variant_fk` and `purchase_items_variant_fk` only tie `(tenant_id, variant_id)` back to `variants` — neither includes `store_id`, so neither FK by itself can catch a line naming a variant from a different store in the same tenant. `purchase_items` always closed that gap with its own trigger; before this fix, a mismatched `sale_items` row wasn't rejected at insert time at all — it would simply sit there, unable to ever be fulfilled (`sale_item_batches_batch_fk` can never find an `inventory_batches` row under the *wrong* store for that variant, since batches only ever exist under a variant's real store), surfacing much later as a confusing FK error or a sale stuck forever unable to complete. This trigger gives the same immediate, clear rejection `purchase_items` already gave.
 
 ---
 
@@ -2290,7 +2515,7 @@ Two concurrent sales must not be able to oversell the same batch — this is not
 
 - Posting a `SOLD` `stock_movements` row for a batch allocation runs `trg_stock_movements_apply_to_batch`, which issues a plain `UPDATE inventory_batches SET available_quantity = available_quantity - quantity WHERE id = ...`. That `UPDATE` takes an ordinary Postgres row lock on the batch for the rest of the transaction — a second, concurrent sale trying to consume the same batch blocks at its own `UPDATE` until the first transaction commits or rolls back, then re-reads the now-current `available_quantity` before applying its own delta. There is no read-then-write race window; row-level locking on a plain `UPDATE` already provides it.
 - `CHECK (available_quantity >= 0)` is what actually stops the oversell: if the second (now-serialized) sale's `SOLD` movement would take the batch negative, its whole completion transaction fails — every `SOLD` movement posted for that sale in that transaction rolls back too, exactly the "if any allocation fails, the entire completion transaction must fail" requirement.
-- **No explicit `SELECT ... FOR UPDATE` is needed anywhere in this design.** The `UPDATE` inside the trigger *is* the lock; adding an explicit row lock beforehand would be redundant with a mechanism that already exists.
+- **No explicit `SELECT ... FOR UPDATE` is needed for *this specific* oversell check.** The `UPDATE` inside the trigger *is* the lock; adding an explicit row lock beforehand would be redundant with a mechanism that already exists. This is specific to checks expressed as an `UPDATE` against a single counter column (`available_quantity`) — a check expressed instead as a fresh aggregate `SELECT` over sibling rows, with no counter column to take a lock through, needs its own explicit lock. `sale_returns`' over-return ceiling is exactly that second shape, and does take one — see that table's notes.
 - The application is still responsible for the transaction boundary: every `SOLD` movement for a sale's batch allocations, plus the `draft → completed` status flip, belongs in one transaction, so a failure partway through (insufficient stock on the third of four allocations, say) leaves nothing committed — no partial sale, no partially-decremented batches.
 
 ---
@@ -2428,11 +2653,31 @@ BEGIN
             NEW.sale_id, v_sale_status, NEW.id;
     END IF;
 
+    -- lock every original sale_item_batches allocation this return draws from, BEFORE
+    -- computing how much of it has already been returned. Without this lock, two
+    -- concurrent completions against the same original allocation could each read the
+    -- same "already returned" total, each independently pass the ceiling check below,
+    -- and together over-return it — a plain read-then-check-then-act race, invisible to
+    -- any test that doesn't run two completions at once. Locking first forces the second
+    -- transaction's completion to block here until the first commits (or rolls back), so
+    -- its own check below is guaranteed to see the first return's now-committed total.
+    -- Same idiom as check_tenant_has_active_owner's `FOR SHARE` lock on tenants — lock the
+    -- shared resource before reading an aggregate over it. ORDER BY id gives every
+    -- concurrent completion the same lock-acquisition order, so two returns naming the
+    -- same batches in a different order can't deadlock against each other.
+    PERFORM 1
+      FROM sale_item_batches
+     WHERE id IN (SELECT sale_item_batch_id FROM sale_return_items WHERE sale_return_id = NEW.id)
+     ORDER BY id
+       FOR UPDATE;
+
     -- no original batch allocation may end up over-returned once this return's own
     -- quantities are counted alongside every OTHER already-completed return's quantities
     -- against it. Draft returns (this one's siblings, not this one itself) are deliberately
     -- excluded — no reservation during draft, the same choice already made for sale_item_batches
-    -- during a draft sale; a conflicting draft simply fails here, at ITS OWN completion, later
+    -- during a draft sale; a conflicting draft simply fails here, at ITS OWN completion, later.
+    -- Safe to compute now: the lock above guarantees no concurrent completion can change
+    -- these totals out from under this read.
     SELECT count(*) INTO v_over_returned
       FROM (
           SELECT sib.id, sib.quantity AS allowed, SUM(sri2.quantity) AS total_returned
@@ -2489,7 +2734,8 @@ CREATE CONSTRAINT TRIGGER trg_sale_returns_completion_guard
 - **`draft` → `completed`, one edge, terminal — no `reversed` state.** Return reversal is explicitly out of Phase 1 scope (unlike `purchase_returns`, which has one): once a return completes, it stays completed. A mistaken return is a manual, out-of-band correction in Phase 1, not a schema-supported reversal.
 - **No `customer_id` on this table, deliberately.** The customer relationship is `Customer → Sale → Sale Return`; `sales.customer_id` (nullable, for guest sales) remains the one authoritative source. A guest sale can still be returned the same way any other sale can — the return only ever needs `sale_id`, never the customer directly.
 - **The eligibility check runs twice, not once, because `completed` isn't terminal for a sale the way `received` is for a purchase.** `trg_sale_returns_require_completed_sale` (immediate, at draft creation) mirrors `purchase_returns_require_received_purchase` exactly, but a sale can still be voided *after* a return is drafted against it — something that can't happen to a `received` purchase. `trg_fn_sale_returns_completion_guard` re-checks `sales.status = 'completed'` at commit of the return's own `draft → completed` transition, which is what actually prevents the double-restore scenario described on `sales`.
-- **No reservation during draft, mirroring the sales design exactly.** A draft return doesn't touch `available_quantity`, doesn't stake a claim on a batch allocation, and isn't counted against other returns' over-return ceiling. Two drafts can be built against overlapping quantities from the same original batch allocation at once; whichever completes first "wins," and the second fails its own completion guard, with a clear error, rather than being blocked (or silently reserving stock) at draft time.
+- **No reservation during draft, mirroring the sales design exactly.** A draft return doesn't touch `available_quantity`, doesn't stake a claim on a batch allocation, and isn't counted against other returns' over-return ceiling. Two drafts can be built against overlapping quantities from the same original batch allocation at once; whichever *completes* first "wins," and the second fails its own completion guard, with a clear error, rather than being blocked (or silently reserving stock) at draft time.
+- **Two concurrent *completions* against the same original allocation are serialized by an explicit row lock, not just by the check above.** `trg_fn_sale_returns_completion_guard` takes `SELECT ... FOR UPDATE` on every `sale_item_batches` row this return draws from *before* computing how much of it has already been returned. Without that lock, two completions racing against the same allocation could each read the same "already returned" total, each independently pass the ceiling check, and together over-return it — the check alone, without a lock, only prevents over-return when completions happen one at a time. The lock is what makes the second completion's read see the first completion's already-committed total, rather than a stale snapshot from before it existed.
 - **The over-return ceiling is per original `sale_item_batches` allocation, not per `sale_item`.** Your example — `Red Saree × 10` as `B001 → 6` / `B002 → 4`, returning 7 as `B001 → 4` / `B002 → 3` — is valid because each return line stays within its own batch allocation's remaining quantity (`4 ≤ 6`, `3 ≤ 4`), which is exactly what `trg_fn_sale_returns_completion_guard` checks. A sale-item-level ceiling (returned ≤ original `sale_items.quantity` − already returned) is not checked separately: it's implied by the per-batch checks, given the invariant `sales`' own completion guard already proved — that a completed sale's allocations sum to exactly its `sale_items.quantity` — so summing valid per-batch returns can never exceed it either.
 - **Financial amount is derived, never duplicated.** `sale_return_items` carries no `unit_price`/`discount_amount`/`tax_amount`/`line_total` of its own; the refundable amount for a return line is `sale_items.unit_price` (etc.) for the line it points at, prorated by `sale_return_items.quantity`. This is safe specifically because `sale_items` freezes at sale completion — there's no risk of the source data changing under a return computed later. A future refund system (see "Future path") reads this the same way, rather than trusting a second, possibly stale, copy of the money.
 
@@ -3011,6 +3257,11 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 | `variants 1:N sale_items` | The variant is the unit of sale, mirroring `variants 1:N purchase_items` on the buy side. |
 | `sale_items 1:N sale_item_batches` | A commercial line can be fulfilled from more than one physical batch — the allocation layer, mirroring `purchase_items 1:N inventory_batches` in reverse. |
 | `inventory_batches 1:N sale_item_batches` | A batch can contribute to many sale items over time, as long as stock remains — mirroring `inventory_batches 1:N purchase_return_items`. |
+| `sales 1:N sale_returns` | A return is a separate transaction against an already-completed sale, never an edit to it — mirroring `purchases 1:N purchase_returns`. |
+| `sale_returns 1:N sale_return_items` | A return is a header plus lines, same shape as every other header/line pair in this schema. |
+| `sale_items 1:N sale_return_items` | A return line always traces back to the original commercial line it's crediting — mirroring `purchase_items 1:N purchase_return_items`. |
+| `sale_item_batches 1:N sale_return_items` | A return line always targets one specific original batch allocation — the physical stock actually coming back — mirroring `inventory_batches 1:N purchase_return_items`. |
+| `sale_return_items 1:N inventory_batches` (0 or 1, after completion) | A completed return line creates exactly one new return-origin batch (`sale_return_item_id`); a draft line has none yet. The reverse of every other FK in this table: here the return line is the *parent*, since the batch is what completion *creates*, not something the line points at beforehand. |
 | `sales 1:N sale_payments` | One sale can be paid across several payments — different methods, different accounts, or both. |
 | `payment_methods 1:N sale_payments` | Tenant-level: the same method (e.g. `UPI`) is reused across every sale that used it. |
 | `payment_accounts 1:N sale_payments` (nullable) | Store-level: every non-credit payment names the account it landed in; a `CUSTOMER_CREDIT` payment names none. |
@@ -3070,7 +3321,7 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 - **The owner invariant is a transactional guarantee, not a convention.** A `trial` or `active` tenant can never reach zero active owners — enforced by a pair of `DEFERRABLE INITIALLY DEFERRED` constraint triggers (on `tenant_memberships` and on `tenants`), checked at transaction commit. This closes the "last owner accidentally removed, tenant becomes inaccessible" failure mode at the database layer rather than relying on application code to remember.
 - **Phase 1 catalogue has no sharing.** `sellables.store_id` replaces the earlier tenant-level `sellables` with `source_store_id`, and `store_sellables` is removed. Sharing, `store_variants` and store-level pricing are deferred; the migration path is `store_id` → `source_store_id` plus a link table. This supersedes the earlier "no tenant-level catalogue entity" and "source store is always linked" decisions.
 - **Selling price is on the variant.** `variants.base_price` replaces `sellables.base_price`, because variants of one sellable can be priced differently. Purchase cost never lives on `variants`.
-- **`tenant_id` on every tenant-owned table, with composite FKs.** Parents expose `UNIQUE (tenant_id, ...)` keys and children reference `(tenant_id, parent_id)` pairs, so the database rejects any cross-tenant reference. `membership_store_access` is the one table that still relies on an application-level same-tenant check.
+- **`tenant_id` on every tenant-owned table, with composite FKs.** Parents expose `UNIQUE (tenant_id, ...)` keys and children reference `(tenant_id, parent_id)` pairs, so the database rejects any cross-tenant reference. `membership_store_access` was the one table that relied on an application-level same-tenant check instead — it now has a `tenant_id` column and the same composite-FK treatment as everywhere else (see the fix-pass entries at the end of this log).
 - **Inventory is append-only, with one trigger-maintained cache.** `inventory_batches.received_quantity` is immutable, and the ledger (`stock_movements`) cannot be updated or deleted. `inventory_batches.available_quantity` is the one exception to "no mutable quantity column": it is a fast operational balance that only the ledger itself, via `trg_stock_movements_apply_to_batch`, is allowed to change — never an application-writable second source of truth. Because that update happens inside the same transaction as the ledger insert and is subject to `CHECK (available_quantity >= 0)`, the two cannot drift apart, and **this supersedes the earlier "negative on-hand is deliberately allowed" decision**: a movement that would oversell a batch now fails the whole transaction instead of being recorded as drift. See `stock_movements`' "Why an append-only ledger" section for the full reasoning.
 - **Every Phase 1 quantity column is `INTEGER`: `purchase_items.quantity`, `inventory_batches.received_quantity`/`available_quantity`, and `stock_movements.quantity`.** An earlier draft of this decision kept `purchase_items.quantity` at `NUMERIC(12,3)` to leave room for a future fractional/weighed purchase line, while batch and ledger quantities were already `INTEGER` — that split was itself an unenforced gap (nothing stopped entering a fractional purchase quantity that could then never be fully reconciled into whole-number batches). Superseded: Phase 1 does not support fractional or weighed goods at all, so there is no partial exception to carve out; a future unit-of-measure model is the right place to introduce fractional quantities, not a NUMERIC column sitting unused until then.
 - **`inventory_batches` has no `status` column.** The earlier `active`/`blocked`/`archived` states are superseded by `available_quantity` (zero means sold out) and by `DAMAGED`/`LOST` movements already removing bad stock from the operational balance. A distinct "held out of sale but otherwise fine" state is not modelled yet; it would be an additive column, not a redesign.
@@ -3121,6 +3372,20 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 - **Two additive, status-filtered indexes** — `idx_sellables_store_status` and `idx_variants_store_status`, both `(tenant_id, store_id, status)` — were added for catalogue-lifecycle filtering and the new eligibility trigger's lookup. Barcode lookup and tenant isolation needed nothing new: `inventory_batches_tenant_barcode_unique` (from the catalogue/inventory phase) and the composite tenant/store FKs throughout already covered both origins.
 - **The barcode model itself required no schema change** — `inventory_batches.barcode`, its tenant-scoped uniqueness, and the purchase-vs-return origin split (from the sale-returns phase) already satisfied every requirement here (batch-level identity, opaque string storage, no assumed symbology, a new barcode per return batch, never a reused one). This phase's work on barcodes was entirely documentation: consolidating the barcode → batch → variant → sellable chain and the scan-to-sale lookup sequence into one place ("Product/variant lifecycle and the barcode model") rather than leaving it scattered across `inventory_batches`' and `sale_item_batches`' individual notes.
 
+### Audit fix pass
+
+A full Phase 1 audit (relationships, tenant isolation, inventory integrity, concurrency, state machines, money/tax, scope) was run against everything above and turned up nine issues, all fixed here without changing any existing business rule, lifecycle state, or table's core shape:
+
+- **(Blocker) `sale_returns`' over-return check is now lock-protected, closing a real concurrent-completion race.** The ceiling check in `trg_fn_sale_returns_completion_guard` was a plain aggregate `SELECT` with no lock — two completions racing against the same original `sale_item_batches` allocation could each read the same "already returned" total, each independently pass, and together over-return it. It now takes `SELECT ... FOR UPDATE` (ordered by `id`, to avoid a cross-completion deadlock) on every affected `sale_item_batches` row before computing the sum, the same `FOR SHARE`-before-aggregate idiom `check_tenant_has_active_owner` already used for the owner invariant. The "Concurrency and stock safety" section's claim that "no explicit `SELECT ... FOR UPDATE` is needed anywhere in this design" was accurate for the `available_quantity`-counter shape of check it was describing, but not universally true — corrected to say so, now that a second shape of check (a fresh aggregate over sibling rows, with no counter column to lock through) exists and needs its own explicit lock.
+- **Row-level security is now actually implemented, not just asserted.** Every table's notes have said "RLS scoped to `tenant_id` per N-05" since the first draft of this document, but no `CREATE POLICY` ever existed. "Row-level security" (new section, right after `membership_store_access`) defines the tenant-context mechanism (two `SET LOCAL` session settings, `app.current_tenant_id`/`app.current_user_id`, populated by the application from an already-verified JWT claim — never invented or trusted blind) and enables + policies all 22 tenant-owned tables with one consistent `USING`/`WITH CHECK` pattern. `tenants` is deliberately left out (it isn't tenant-owned, and its own access model was already documented as a deferred platform-admin decision); `users` gets a membership-or-self policy instead of a column comparison, since it has no `tenant_id` by design — and account creation is explicitly flagged as outside what this policy can authorize, same as the credential store itself is outside this schema.
+- **`membership_store_access` gained a real `tenant_id` column and composite FKs, closing the one remaining app-level-only tenant check in the whole schema.** `(tenant_id, membership_id) → tenant_memberships` and `(tenant_id, store_id) → stores` together make a membership from tenant A paired with a store from tenant B structurally impossible, not just discouraged — either FK fails outright. `tenant_memberships` gained the `UNIQUE (tenant_id, id)` target this required (Postgres requires a unique constraint on anything a composite FK references); this is additive, not a change to any existing constraint. This also finally gives the table a normal column for the RLS policy above — before this fix it couldn't have one.
+- **Reversal-type stock movements (`SOLD_REVERSAL`, `PURCHASE_RETURN_REVERSAL`) now have a real uniqueness guarantee**, via `idx_stock_movements_reversal_unique` on `(batch_id, movement_type, reference_type, reference_id)`, scoped only to those two types. `customer_credit_ledger` always had this for its own reversals (`idx_customer_credit_ledger_reverses_entry_unique`); the ledger never had the equivalent, relying only on the completion/void guards' existence checks ("at least one matching movement exists"), which can't by themselves stop a retried or double-submitted request from posting the same compensating movement twice. `PURCHASED`/`SOLD`/`SALE_RETURN`/`PURCHASE_RETURN` are deliberately left out of this index — their legitimate multiplicity (multi-batch receiving, repeat sales from one batch, multiple partial returns) is real and already documented, and none of that changes.
+- **`sale_items` gained the store/variant consistency trigger `purchase_items` always had, closing an asymmetry between two otherwise-mirrored tables.** `purchase_items_validate_variant` has always rejected a line whose variant belongs to a different store at insert time, with a clear error. `sale_items` had no equivalent — a mismatched row wasn't rejected there at all, only indirectly, much later, when `sale_item_batches`' own FK could never find a matching batch for it, surfacing as a confusing FK violation or a sale permanently stuck unable to complete. `trg_sale_items_validate_variant_store` gives it the same immediate rejection, fired on `INSERT` and on a `variant_id` change (the only way the mismatch could ever be introduced, since `store_id` itself is already immutable here).
+- **The "Relationship rationale" table now documents `sale_returns`/`sale_return_items`**, which were fully built (previous phase) but never added to this table. Five rows added: `sales 1:N sale_returns`, `sale_returns 1:N sale_return_items`, `sale_items 1:N sale_return_items`, `sale_item_batches 1:N sale_return_items`, and the reverse-direction `sale_return_items 1:N inventory_batches` (a completed return line *creates* its return batch, rather than pointing at a pre-existing one).
+- **`idx_inventory_batches_purchase_item` now leads with `tenant_id`**, matching every other index in this schema. Functionally redundant (the column is already a globally unique UUID) but now consistent, and able to benefit from the same RLS-aware query planning every sibling index gets.
+- **Tenant provisioning's required order is now stated as a hard requirement, not an open question.** The "owner invariant" section previously ended in "Open item... worth confirming with whoever builds signup/onboarding." It now states plainly: create the tenant row and its first `owner`/`active` membership in one transaction, tenant first, membership second, same transaction — `trg_tenants_owner_guard`'s deferred check is exactly what makes that ordering work. No schema change; this was always true of the existing trigger, just not written down as a requirement before.
+- **`stores.status`'s three values, versus the two-value catalogue entities one level down, now has a stated reason** rather than being left for a reader to wonder about: a store is a whole operational unit that can be temporarily paused (`suspended`) distinct from permanently closed (`archived`), while `sellables`/`variants` don't need a third state because their two-value status is *already* a freely reversible toggle, and `customers`/`suppliers` have no demonstrated need for a "paused" state at all.
+
 ## Up next
 
-The core sales transaction, sale returns, and now the product/variant lifecycle and barcode model are all built and documented. What's still deliberately left for later (see "Future path" above for each): a `sale_payments`/refund reversal mechanism for actual money already received (the biggest remaining financial gap), sale return reversal, returned-batch condition/classification, deactivated/archived-stock workflows (clearance, offers, disposal, special resale), store-specific price overrides and price history, and FEFO allocation once expiry-enabled inventory exists. Next up: a final schema review.
+The core sales transaction, sale returns, the product/variant lifecycle and barcode model, and a full audit fix pass (concurrency locking, actual RLS policies, tenant-integrity on the one remaining app-level-only check, reversal-movement uniqueness, sale/purchase symmetry, and documentation completeness) are all built and documented. What's still deliberately left for later (see "Future path" above for each): a `sale_payments`/refund reversal mechanism for actual money already received (the biggest remaining financial gap), sale return reversal, returned-batch condition/classification, deactivated/archived-stock workflows (clearance, offers, disposal, special resale), store-specific price overrides and price history, and FEFO allocation once expiry-enabled inventory exists. Next up: a final schema review.
