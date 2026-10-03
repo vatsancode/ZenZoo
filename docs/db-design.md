@@ -65,7 +65,7 @@ CREATE TRIGGER trg_tenants_prevent_slug_change
 - **`status`** — lifecycle: `trial` → `active` → `suspended` (non-payment/abuse, reversible) → `archived` (terminal soft-delete). **No hard delete and no `deleted_at` column** — `archived` is the delete state. The row and all its tenant-scoped data stay in place, governed by whatever compliance retention rules apply (N-09's six-year invoice retention, N-10's DPDP deletion obligations) rather than by a Postgres `DELETE`. If a "right to erasure" request ever requires actually scrubbing PII, that's a deliberate, audited data-scrubbing job against an `archived` tenant — not a schema-level delete. `cancelled` is deliberately **not** a separate status: a subscription being cancelled and a tenant's data being archived are different facts (one is a billing-system concept, one is a data-lifecycle concept) and conflating them into one status column was a mistake in the earlier draft. Billing/subscription state belongs on a future `subscriptions` table; `archived` here means only "this tenant is done, data retained per policy." Revisit if billing needs finer states (e.g. `past_due`) — those still belong off this table.
 - **`default_currency` / `country_code`** — tenant-level defaults; per-store overrides (for multi-country chains) belong on a future `stores` table, not here.
 - **`updated_at`** — auto-maintained by trigger above; no application code should set it directly.
-- **RLS** — `tenants` is the one table *without* a `tenant_id` column (it *is* the tenant), so it sits outside the standard per-tenant RLS pattern used elsewhere (N-05) and is deliberately left out of "Row-level security" below. Access should instead be gated by a platform-admin role/claim, decided when the auth model is designed.
+- **RLS** — `tenants` is the one table *without* a `tenant_id` column (it *is* the tenant), so it sits outside the standard per-tenant RLS pattern used elsewhere (N-05) and is deliberately left out of "Row-level security" below. Access should instead be gated by a platform-admin role/claim, decided when the auth model is designed. `app_role` gets `SELECT, INSERT` only (see "The application-role privilege model") — new tenants are created (directly, or via the signup bootstrap function — see "Bootstrapping") but never updated by the ordinary application role; a future platform-admin role is where `UPDATE` (suspend/archive) would live.
 - Deliberately **excluded for now**: `owner_user_id` / `owner_email` (waiting on the users/auth model) and a `metadata JSONB` catch-all (adding one prematurely invites unstructured drift — add it only when a concrete unstructured need shows up).
 
 ---
@@ -104,7 +104,7 @@ CREATE TRIGGER trg_users_set_updated_at
 - **`phone`** — optional, not unique. A shared shop phone or a household number can legitimately belong to more than one person; don't force uniqueness the data doesn't have.
 - **`status`** — `active` / `suspended` (temporary, e.g. security concern) / `deactivated` (terminal soft-delete, same reasoning as `tenants.archived` — no `deleted_at`, no hard delete). Note this is the person's global account status, independent of any particular tenant relationship — a deactivated user's memberships should be handled separately (see `tenant_memberships.status`), not inferred from this field.
 - Deliberately **excluded**: password hash / auth provider fields (belongs to whatever auth system — Supabase Auth, Clerk, custom — is chosen; this table models the user record the app owns, not the credential store), and anything tenant- or role-shaped.
-- **RLS** — this is the one tenant-owned-elsewhere table with no `tenant_id` column of its own, by design (see above). Its policy is membership-based instead of column-based; see "Row-level security" for the actual `CREATE POLICY` statement and why account creation sits outside it.
+- **RLS** — this is the one tenant-owned-elsewhere table with no `tenant_id` column of its own, by design (see above). Its policy is membership-based instead of column-based; see "Row-level security" for the actual `CREATE POLICY` statement. `app_role` has no `INSERT` on this table at all — the only way a row is ever created is the dedicated `SECURITY DEFINER` bootstrap function; see "Bootstrapping" for why account creation needs that and ordinary `SELECT`/`UPDATE` don't.
 
 ---
 
@@ -299,6 +299,8 @@ CREATE CONSTRAINT TRIGGER trg_tenants_owner_guard
 3. `COMMIT`.
 
 `trg_tenants_owner_guard` fires `AFTER INSERT` on `tenants` but is `DEFERRABLE INITIALLY DEFERRED`, so it only actually checks at `COMMIT` (or an explicit `SET CONSTRAINTS ... IMMEDIATE`) — which is exactly what makes step 2 able to follow step 1 as a later statement in the same transaction rather than needing to happen first. A tenant row committed *without* a same-transaction owner membership fails at commit, by construction. That is the invariant doing its job, not a bug to route around — the provisioning/signup flow must be built around this ordering from day one, not discovered by it failing in production. This also means provisioning must always be a single transaction, never two separate round-trips (e.g. "create the tenant" as one request and "add the owner" as a second, later one) — the tenant would be uncommittable in between.
+
+**This ordering is no longer just a rule the application must remember — for a brand-new signup, it's structurally enforced by `provision_new_account()`** (see "Bootstrapping," under "Row-level security"), which performs exactly these two inserts, in exactly this order, inside the one function call `app_role` is permitted to run for cold-start signup. For an already-authenticated user opening an *additional* tenant, the application still issues the two inserts directly (ordinary, RLS-governed statements — see that same section), and must still follow this order and transaction boundary by hand.
 
 ---
 
@@ -495,7 +497,156 @@ CREATE POLICY tenant_membership_or_self ON users
 - **A missing or wrong tenant context denies everything**, not just the tables it happens to touch: since every policy's `USING`/`WITH CHECK` compares a real column to `app_current_tenant_id()`, and that function returns `NULL` when the session setting was never set, *zero* rows satisfy the policy anywhere. A connection that forgets to call `set_config('app.current_tenant_id', ...)` sees an empty database, not another tenant's data and not its own — fully closed, not fully open.
 - **Composite tenant FKs (already in place throughout this document) and RLS are two different layers, not duplicates.** The FKs stop a row from being *inserted* pointing at another tenant's parent, regardless of who's connected. RLS stops a row from being *read or written at all* by a session whose context doesn't match, regardless of what the row points at. A query that forgets a `WHERE tenant_id = $1` clause is exactly the failure RLS exists to catch — the FK layer alone never would, since it only ever constrains relationships between rows, never which rows a `SELECT` returns.
 - **No policy here ever compares two different tenants' data to each other, and no policy references another tenant's `app_current_tenant_id()` value** (there's only ever one, per session) — so there's no path by which one tenant's policy evaluation can expose a condition derived from a different tenant's rows.
-- **`FORCE ROW LEVEL SECURITY` is not included above, and that's an operational decision the deploying role must get right, not a gap in the policies themselves.** By default, Postgres RLS policies don't apply to a table's *owner* — only to other roles. If the application connects as the table owner, every policy above is silently bypassed. The correct setup (and the one every `REVOKE` note elsewhere in this document already assumes) is for the application to connect as a separate, non-owning `app_role`, which gets these policies enforced automatically with no `FORCE` needed; `ALTER TABLE ... FORCE ROW LEVEL SECURITY` is the fallback only if the application must, for some other reason, connect as the owning role.
+- **`FORCE ROW LEVEL SECURITY` is not included above, and that's an operational decision the deploying role must get right, not a gap in the policies themselves.** By default, Postgres RLS policies don't apply to a table's *owner* — only to other roles. If the application connects as the table owner, every policy above is silently bypassed. The correct setup (and the one every `REVOKE` note elsewhere in this document already assumes) is for the application to connect as a separate, non-owning role — concretely named and defined in "The application-role privilege model," next — which gets these policies enforced automatically with no `FORCE` needed; `ALTER TABLE ... FORCE ROW LEVEL SECURITY` is the fallback only if the application must, for some other reason, connect as the owning role.
+
+### The application-role privilege model
+
+Every `REVOKE`/`GRANT` note elsewhere in this document (`inventory_batches.available_quantity`, `stock_movements`, `customer_credit_ledger`) has, until now, referred to an unnamed `<app_role>` in prose. This section names and defines it concretely, so "the application role" means one specific, fully-specified thing everywhere it's mentioned.
+
+**Two roles, not one:**
+
+```sql
+-- owns every table, function and trigger in this schema. Used ONLY to run migrations
+-- (CREATE TABLE/FUNCTION/TRIGGER/INDEX, and the one bootstrap function below) — never
+-- for live application traffic. RLS does not apply to a table's owner by default, which
+-- is exactly why this role must never be the one live requests connect as.
+CREATE ROLE app_owner NOLOGIN;
+
+-- the role the application connects as for every live request, after a request's JWT
+-- has already been verified (see "Row-level security"). Ordinary login role, no special
+-- attributes (NOT a superuser, NOT BYPASSRLS, does not own anything) — RLS and the
+-- column/table grants below are its entire access boundary.
+CREATE ROLE app_role LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE INHERIT;
+
+GRANT USAGE ON SCHEMA public TO app_role;
+```
+
+`app_owner` is deliberately `NOLOGIN` — nothing ever connects as it directly over the network; a deployment's migration runner authenticates as it (or a superuser runs migrations once and then `ALTER TABLE ... OWNER TO app_owner`), and it is the function owner for the one `SECURITY DEFINER` function this schema needs (see "Bootstrapping," next). Every `CREATE TABLE` in this document is assumed owned by `app_owner`.
+
+**Per-table grants for `app_role`**, grouped by the identical privilege set each group shares — this is the first time these have been written as real DDL rather than asserted:
+
+```sql
+-- Group 1: ordinary tenant-owned headers/catalogue/config rows. Content and status
+-- columns change in place (e.g. a status transition, a price edit); nothing in this
+-- group is ever hard-deleted by the application — each uses a soft-delete/terminal
+-- status instead (see each table's own notes) — so DELETE is deliberately not granted.
+GRANT SELECT, INSERT, UPDATE ON
+    stores, tenant_memberships, suppliers, sellables, variants, customers,
+    payment_methods, payment_accounts, purchases, purchase_returns, sales, sale_returns
+    TO app_role;
+
+-- Group 2: draft-mutable line items. Each of these is real-DELETE-able, but only while
+-- draft — that business rule is already enforced by each table's own
+-- require-draft-parent trigger (e.g. sale_items_require_draft_sale); the grant below is
+-- the privilege-level precondition those triggers assume, not a replacement for them.
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+    purchase_items, purchase_return_items, sale_items, sale_item_batches,
+    sale_return_items, sale_payments
+    TO app_role;
+
+-- Group 3: membership_store_access has no content column and no status column at all —
+-- "you add or remove a row rather than editing one" (see its own notes) — so it gets
+-- real DELETE instead of UPDATE.
+GRANT SELECT, INSERT, DELETE ON membership_store_access TO app_role;
+
+-- Group 4: append-only or otherwise write-once tables. No UPDATE, no DELETE, for four
+-- different reasons landing on the same privilege shape:
+--   tenants              — status transitions (suspend/archive) are a platform-admin
+--                           operation, not yet built (see that table's own RLS note);
+--                           app_role creates new tenants but never edits existing ones.
+--   inventory_batches    — immutable in every column except available_quantity (and
+--                           updated_at), and even those two are trigger-only; app_role
+--                           has no legitimate direct UPDATE here at all (see below).
+--   stock_movements      — append-only ledger (trg_stock_movements_append_only).
+--   customer_credit_ledger — append-only ledger (trg_customer_credit_ledger_append_only).
+GRANT SELECT, INSERT ON tenants, inventory_batches, stock_movements, customer_credit_ledger TO app_role;
+
+-- explicit, redundant-but-intentional belt-and-suspenders: app_role was never granted
+-- table-wide UPDATE on these three above, so this changes nothing functionally — it
+-- exists so "app_role cannot modify available_quantity / cannot update or delete the
+-- ledgers" is a literal, greppable statement in the deployment script, not just an
+-- absence someone has to notice.
+REVOKE UPDATE (available_quantity) ON inventory_batches FROM app_role;
+REVOKE UPDATE, DELETE, TRUNCATE ON stock_movements FROM app_role;
+REVOKE UPDATE, DELETE, TRUNCATE ON customer_credit_ledger FROM app_role;
+
+-- users: no INSERT at all (see "Bootstrapping" — the only way a users row is ever
+-- created is the dedicated SECURITY DEFINER function, never a direct app_role insert).
+-- SELECT/UPDATE are governed by the tenant_membership_or_self policy from "Row-level
+-- security" — an UPDATE is only visible/writable for your own row or a fellow member of
+-- your current tenant, same as a SELECT would be.
+GRANT SELECT, UPDATE ON users TO app_role;
+```
+
+**Why `inventory_batches` needs no `UPDATE` grant at all, not even a column-restricted one.** `trg_inventory_batches_prevent_core_change` already blocks every column except `available_quantity`/`updated_at` from changing by application-level content rules; between those two, `available_quantity` must only ever move via the ledger and `updated_at` is trigger-set. There is, in other words, no column on this table app_role has any legitimate reason to `UPDATE` directly — so the grant is withheld entirely, and the explicit column-level `REVOKE` above is pure documentation of intent, not load-bearing on its own.
+
+**This does not break `trg_fn_stock_movements_apply_to_batch`, or any other trigger that fires as a side effect.** A `SECURITY DEFINER` function executes its entire body — including every statement inside it, and every trigger those statements go on to fire — as its *owner* (`app_owner`), not as whichever role called it. When `trg_fn_stock_movements_apply_to_batch` runs its own `UPDATE inventory_batches SET available_quantity = ...` (fired by app_role's `INSERT` into `stock_movements`, which app_role *does* have), that `UPDATE` — and everything it cascades into, including `trg_inventory_batches_set_updated_at` and `trg_inventory_batches_prevent_core_change` — executes under `app_owner`'s privileges, which owns the table and so is never blocked by app_role's own (lack of) grants. This is exactly the mechanism the pre-existing `SECURITY DEFINER` note already relied on ("an invoker-rights version of this function would fail too, taking the whole insert down with it") — this section just makes the role names and grants concrete enough to confirm it actually works end to end, rather than leaving `<app_role>` and its privileges unspecified.
+
+**`SECURITY DEFINER` functions and `search_path`.** `trg_fn_stock_movements_apply_to_batch` already declares `SET search_path = pg_catalog, public` — the standard hardening that stops a `SECURITY DEFINER` function from being tricked into resolving an unqualified identifier against a schema an attacker controls. The one new `SECURITY DEFINER` function this pass adds (`provision_new_account`, next section) carries the identical `SET search_path = pg_catalog, public`. No other function in this document runs as `SECURITY DEFINER`; every other function, including the RLS helpers `app_current_tenant_id()`/`app_current_user_id()`, is plain `SECURITY INVOKER` (the default) and executes as whichever role calls it, with that role's own RLS and grants fully in effect.
+
+**This privilege model doesn't, and can't, bypass RLS on its own.** `app_role` is granted no attribute (`BYPASSRLS`, superuser, or table ownership) that would exempt it from the policies in "Row-level security" — every `SELECT`/`INSERT`/`UPDATE`/`DELETE` above is still filtered by the matching `tenant_isolation` policy (or `tenant_membership_or_self`, for `users`) on top of whatever table-level grant it has. The grants above say *what kind of statement* app_role may issue against a table; RLS separately says *which rows* that statement can see or touch. Both layers have to agree before anything happens — narrowing one is meaningless without the other, which is why this section exists alongside "Row-level security" rather than instead of it.
+
+### Bootstrapping: the first user, tenant and owner membership
+
+Every policy in "Row-level security" assumes a tenant and/or user context already exists. Signing up — creating the very first `users` row for a person, and the very first `tenants` row with its required owner `tenant_memberships` row — is, by definition, the one moment neither exists yet. This section is the resolution for that gap, which the RLS section explicitly left open.
+
+**Two bootstrap shapes, not one, because they're genuinely different problems:**
+
+1. **Cold start — a person with no `users` row yet, creating their first tenant.** No session, no JWT, nothing to set `app.current_user_id`/`app.current_tenant_id` to. This is the hard case, and the one that needs a privileged escape hatch.
+2. **An already-authenticated person creating an *additional* tenant** (a second shop under a different business entity, say). Their `users` row and a valid `app.current_user_id` already exist — they're just missing a tenant context for a tenant that doesn't exist *yet either*. This case needs no escape hatch at all, because `tenants` already carries no RLS policy (see "Row-level security") and the application can simply switch `app.current_tenant_id` to the newly created tenant's id, in the same transaction, immediately after creating it — then the ordinary `tenant_isolation` policy on `tenant_memberships` is satisfied normally for inserting the new owner row. No new mechanism is defined for this case because none is needed; it's listed here only so it isn't mistaken for the harder case.
+
+**Cold start is handled by one narrowly-scoped `SECURITY DEFINER` function — not by granting `app_role` any broader bypass:**
+
+```sql
+-- the ONE deliberate, narrow exception to "app_role never bypasses RLS." Runs as
+-- app_owner (its definer), which — as the owner of users/tenants/tenant_memberships —
+-- is exempt from RLS on them, for exactly the three inserts below and nothing else.
+-- It is not a general-purpose escape hatch: it takes no caller-supplied tenant_id or
+-- user_id to attach new rows to an EXISTING tenant, it only ever creates a brand-new
+-- user, a brand-new tenant, and the one membership tying them together — and it hands
+-- back only the three ids it just created. There is no code path through this function
+-- that can read or write a tenant that already exists.
+CREATE FUNCTION provision_new_account(
+    p_email       VARCHAR(255),
+    p_first_name  VARCHAR(100),
+    p_last_name   VARCHAR(100),
+    p_tenant_name VARCHAR(200),
+    p_tenant_slug VARCHAR(100)
+) RETURNS TABLE (user_id UUID, tenant_id UUID, membership_id UUID) AS $$
+DECLARE
+    v_user_id       UUID;
+    v_tenant_id     UUID;
+    v_membership_id UUID;
+BEGIN
+    INSERT INTO users (email, first_name, last_name)
+    VALUES (lower(p_email), p_first_name, p_last_name)
+    RETURNING id INTO v_user_id;
+
+    -- status is 'trial' here, which is exactly what requires an active owner — see the
+    -- next insert, and "Required provisioning order" under tenant_memberships
+    INSERT INTO tenants (name, slug, status)
+    VALUES (p_tenant_name, p_tenant_slug, 'trial')
+    RETURNING id INTO v_tenant_id;
+
+    INSERT INTO tenant_memberships (tenant_id, user_id, role, status)
+    VALUES (v_tenant_id, v_user_id, 'owner', 'active')
+    RETURNING id INTO v_membership_id;
+
+    RETURN QUERY SELECT v_user_id, v_tenant_id, v_membership_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public;
+
+REVOKE EXECUTE ON FUNCTION provision_new_account(VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION provision_new_account(VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR) TO app_role;
+```
+
+**Why this doesn't weaken tenant isolation.** `app_role` is granted `EXECUTE` on this *one* function, not `INSERT` on `users`/`tenants`/`tenant_memberships` directly (the privilege model above grants `app_role` no `INSERT` on `users` at all, and only a plain, RLS-governed `INSERT` on `tenants`/`tenant_memberships` for case 2 above). The function's own body is the entire bypass surface, and it is fixed, reviewable code with no caller-supplied id that could redirect it at an existing tenant — a caller can make it create a new island, never touch an existing one. Calling it twice creates two unrelated tenants, never adds a second owner to the first.
+
+**When session context becomes available.** There is none during the call itself — that's the whole reason this function exists. Immediately after it returns, the application's authentication layer (Supabase Auth, Clerk, or custom — same external system `users`' own notes already defer credential storage to) mints the real session for the new `user_id`, and every request from that point on carries `tenant_id`/`user_id` as verified JWT claims, populating `app.current_tenant_id`/`app.current_user_id` exactly as "Row-level security" describes for any other authenticated request. Nothing about steady-state request handling is special-cased for a freshly-provisioned account.
+
+**Atomicity and the owner invariant.** All three inserts run inside the one statement that calls this function; if any of them fails (a duplicate email, a duplicate slug), the whole call rolls back and nothing is left half-created. `trg_tenants_owner_guard`'s deferred check — which requires an active owner before a `trial`/`active` tenant's *outer* transaction can commit — sees the owner membership already inserted by the time it runs, satisfying "Required provisioning order" automatically as long as the caller wraps this single function call in its own transaction (or lets it run as the implicit single-statement transaction it already is).
+
+**The same pattern extends to invite acceptance, not built out further here.** Accepting a `tenant_memberships` invite (`status='invited'`, `user_id IS NULL`) has an identical cold-start shape — the invited person has no `users` row and no session either — so it needs its own, equally narrow `SECURITY DEFINER` function (create the `users` row, then update the *one* specific, already-`invited` membership row a validated invite token names, nothing else reachable). It is not specified in full here because it wasn't part of the flow this pass was asked to resolve, but any implementation must follow this exact template — one function, one narrow job, no caller-supplied access to anything pre-existing beyond the single row an out-of-band-verified token already identifies — rather than widening `provision_new_account` or granting `app_role` any broader insert/update privilege to cover it.
 
 ---
 
@@ -1214,7 +1365,7 @@ CREATE CONSTRAINT TRIGGER trg_inventory_batches_insert_guard
 - **`unit_cost` on the batch is the cost basis of that stock, and only that.** It starts as the purchase line's cost and is immutable. It is a separate column from `purchase_items.unit_cost` because the effective cost per unit can later include allocated discount, tax or freight, and because margin and cost-of-goods reporting must never depend on a line that could be edited. **No purchase-tax or sales-tax field lives here** — tax is a transaction-side concept (`purchase_items.tax_amount` on the purchase side, `sale_items.tax_amount` on the sales side), and the batch tracks acquisition cost for valuation, not tax. If inventory valuation is ever demonstrated to need a tax-inclusive cost basis, that is a deliberate follow-up decision, not a default.
 - **`received_quantity` is immutable and whole-number only**: it is how many units arrived, not how many remain. `purchase_items.quantity` upstream is `INTEGER` too, so there is no fractional-to-whole boundary to reconcile anywhere in Phase 1 — every quantity column in the purchasing → batch → ledger chain is whole units, consistently. Weighed or fractional goods are not a Phase 1 concept at all; supporting them later means designing a proper unit-of-measure model (a unit column, a conversion/precision scheme) rather than quietly widening these columns back to `NUMERIC`.
 - **`available_quantity` is the current operational balance, and the *only* mutable column on this table.** It starts at `0` and is changed **exclusively** by the `stock_movements` trigger described in that table's section below — never by a direct application `UPDATE`. A batch's first `PURCHASED` movement is what brings it from `0` up to `received_quantity`, using the exact same code path as every later `SOLD`, `DAMAGED`, `SALE_RETURN`, etc. — there is deliberately no special-cased "set available_quantity at batch creation" logic. See "Batch balance vs. the ledger" under `stock_movements` for why this can't drift from the ledger, and why `CHECK (available_quantity >= 0)` is a real, enforced backstop rather than a hopeful comment.
-- **`REVOKE` is the second line of defence for `available_quantity`, same idiom as `stock_movements`.** `trg_inventory_batches_prevent_core_change` stops every column except `available_quantity` (and `updated_at`) from changing, but it cannot by itself distinguish a legitimate trigger-driven update from a direct application `UPDATE ... SET available_quantity = ...` that bypasses the ledger — both arrive as an ordinary `UPDATE` statement. Production should `REVOKE UPDATE (available_quantity) ON inventory_batches FROM <app_role>` (Postgres supports column-level privileges), so the application role can no longer write that column at all. A plain (`SECURITY INVOKER`, the PL/pgSQL default) function would run as whichever role fired the triggering `INSERT` and would be blocked by that same `REVOKE` — which is why `trg_fn_stock_movements_apply_to_batch` is declared `SECURITY DEFINER`, so it runs with the privileges of the function's owner regardless of who inserted the movement.
+- **`REVOKE` is the second line of defence for `available_quantity`, same idiom as `stock_movements`.** `trg_inventory_batches_prevent_core_change` stops every column except `available_quantity` (and `updated_at`) from changing, but it cannot by itself distinguish a legitimate trigger-driven update from a direct application `UPDATE ... SET available_quantity = ...` that bypasses the ledger — both arrive as an ordinary `UPDATE` statement. `app_role` (see "The application-role privilege model," under "Row-level security") is granted no `UPDATE` on this table at all, and `REVOKE UPDATE (available_quantity) ON inventory_batches FROM app_role` is stated there explicitly as well (Postgres supports column-level privileges). A plain (`SECURITY INVOKER`, the PL/pgSQL default) function would run as whichever role fired the triggering `INSERT` and would be blocked by that same restriction — which is why `trg_fn_stock_movements_apply_to_batch` is declared `SECURITY DEFINER`, so it runs with the privileges of the function's owner (`app_owner`) regardless of who inserted the movement.
 - **`barcode`** is a store-issued label unique per tenant (never global, so two tenants cannot collide), and is expected to encode a human-readable variant reference plus a unique batch reference — e.g. `VAR-RED-00001` for a batch of the "Red" variant. **This encoding is presentational only.** The database never parses `barcode` to derive `variant_id` or the batch's own `id` — both are stored as real columns and are what every join, constraint and query actually uses. Scanning a barcode is a lookup by the unique `(tenant_id, barcode)` index, which returns the row; the row's own `variant_id` (and, through it, cost and selling price) is what the application reads next.
 - **No `status` column.** The previous `active` / `blocked` / `archived` states are superseded by `available_quantity`: "sold out" is `available_quantity = 0`, and a `DAMAGED`/`LOST` movement already removes damaged or lost stock from `available_quantity` directly, so those units stop being sellable without a separate "blocked" flag. A distinct "held out of sale but not damaged/lost" state (e.g. a recall on stock that is otherwise fine, or a returned batch pending inspection before it's resold or moved into a clearance flow — see `sale_returns`' "Future path" note) is not modelled in Phase 1; if that need shows up, it is an additive column, not a redesign. Nothing about the dual-origin design above narrows that door: a future `condition`/`disposition` column would apply the same way to either origin.
 - **`available_quantity` is not clamped to `received_quantity` — only the floor is enforced.** Nothing prevents `available_quantity` from exceeding `received_quantity` if, say, a `SALE_RETURN` is posted incorrectly; that's a data-entry mistake to catch (e.g. via the reconciliation query above, or an application-level sanity check) and correct with a compensating movement, not a scenario the schema hard-forbids. The floor is different: `CHECK (available_quantity >= 0)` is a hard, transaction-failing constraint (see "Batch balance vs. the ledger"), because going negative means the physical scan/sale that triggered it cannot actually be fulfilled — an asymmetry that matches the real-world asymmetry between "can't sell what isn't there" and "a return was probably just logged against the wrong batch."
@@ -1372,7 +1523,7 @@ CREATE TRIGGER trg_stock_movements_apply_to_batch
   - **Adds stock:** `PURCHASED`, `SALE_RETURN`, `PURCHASE_RETURN_REVERSAL`, `SOLD_REVERSAL`
   - **Removes stock:** `SOLD`, `PURCHASE_RETURN`, `DAMAGED`, `LOST`, `INTERNAL_USE`
   - This is deliberately simpler than an application-supplied signed delta: the direction is a property of the *type*, not something each caller can get backwards. A caller only ever writes "10 units, `SOLD`", never "-10 units."
-- **No `updated_at`, no updates, no deletes — enforced twice.** The `BEFORE UPDATE OR DELETE` trigger rejects every attempt at the row level; production should also `REVOKE UPDATE, DELETE, TRUNCATE` on this table from the application role, as a second line of defence. A posting mistake is fixed by inserting a new row with the opposite-direction movement type (e.g. a wrongly posted `SOLD` is corrected with a `SALE_RETURN`, or a wrongly posted `DAMAGED` with a manually justified `PURCHASE`-side adjustment through `STOCK_ADJUSTMENT`), never by touching the original row. History is never rewritten, so an audit trail and a stock count always agree with what was actually posted.
+- **No `updated_at`, no updates, no deletes — enforced twice.** The `BEFORE UPDATE OR DELETE` trigger rejects every attempt at the row level; `app_role` additionally has `UPDATE, DELETE, TRUNCATE` revoked at the privilege level ("The application-role privilege model," under "Row-level security"), as a second line of defence. A posting mistake is fixed by inserting a new row with the opposite-direction movement type (e.g. a wrongly posted `SOLD` is corrected with a `SALE_RETURN`, or a wrongly posted `DAMAGED` with a manually justified `PURCHASE`-side adjustment through `STOCK_ADJUSTMENT`), never by touching the original row. History is never rewritten, so an audit trail and a stock count always agree with what was actually posted.
 - **`reference_type` + `reference_id` trace a movement back to the business transaction that caused it** — a purchase line, a sale line, a return document, or a manual stock adjustment. Phase 1's values: `PURCHASE_ITEM`, `SALE_ITEM`, `PURCHASE_RETURN`, `SALE_RETURN`, `STOCK_ADJUSTMENT`. The pair is polymorphic (it can point at rows in different tables depending on `reference_type`), so it cannot be a real foreign key the way, say, `sale_items.sale_id` is — the application is responsible for `reference_id` actually existing in the table `reference_type` names, scoped to the same `tenant_id`.
 - **`reference_id` is intentionally *not* unique, with one narrow exception.** One business transaction routinely produces several movement rows — a `sale_items` line spanning two batches posts two `SOLD` movements sharing the same `SALE_ITEM` `reference_id` (see `sale_item_batches`), one per batch it drew from; a multi-batch purchase receipt posts one `PURCHASED` movement per batch, all sharing the same `reference_id` when it identifies the purchase line rather than a single batch. `idx_stock_movements_reference` is a plain (non-unique) index for exactly this "fetch every movement this transaction produced" query. The one exception is `idx_stock_movements_reversal_unique` (below), which *does* enforce uniqueness, but only for `SOLD_REVERSAL`/`PURCHASE_RETURN_REVERSAL` and only on the combination `(batch_id, movement_type, reference_type, reference_id)` together — a reversal of one specific prior action should only ever happen once, which is a narrower, different claim than "`reference_id` alone is unique."
 - **`reference_type`/`reference_id` are both optional together.** Some movements — a shrinkage write-off, a stock take done by feel rather than a formal `STOCK_ADJUSTMENT` record — have no upstream document to point at. `reason` (free text) carries the justification instead. The pair-check constraint only guarantees the two columns move together: never a `reference_type` with no `reference_id` or vice versa.
@@ -3172,6 +3323,7 @@ SELECT tenant_id, customer_id, SUM(amount) AS balance
 - **A `CREDIT_PAYMENT` (paying down an existing balance) is *not* a `sale_payments` row.** `sale_payments.sale_id` is `NOT NULL` — every row there is a payment *against a sale*. Paying down an old balance isn't a new sale; it's a standalone `customer_credit_ledger` entry with `sale_id`/`sale_payment_id` both `NULL`. Only the credit-creation direction (`CREDIT_SALE`, born from a `CUSTOMER_CREDIT` `sale_payments` row) is tied to a sale at all.
 - **`customer_id` is `NOT NULL` here, unlike `sales.customer_id`.** Credit is inherently a relationship with a known person — there is no such thing as anonymous credit — so this table has no guest-equivalent path, by construction.
 - **Reversal linkage now has a real FK, closing a gap flagged when this table was first designed.** `reverses_entry_id` is a self-reference, tenant-scoped and validated on insert: `customer_credit_ledger_validate` requires a `CREDIT_REVERSAL`'s `amount` to exactly negate the entry it names and its `customer_id` to match — not just "linked clearly enough," but arithmetically verified. `idx_customer_credit_ledger_reverses_entry_unique` additionally guarantees an entry can be reversed at most once.
+- **Append-only is enforced at the privilege level too, not just by the row-level reject trigger above.** `app_role` has `UPDATE, DELETE, TRUNCATE` revoked on this table ("The application-role privilege model," under "Row-level security") — the same two-layer defence `stock_movements` has, for the same reason: a trigger alone can't stop a role with the raw privilege from disabling or working around it, so the grant itself is narrowed too.
 
 ---
 
@@ -3386,6 +3538,15 @@ A full Phase 1 audit (relationships, tenant isolation, inventory integrity, conc
 - **Tenant provisioning's required order is now stated as a hard requirement, not an open question.** The "owner invariant" section previously ended in "Open item... worth confirming with whoever builds signup/onboarding." It now states plainly: create the tenant row and its first `owner`/`active` membership in one transaction, tenant first, membership second, same transaction — `trg_tenants_owner_guard`'s deferred check is exactly what makes that ordering work. No schema change; this was always true of the existing trigger, just not written down as a requirement before.
 - **`stores.status`'s three values, versus the two-value catalogue entities one level down, now has a stated reason** rather than being left for a reader to wonder about: a store is a whole operational unit that can be temporarily paused (`suspended`) distinct from permanently closed (`archived`), while `sellables`/`variants` don't need a third state because their two-value status is *already* a freely reversible toggle, and `customers`/`suppliers` have no demonstrated need for a "paused" state at all.
 
+### DB readiness pass: privilege model and RLS bootstrap
+
+- **The application-role privilege model is now concrete: `app_owner` (owns every object, `NOLOGIN`, migrations only) and `app_role` (the live connection role, no special attributes, RLS and grants are its entire boundary).** Every `REVOKE`/`GRANT` note elsewhere in this document used to reference an unnamed `<app_role>` in prose only; "The application-role privilege model" (under "Row-level security") now names both roles and grants every one of the 24 tables (22 RLS tables + `users` + `tenants`) exactly the privilege set its own documented lifecycle needs — full CRUD for ordinary mutable headers, `+DELETE` for genuinely draft-deletable line items, `SELECT`/`INSERT` only for append-only ledgers and `tenants`, `SELECT`/`UPDATE` only for `users` (no direct `INSERT` — see bootstrap, below). No table's actual business rules changed; this makes the privilege boundary match rules that were already true.
+- **`inventory_batches` gets no `UPDATE` grant at all, not a column-restricted one — stronger than the original "`REVOKE` the `available_quantity` column" prose, and still exactly compatible with it.** Tracing `trg_inventory_batches_prevent_core_change` shows no column on this table has a legitimate direct-from-`app_role` `UPDATE` path at all (every other column is immutable post-insert; `available_quantity`/`updated_at` are trigger-only) — so withholding the grant entirely is simpler and strictly safer than a column-level carve-out, while an explicit `REVOKE UPDATE (available_quantity)` is still stated for the same reason the sign-shaped `CHECK` constraints are stated even where a narrower one would technically do: explicit beats implicit for anything a security review will specifically look for.
+- **Verified, not assumed, that `app_role`'s missing grants don't break any existing trigger.** `SECURITY DEFINER` functions (and anything they go on to fire, including other plain triggers on the same table, like `trg_inventory_batches_set_updated_at`) execute under the *function owner's* privileges for the duration of the call, not the original caller's — this is the same mechanism the original `trg_fn_stock_movements_apply_to_batch` note already leaned on, just confirmed end-to-end now that the roles and grants are concrete rather than placeholders.
+- **The RLS bootstrap gap — how a brand-new signup ever gets a `users`/`tenants`/`tenant_memberships` row when no session can exist yet — is resolved by one narrowly-scoped `SECURITY DEFINER` function, `provision_new_account()`, not by weakening `app_role` or the `users`/`tenant_isolation` policies.** It takes no caller-supplied tenant or user id to attach to — it only ever creates a brand-new, self-contained user+tenant+owner-membership triple and returns the three new ids — so it cannot be used to read or write an existing tenant's data. `app_role` is granted `EXECUTE` on this one function; it still has no direct `INSERT` on `users` at all. An already-authenticated user opening an *additional* tenant needs no such function — `tenants` carries no RLS policy to begin with, so the application just creates the tenant and switches `app.current_tenant_id` to it, in the same transaction, before the ordinary RLS-governed `tenant_memberships` insert.
+- **Invite acceptance has the identical cold-start shape and is named, not solved, here.** It needs its own equally-narrow `SECURITY DEFINER` function (create the `users` row, update the one already-`invited` membership row a validated token names) — flagged explicitly as future work following the exact same template, rather than silently left unaddressed or papered over by widening `provision_new_account` to do something it wasn't designed for.
+- **Reviewed the full RLS + privilege design together, specifically for ownership-based bypass, over-powerful roles, `SECURITY DEFINER` escape paths, and the bootstrap edge cases — none found beyond what's now documented and deliberately scoped.** `app_role` has no `BYPASSRLS`/superuser/ownership attribute; both `SECURITY DEFINER` functions in this schema (`trg_fn_stock_movements_apply_to_batch`, `provision_new_account`) are narrow, parameterized only with values that can't redirect them at pre-existing rows, and both set an explicit `search_path`; `membership_store_access`'s cross-tenant protection (previous pass) is unaffected and gets the standard policy like everything else; no contradiction found between any RLS policy and the tenant/membership/store FK relationships it sits on top of.
+
 ## Up next
 
-The core sales transaction, sale returns, the product/variant lifecycle and barcode model, and a full audit fix pass (concurrency locking, actual RLS policies, tenant-integrity on the one remaining app-level-only check, reversal-movement uniqueness, sale/purchase symmetry, and documentation completeness) are all built and documented. What's still deliberately left for later (see "Future path" above for each): a `sale_payments`/refund reversal mechanism for actual money already received (the biggest remaining financial gap), sale return reversal, returned-batch condition/classification, deactivated/archived-stock workflows (clearance, offers, disposal, special resale), store-specific price overrides and price history, and FEFO allocation once expiry-enabled inventory exists. Next up: a final schema review.
+The core sales transaction, sale returns, the product/variant lifecycle and barcode model, a full audit fix pass, and now a complete privilege/RLS-bootstrap pass are all built and documented — the database design is implementation-ready. What's still deliberately left for later (see "Future path" above for each): a `sale_payments`/refund reversal mechanism for actual money already received (the biggest remaining financial gap), sale return reversal, returned-batch condition/classification, deactivated/archived-stock workflows (clearance, offers, disposal, special resale), store-specific price overrides and price history, FEFO allocation once expiry-enabled inventory exists, and the invite-acceptance bootstrap function (named, same template as signup, not yet built out). Next up: folder structuring.
