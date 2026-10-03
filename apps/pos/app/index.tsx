@@ -1,5 +1,6 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { textStyle } from "@zenzoo/ui-native";
+import { Link } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 
 export default function HomeScreen() {
@@ -11,6 +12,12 @@ export default function HomeScreen() {
       <Text style={[textStyle("callout"), styles.subtitle, { color: colors.inkMuted }]}>
         Foundation is running. Product workflows are built feature by feature from here.
       </Text>
+      <Link
+        href="/style-guide"
+        style={[textStyle("callout"), { color: colors.accent, marginTop: spacing[4] }]}
+      >
+        View the style guide &rarr;
+      </Link>
     </View>
   );
 }
