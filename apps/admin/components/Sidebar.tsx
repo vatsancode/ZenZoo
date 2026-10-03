@@ -15,10 +15,11 @@ interface NavItem {
 // page that doesn't exist yet.
 const navItems: NavItem[] = [
   { label: "Dashboard", href: "/" },
+  { label: "Stocks", href: "/stocks" },
   { label: "Style guide", href: "/style-guide" },
 ];
 
-const comingSoon = ["Sales", "Inventory", "Purchases", "Customers", "Settings"];
+const comingSoon = ["Sales", "Purchases", "Customers", "Settings"];
 
 export default function Sidebar() {
   const { colors, spacing, radius } = useTheme();
