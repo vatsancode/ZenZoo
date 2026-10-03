@@ -18,6 +18,9 @@ export default function HomeScreen() {
       >
         View the style guide &rarr;
       </Link>
+      <Link href="/sign-in" style={[textStyle("callout"), { color: colors.accent }]}>
+        Sign in &rarr;
+      </Link>
     </View>
   );
 }

@@ -1,7 +1,7 @@
 # Design-system compliance rules
 
 For each rule: what to look for, and why it's worth catching. Current token names/values live in
-`packages/design-tokens/src/*` - confirm against those files, this document explains the *rules*,
+`packages/design-tokens/src/*` - confirm against those files, this document explains the _rules_,
 not the authoritative value list.
 
 ## 1. Color must come from `useTheme()`, never a literal
@@ -11,7 +11,7 @@ object returned by `useTheme()` (web: `@zenzoo/design-tokens`'s `useTheme`, nati
 re-exported through `@zenzoo/ui-native`). Flag:
 
 - A hex/rgb/hsl color literal anywhere in a component's style (`"#1c1c1e"`, `backgroundColor:
-  "white"`, etc.).
+"white"`, etc.).
 - A reference to a color token name that isn't in the current `ColorTokens` interface - this
   usually means either a typo or a leftover reference to a token that was renamed (older code in
   this repo used `primary`, `background`, `surface`, `textPrimary`, `textSecondary`,
@@ -55,7 +55,7 @@ what the spacing scale would otherwise suggest for that element.
 screens. A handful of one-off pixel values is how a layout drifts from generously-spaced to
 cramped without anyone deciding that on purpose.
 
-## 4. Radius must match what the element *is*, not just look right
+## 4. Radius must match what the element _is_, not just look right
 
 Current mapping (confirm against `packages/design-tokens/src/radius/index.ts`):
 
@@ -65,7 +65,7 @@ Current mapping (confirm against `packages/design-tokens/src/radius/index.ts`):
 - `radius.md` - inputs, selects, other contained form controls.
 - `radius.sm` - small chips, thumbnails, inline tags only.
 
-Flag a numeric radius literal, and flag a token used on the wrong *kind* of element (e.g.
+Flag a numeric radius literal, and flag a token used on the wrong _kind_ of element (e.g.
 `radius.lg` on a button, or `radius.sm` on a card) even when the number might look fine - the rule
 is about what the element is, not what looks acceptable in isolation. Mixing radius steps across
 sibling elements of the same kind (two cards on one screen with different radii) is also worth

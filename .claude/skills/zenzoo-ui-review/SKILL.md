@@ -9,7 +9,7 @@ This project has two sources of drift that are easy to introduce without noticin
 stops the code from compiling or running when they happen:
 
 1. **Visual drift** - a component reaches for a hardcoded hex color, a raw pixel number, or a
-   hand-written shadow instead of the design system's tokens. It looks *almost* right today, then
+   hand-written shadow instead of the design system's tokens. It looks _almost_ right today, then
    quietly stops matching everything else the moment the palette or spacing scale changes, and it
    won't follow light/dark mode at all.
 2. **Architectural drift** - business logic creeps into a screen or component, a service makes a
@@ -23,7 +23,7 @@ changed code against them.
 
 ## Before you start: read the live sources, not this file's memory of them
 
-Token names and values *will* change as the product grows. Don't rely on examples below as a fixed
+Token names and values _will_ change as the product grows. Don't rely on examples below as a fixed
 list - always check the real files first:
 
 - `packages/design-tokens/src/colors/index.ts` - the current `ColorTokens` interface is the

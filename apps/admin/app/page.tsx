@@ -31,6 +31,17 @@ export default function HomePage() {
         >
           View the style guide &rarr;
         </Link>
+        <Link
+          href="/sign-in"
+          style={{
+            ...textStyle("callout"),
+            color: colors.accent,
+            marginTop: spacing[2],
+            display: "block",
+          }}
+        >
+          Sign in &rarr;
+        </Link>
       </Card>
     </main>
   );

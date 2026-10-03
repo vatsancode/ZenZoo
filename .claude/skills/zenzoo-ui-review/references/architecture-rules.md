@@ -21,7 +21,7 @@ The folder rules below all exist to protect that one principle: so that "add a f
 - **`app/`** - navigation and routes only (Next.js App Router pages, Expo Router screens). A file
   here should primarily lay out components and wire them to data; it should not contain the actual
   business rules for what happens when, say, a sale is voided. Some direct state (`useState` for a
-  modal's open/closed state, a form's local value) is fine - the line is business *rules*
+  modal's open/closed state, a form's local value) is fine - the line is business _rules_
   (validation beyond basic form shape, calculations, anything that decides whether an action is
   allowed), not all local state.
 - **`components/`** - presentational, app-specific UI. These can and should use `@zenzoo/ui-web` /
