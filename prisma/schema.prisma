@@ -1,0 +1,614 @@
+// This file is generated from docs/db-design.md via `prisma db pull`
+// against a database the full DDL in that document has been applied to -
+// it is not hand-authored, and should not be hand-edited beyond cosmetic
+// model/field renames (`@map`/`@@map`) or the generator/datasource blocks.
+//
+// docs/db-design.md remains the actual source of truth for the schema
+// (tables, constraints, triggers, RLS, functions, the privilege/role
+// model). This file only mirrors what Prisma Client needs to generate a
+// type-safe client: tables, columns, indexes, and foreign keys. The
+// `///` comments Prisma attaches below call out exactly what it can't
+// represent (CHECK constraints, RLS) - see prisma/README.md for what that
+// means in practice and how to regenerate this file after a schema change.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model customer_credit_ledger {
+  id                           String                   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id                    String                   @db.Uuid
+  customer_id                  String                   @db.Uuid
+  store_id                     String                   @db.Uuid
+  sale_id                      String?                  @db.Uuid
+  sale_payment_id              String?                  @db.Uuid
+  entry_type                   String                   @db.VarChar(30)
+  amount                       Decimal                  @db.Decimal(12, 2)
+  created_by                   String                   @db.Uuid
+  created_at                   DateTime                 @default(now()) @db.Timestamptz(6)
+  reference                    String?                  @db.VarChar(100)
+  notes                        String?
+  reverses_entry_id            String?                  @db.Uuid
+  users                        users                    @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customers                    customers                @relation(fields: [tenant_id, customer_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "customer_credit_ledger_customer_fk")
+  customer_credit_ledger       customer_credit_ledger?  @relation("customer_credit_ledgerTocustomer_credit_ledger", fields: [tenant_id, reverses_entry_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "customer_credit_ledger_reverses_entry_fk")
+  other_customer_credit_ledger customer_credit_ledger[] @relation("customer_credit_ledgerTocustomer_credit_ledger")
+  sales                        sales?                   @relation(fields: [tenant_id, store_id, sale_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "customer_credit_ledger_sale_fk")
+  sale_payments                sale_payments?           @relation(fields: [tenant_id, sale_payment_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "customer_credit_ledger_sale_payment_fk")
+  stores                       stores                   @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "customer_credit_ledger_store_fk")
+  tenants                      tenants                  @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id], map: "customer_credit_ledger_tenant_id_id_unique")
+  @@index([tenant_id, customer_id, created_at], map: "idx_customer_credit_ledger_customer")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model customers {
+  id                     String                   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id              String                   @db.Uuid
+  name                   String                   @db.VarChar(200)
+  phone                  String?                  @db.VarChar(20)
+  email                  String?                  @db.VarChar(255)
+  address                String?
+  notes                  String?
+  status                 String                   @default("active") @db.VarChar(20)
+  created_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  customer_credit_ledger customer_credit_ledger[]
+  tenants                tenants                  @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  sales                  sales[]
+
+  @@unique([tenant_id, id], map: "customers_tenant_id_id_unique")
+  @@index([tenant_id, status], map: "idx_customers_tenant_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model inventory_batches {
+  id                    String                  @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id             String                  @db.Uuid
+  store_id              String                  @db.Uuid
+  variant_id            String                  @db.Uuid
+  purchase_item_id      String?                 @db.Uuid
+  sale_return_item_id   String?                 @unique(map: "inventory_batches_sale_return_item_unique") @db.Uuid
+  barcode               String                  @db.VarChar(64)
+  received_quantity     Int
+  available_quantity    Int                     @default(0)
+  unit_cost             Decimal                 @db.Decimal(12, 2)
+  received_at           DateTime                @default(now()) @db.Timestamptz(6)
+  created_at            DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime                @default(now()) @db.Timestamptz(6)
+  purchase_items        purchase_items?         @relation(fields: [tenant_id, store_id, purchase_item_id, variant_id], references: [tenant_id, store_id, id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "inventory_batches_purchase_item_fk")
+  sale_return_items     sale_return_items?      @relation(fields: [tenant_id, store_id, sale_return_item_id, variant_id], references: [tenant_id, store_id, id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "inventory_batches_sale_return_item_fk")
+  tenants               tenants                 @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variants              variants                @relation(fields: [tenant_id, store_id, variant_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "inventory_batches_variant_fk")
+  purchase_return_items purchase_return_items[]
+  sale_item_batches     sale_item_batches[]
+  stock_movements       stock_movements[]
+
+  @@unique([tenant_id, store_id, id, variant_id], map: "inventory_batches_movement_target_unique")
+  @@unique([tenant_id, barcode], map: "inventory_batches_tenant_barcode_unique")
+  @@index([tenant_id, purchase_item_id], map: "idx_inventory_batches_purchase_item")
+  @@index([tenant_id, store_id, variant_id, received_at], map: "idx_inventory_batches_store_variant")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model membership_store_access {
+  id                 String             @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id          String             @db.Uuid
+  membership_id      String             @db.Uuid
+  store_id           String             @db.Uuid
+  created_at         DateTime           @default(now()) @db.Timestamptz(6)
+  tenant_memberships tenant_memberships @relation(fields: [tenant_id, membership_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "membership_store_access_membership_fk")
+  stores             stores             @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "membership_store_access_store_fk")
+  tenants            tenants            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([membership_id, store_id], map: "membership_store_access_unique")
+  @@index([tenant_id, membership_id], map: "idx_membership_store_access_membership")
+  @@index([tenant_id, store_id], map: "idx_membership_store_access_store")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model payment_accounts {
+  id            String          @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id     String          @db.Uuid
+  store_id      String          @db.Uuid
+  name          String          @db.VarChar(200)
+  code          String          @db.VarChar(50)
+  status        String          @default("active") @db.VarChar(20)
+  created_at    DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime        @default(now()) @db.Timestamptz(6)
+  stores        stores          @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "payment_accounts_store_fk")
+  tenants       tenants         @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  sale_payments sale_payments[]
+
+  @@unique([tenant_id, store_id, code], map: "payment_accounts_tenant_store_code_unique")
+  @@unique([tenant_id, store_id, id], map: "payment_accounts_tenant_store_id_unique")
+  @@index([tenant_id, store_id, status], map: "idx_payment_accounts_store_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model payment_methods {
+  id                 String          @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id          String          @db.Uuid
+  name               String          @db.VarChar(100)
+  code               String          @db.VarChar(30)
+  is_customer_credit Boolean         @default(false)
+  status             String          @default("active") @db.VarChar(20)
+  created_at         DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime        @default(now()) @db.Timestamptz(6)
+  tenants            tenants         @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  sale_payments      sale_payments[]
+
+  @@unique([tenant_id, code], map: "payment_methods_tenant_code_unique")
+  @@unique([tenant_id, id], map: "payment_methods_tenant_id_id_unique")
+  @@index([tenant_id, status], map: "idx_payment_methods_tenant_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model purchase_items {
+  id                    String                  @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id             String                  @db.Uuid
+  store_id              String                  @db.Uuid
+  purchase_id           String                  @db.Uuid
+  variant_id            String                  @db.Uuid
+  quantity              Int
+  unit_cost             Decimal                 @db.Decimal(12, 2)
+  discount_amount       Decimal                 @default(0) @db.Decimal(12, 2)
+  tax_amount            Decimal                 @default(0) @db.Decimal(12, 2)
+  line_total            Decimal                 @db.Decimal(14, 2)
+  created_at            DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime                @default(now()) @db.Timestamptz(6)
+  inventory_batches     inventory_batches[]
+  purchases             purchases               @relation(fields: [tenant_id, store_id, purchase_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "purchase_items_purchase_fk")
+  tenants               tenants                 @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variants              variants                @relation(fields: [tenant_id, variant_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "purchase_items_variant_fk")
+  purchase_return_items purchase_return_items[]
+
+  @@unique([tenant_id, store_id, id, variant_id], map: "purchase_items_batch_target_unique")
+  @@index([purchase_id], map: "idx_purchase_items_purchase")
+  @@index([tenant_id, variant_id], map: "idx_purchase_items_variant")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model purchase_return_items {
+  id                 String            @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id          String            @db.Uuid
+  store_id           String            @db.Uuid
+  variant_id         String            @db.Uuid
+  purchase_return_id String            @db.Uuid
+  purchase_item_id   String            @db.Uuid
+  batch_id           String            @db.Uuid
+  quantity           Int
+  unit_cost          Decimal           @db.Decimal(12, 2)
+  tax_amount         Decimal           @default(0) @db.Decimal(12, 2)
+  line_total         Decimal           @db.Decimal(14, 2)
+  created_at         DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime          @default(now()) @db.Timestamptz(6)
+  inventory_batches  inventory_batches @relation(fields: [tenant_id, store_id, batch_id, variant_id], references: [tenant_id, store_id, id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "purchase_return_items_batch_fk")
+  purchase_items     purchase_items    @relation(fields: [tenant_id, store_id, purchase_item_id, variant_id], references: [tenant_id, store_id, id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "purchase_return_items_purchase_item_fk")
+  purchase_returns   purchase_returns  @relation(fields: [tenant_id, store_id, purchase_return_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "purchase_return_items_return_fk")
+  tenants            tenants           @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([batch_id], map: "idx_purchase_return_items_batch")
+  @@index([purchase_item_id], map: "idx_purchase_return_items_purchase_item")
+  @@index([purchase_return_id], map: "idx_purchase_return_items_return")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model purchase_returns {
+  id                    String                  @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id             String                  @db.Uuid
+  store_id              String                  @db.Uuid
+  purchase_id           String                  @db.Uuid
+  return_date           DateTime                @default(dbgenerated("CURRENT_DATE")) @db.Date
+  reason                String?                 @db.VarChar(500)
+  status                String                  @default("draft") @db.VarChar(20)
+  created_by            String                  @db.Uuid
+  created_at            DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime                @default(now()) @db.Timestamptz(6)
+  purchase_return_items purchase_return_items[]
+  users                 users                   @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchases             purchases               @relation(fields: [tenant_id, store_id, purchase_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "purchase_returns_purchase_fk")
+  tenants               tenants                 @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, store_id, id], map: "purchase_returns_tenant_store_id_unique")
+  @@index([tenant_id, purchase_id], map: "idx_purchase_returns_purchase")
+  @@index([tenant_id, store_id, return_date(sort: Desc)], map: "idx_purchase_returns_store_date")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model purchases {
+  id                String             @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id         String             @db.Uuid
+  store_id          String             @db.Uuid
+  supplier_id       String             @db.Uuid
+  reference_number  String?            @db.VarChar(100)
+  purchase_date     DateTime           @default(dbgenerated("CURRENT_DATE")) @db.Date
+  status            String             @default("draft") @db.VarChar(20)
+  subtotal_amount   Decimal            @default(0) @db.Decimal(14, 2)
+  discount_amount   Decimal            @default(0) @db.Decimal(14, 2)
+  tax_amount        Decimal            @default(0) @db.Decimal(14, 2)
+  adjustment_amount Decimal            @default(0) @db.Decimal(14, 2)
+  total_amount      Decimal            @default(0) @db.Decimal(14, 2)
+  received_at       DateTime?          @db.Timestamptz(6)
+  created_at        DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime           @default(now()) @db.Timestamptz(6)
+  purchase_items    purchase_items[]
+  purchase_returns  purchase_returns[]
+  stores            stores             @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "purchases_store_fk")
+  suppliers         suppliers          @relation(fields: [tenant_id, supplier_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "purchases_supplier_fk")
+  tenants           tenants            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, store_id, id], map: "purchases_tenant_store_id_unique")
+  @@index([tenant_id, store_id, purchase_date(sort: Desc)], map: "idx_purchases_store_date")
+  @@index([tenant_id, supplier_id], map: "idx_purchases_supplier")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model sale_item_batches {
+  id                String              @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id         String              @db.Uuid
+  store_id          String              @db.Uuid
+  variant_id        String              @db.Uuid
+  sale_item_id      String              @db.Uuid
+  batch_id          String              @db.Uuid
+  quantity          Int
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  inventory_batches inventory_batches   @relation(fields: [tenant_id, store_id, batch_id, variant_id], references: [tenant_id, store_id, id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "sale_item_batches_batch_fk")
+  sale_items        sale_items          @relation(fields: [tenant_id, store_id, sale_item_id, variant_id], references: [tenant_id, store_id, id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "sale_item_batches_sale_item_fk")
+  tenants           tenants             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  sale_return_items sale_return_items[]
+
+  @@unique([tenant_id, store_id, id, sale_item_id, variant_id], map: "sale_item_batches_return_target_unique")
+  @@index([tenant_id, store_id, batch_id], map: "idx_sale_item_batches_batch")
+  @@index([sale_item_id], map: "idx_sale_item_batches_sale_item")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model sale_items {
+  id                String              @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id         String              @db.Uuid
+  store_id          String              @db.Uuid
+  sale_id           String              @db.Uuid
+  variant_id        String              @db.Uuid
+  quantity          Int
+  unit_price        Decimal             @db.Decimal(12, 2)
+  discount_amount   Decimal             @default(0) @db.Decimal(12, 2)
+  tax_amount        Decimal             @default(0) @db.Decimal(12, 2)
+  line_total        Decimal             @db.Decimal(14, 2)
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  sale_item_batches sale_item_batches[]
+  sales             sales               @relation(fields: [tenant_id, store_id, sale_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sale_items_sale_fk")
+  tenants           tenants             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variants          variants            @relation(fields: [tenant_id, variant_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sale_items_variant_fk")
+  sale_return_items sale_return_items[]
+
+  @@unique([tenant_id, store_id, id, variant_id], map: "sale_items_batch_target_unique")
+  @@index([sale_id], map: "idx_sale_items_sale")
+  @@index([tenant_id, variant_id], map: "idx_sale_items_variant")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model sale_payments {
+  id                     String                   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id              String                   @db.Uuid
+  store_id               String                   @db.Uuid
+  sale_id                String                   @db.Uuid
+  payment_method_id      String                   @db.Uuid
+  payment_account_id     String?                  @db.Uuid
+  amount                 Decimal                  @db.Decimal(12, 2)
+  received_at            DateTime                 @default(now()) @db.Timestamptz(6)
+  reference              String?                  @db.VarChar(100)
+  notes                  String?
+  created_by             String                   @db.Uuid
+  created_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  customer_credit_ledger customer_credit_ledger[]
+  users                  users                    @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  payment_accounts       payment_accounts?        @relation(fields: [tenant_id, store_id, payment_account_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sale_payments_payment_account_fk")
+  payment_methods        payment_methods          @relation(fields: [tenant_id, payment_method_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sale_payments_payment_method_fk")
+  sales                  sales                    @relation(fields: [tenant_id, store_id, sale_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sale_payments_sale_fk")
+  tenants                tenants                  @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id], map: "sale_payments_tenant_id_id_unique")
+  @@index([tenant_id, payment_method_id], map: "idx_sale_payments_method")
+  @@index([tenant_id, store_id, received_at], map: "idx_sale_payments_received_at")
+  @@index([sale_id], map: "idx_sale_payments_sale")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model sale_return_items {
+  id                 String              @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id          String              @db.Uuid
+  store_id           String              @db.Uuid
+  variant_id         String              @db.Uuid
+  sale_return_id     String              @db.Uuid
+  sale_item_id       String              @db.Uuid
+  sale_item_batch_id String              @db.Uuid
+  quantity           Int
+  notes              String?             @db.VarChar(500)
+  created_at         DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime            @default(now()) @db.Timestamptz(6)
+  inventory_batches  inventory_batches[]
+  sale_item_batches  sale_item_batches   @relation(fields: [tenant_id, store_id, sale_item_batch_id, sale_item_id, variant_id], references: [tenant_id, store_id, id, sale_item_id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "sale_return_items_batch_fk")
+  sale_returns       sale_returns        @relation(fields: [tenant_id, store_id, sale_return_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sale_return_items_return_fk")
+  sale_items         sale_items          @relation(fields: [tenant_id, store_id, sale_item_id, variant_id], references: [tenant_id, store_id, id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "sale_return_items_sale_item_fk")
+  tenants            tenants             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, store_id, id, variant_id], map: "sale_return_items_target_unique")
+  @@index([tenant_id, store_id, sale_item_batch_id], map: "idx_sale_return_items_batch")
+  @@index([sale_return_id], map: "idx_sale_return_items_return")
+  @@index([tenant_id, sale_item_id], map: "idx_sale_return_items_sale_item")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model sale_returns {
+  id                String              @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id         String              @db.Uuid
+  store_id          String              @db.Uuid
+  sale_id           String              @db.Uuid
+  return_number     String?             @db.VarChar(50)
+  status            String              @default("draft") @db.VarChar(20)
+  reason            String?             @db.VarChar(500)
+  created_by        String              @db.Uuid
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  sale_return_items sale_return_items[]
+  users             users               @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  sales             sales               @relation(fields: [tenant_id, store_id, sale_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sale_returns_sale_fk")
+  tenants           tenants             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, store_id, id], map: "sale_returns_tenant_store_id_unique")
+  @@index([tenant_id, sale_id], map: "idx_sale_returns_sale")
+  @@index([tenant_id, store_id, status], map: "idx_sale_returns_status")
+  @@index([tenant_id, store_id, created_at(sort: Desc)], map: "idx_sale_returns_store_created")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model sales {
+  id                     String                   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id              String                   @db.Uuid
+  store_id               String                   @db.Uuid
+  customer_id            String?                  @db.Uuid
+  sale_number            String?                  @db.VarChar(50)
+  sold_at                DateTime                 @default(now()) @db.Timestamptz(6)
+  subtotal_amount        Decimal                  @default(0) @db.Decimal(14, 2)
+  discount_amount        Decimal                  @default(0) @db.Decimal(14, 2)
+  tax_amount             Decimal                  @default(0) @db.Decimal(14, 2)
+  total_amount           Decimal                  @default(0) @db.Decimal(14, 2)
+  status                 String                   @default("draft") @db.VarChar(20)
+  void_reason            String?
+  created_by             String                   @db.Uuid
+  created_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  customer_credit_ledger customer_credit_ledger[]
+  sale_items             sale_items[]
+  sale_payments          sale_payments[]
+  sale_returns           sale_returns[]
+  users                  users                    @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customers              customers?               @relation(fields: [tenant_id, customer_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sales_customer_fk")
+  stores                 stores                   @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sales_store_fk")
+  tenants                tenants                  @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, store_id, id], map: "sales_tenant_store_id_unique")
+  @@index([tenant_id, store_id, status], map: "idx_sales_status")
+  @@index([tenant_id, store_id, sold_at(sort: Desc)], map: "idx_sales_store_sold_at")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model sellables {
+  id         String     @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id  String     @db.Uuid
+  store_id   String     @db.Uuid
+  name       String     @db.VarChar(200)
+  kind       String     @db.VarChar(20)
+  status     String     @default("active") @db.VarChar(20)
+  created_at DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at DateTime   @default(now()) @db.Timestamptz(6)
+  stores     stores     @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sellables_store_fk")
+  tenants    tenants    @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variants   variants[]
+
+  @@unique([tenant_id, id], map: "sellables_tenant_id_id_unique")
+  @@unique([tenant_id, store_id, id], map: "sellables_tenant_store_id_unique")
+  @@index([tenant_id, store_id], map: "idx_sellables_store")
+  @@index([tenant_id, store_id, status], map: "idx_sellables_store_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model stock_movements {
+  id                String            @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id         String            @db.Uuid
+  store_id          String            @db.Uuid
+  variant_id        String            @db.Uuid
+  batch_id          String            @db.Uuid
+  movement_type     String            @db.VarChar(30)
+  quantity          Int
+  reference_type    String?           @db.VarChar(30)
+  reference_id      String?           @db.Uuid
+  reason            String?           @db.VarChar(500)
+  occurred_at       DateTime          @default(now()) @db.Timestamptz(6)
+  created_by        String            @db.Uuid
+  created_at        DateTime          @default(now()) @db.Timestamptz(6)
+  inventory_batches inventory_batches @relation(fields: [tenant_id, store_id, batch_id, variant_id], references: [tenant_id, store_id, id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "stock_movements_batch_fk")
+  users             users             @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  tenants           tenants           @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([tenant_id, store_id, batch_id, occurred_at], map: "idx_stock_movements_batch")
+  @@index([tenant_id, occurred_at], map: "idx_stock_movements_occurred_at")
+  @@index([tenant_id, store_id, variant_id, occurred_at], map: "idx_stock_movements_variant")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model stores {
+  id                      String                    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id               String                    @db.Uuid
+  name                    String                    @db.VarChar(200)
+  code                    String                    @db.VarChar(50)
+  status                  String                    @default("active") @db.VarChar(20)
+  timezone                String?                   @db.VarChar(64)
+  currency                String?                   @db.Char(3)
+  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  customer_credit_ledger  customer_credit_ledger[]
+  membership_store_access membership_store_access[]
+  payment_accounts        payment_accounts[]
+  purchases               purchases[]
+  sales                   sales[]
+  sellables               sellables[]
+  tenants                 tenants                   @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, code], map: "stores_tenant_code_unique")
+  @@unique([tenant_id, id], map: "stores_tenant_id_id_unique")
+  @@index([status], map: "idx_stores_status")
+  @@index([tenant_id], map: "idx_stores_tenant_id")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model suppliers {
+  id         String      @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id  String      @db.Uuid
+  name       String      @db.VarChar(200)
+  phone      String?     @db.VarChar(20)
+  email      String?     @db.VarChar(255)
+  tax_id     String?     @db.VarChar(50)
+  status     String      @default("active") @db.VarChar(20)
+  created_at DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at DateTime    @default(now()) @db.Timestamptz(6)
+  purchases  purchases[]
+  tenants    tenants     @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id], map: "suppliers_tenant_id_id_unique")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model tenant_memberships {
+  id                      String                    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id               String                    @db.Uuid
+  user_id                 String?                   @db.Uuid
+  invited_email           String?                   @db.VarChar(255)
+  role                    String                    @db.VarChar(20)
+  status                  String                    @default("invited") @db.VarChar(20)
+  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  membership_store_access membership_store_access[]
+  tenants                 tenants                   @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                   users?                    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id], map: "tenant_memberships_tenant_id_id_unique")
+  @@index([tenant_id], map: "idx_tenant_memberships_tenant_id")
+  @@index([user_id], map: "idx_tenant_memberships_user_id")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model tenants {
+  id                      String                    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  name                    String                    @db.VarChar(200)
+  slug                    String                    @unique @db.VarChar(100)
+  status                  String                    @db.VarChar(20)
+  default_currency        String                    @default("INR") @db.Char(3)
+  default_timezone        String                    @default("Asia/Kolkata") @db.VarChar(64)
+  country_code            String                    @default("IN") @db.Char(2)
+  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  customer_credit_ledger  customer_credit_ledger[]
+  customers               customers[]
+  inventory_batches       inventory_batches[]
+  membership_store_access membership_store_access[]
+  payment_accounts        payment_accounts[]
+  payment_methods         payment_methods[]
+  purchase_items          purchase_items[]
+  purchase_return_items   purchase_return_items[]
+  purchase_returns        purchase_returns[]
+  purchases               purchases[]
+  sale_item_batches       sale_item_batches[]
+  sale_items              sale_items[]
+  sale_payments           sale_payments[]
+  sale_return_items       sale_return_items[]
+  sale_returns            sale_returns[]
+  sales                   sales[]
+  sellables               sellables[]
+  stock_movements         stock_movements[]
+  stores                  stores[]
+  suppliers               suppliers[]
+  tenant_memberships      tenant_memberships[]
+  variants                variants[]
+
+  @@index([status], map: "idx_tenants_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model users {
+  id                     String                   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  email                  String                   @unique @db.VarChar(255)
+  phone                  String?                  @db.VarChar(20)
+  first_name             String                   @db.VarChar(100)
+  last_name              String?                  @db.VarChar(100)
+  status                 String                   @default("active") @db.VarChar(20)
+  created_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  customer_credit_ledger customer_credit_ledger[]
+  purchase_returns       purchase_returns[]
+  sale_payments          sale_payments[]
+  sale_returns           sale_returns[]
+  sales                  sales[]
+  stock_movements        stock_movements[]
+  tenant_memberships     tenant_memberships[]
+
+  @@index([status], map: "idx_users_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model variants {
+  id                String              @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id         String              @db.Uuid
+  store_id          String              @db.Uuid
+  sellable_id       String              @db.Uuid
+  name              String              @db.VarChar(200)
+  sku               String?             @db.VarChar(64)
+  base_price        Decimal             @db.Decimal(12, 2)
+  status            String              @default("active") @db.VarChar(20)
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  inventory_batches inventory_batches[]
+  purchase_items    purchase_items[]
+  sale_items        sale_items[]
+  sellables         sellables           @relation(fields: [tenant_id, store_id, sellable_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "variants_sellable_fk")
+  tenants           tenants             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id], map: "variants_tenant_id_id_unique")
+  @@unique([tenant_id, store_id, id], map: "variants_tenant_store_id_unique")
+  @@index([tenant_id, sellable_id], map: "idx_variants_sellable")
+  @@index([tenant_id, store_id], map: "idx_variants_store")
+  @@index([tenant_id, store_id, status], map: "idx_variants_store_status")
+}
