@@ -15,11 +15,19 @@ interface NavItem {
 // page that doesn't exist yet.
 const navItems: NavItem[] = [
   { label: "Dashboard", href: "/" },
+  { label: "Vendors", href: "/vendors" },
+  { label: "Purchases", href: "/purchases" },
+  { label: "Expenses", href: "/expenses" },
+  { label: "Catalogue", href: "/catalogue" },
+  { label: "Point of Sale", href: "/point-of-sale" },
+  { label: "Sales", href: "/sales" },
+  { label: "Customers", href: "/customers" },
   { label: "Stocks", href: "/stocks" },
+  { label: "Settings", href: "/settings" },
   { label: "Style guide", href: "/style-guide" },
 ];
 
-const comingSoon = ["Sales", "Purchases", "Customers", "Settings"];
+const comingSoon: string[] = [];
 
 export default function Sidebar() {
   const { colors, spacing, radius } = useTheme();
@@ -30,6 +38,11 @@ export default function Sidebar() {
       style={{
         width: 240,
         flex: "none",
+        position: "sticky",
+        top: 0,
+        height: "100vh",
+        overflowY: "auto",
+        boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
         gap: spacing[1],
@@ -50,7 +63,8 @@ export default function Sidebar() {
       </div>
 
       {navItems.map((item) => {
-        const active = pathname === item.href;
+        // Sub-pages (e.g. /stocks/<id>/variants) keep their parent section highlighted.
+        const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
         return (
           <Link
             key={item.href}
@@ -69,27 +83,31 @@ export default function Sidebar() {
         );
       })}
 
-      <div
-        style={{
-          ...textStyle("caption"),
-          color: colors.inkFaint,
-          padding: `${spacing[4]}px ${spacing[3]}px ${spacing[2]}px`,
-        }}
-      >
-        COMING SOON
-      </div>
-      {comingSoon.map((label) => (
-        <div
-          key={label}
-          style={{
-            ...textStyle("body"),
-            color: colors.inkFaint,
-            padding: `${spacing[2]}px ${spacing[3]}px`,
-          }}
-        >
-          {label}
-        </div>
-      ))}
+      {comingSoon.length > 0 ? (
+        <>
+          <div
+            style={{
+              ...textStyle("caption"),
+              color: colors.inkFaint,
+              padding: `${spacing[4]}px ${spacing[3]}px ${spacing[2]}px`,
+            }}
+          >
+            COMING SOON
+          </div>
+          {comingSoon.map((label) => (
+            <div
+              key={label}
+              style={{
+                ...textStyle("body"),
+                color: colors.inkFaint,
+                padding: `${spacing[2]}px ${spacing[3]}px`,
+              }}
+            >
+              {label}
+            </div>
+          ))}
+        </>
+      ) : null}
 
       <div style={{ flex: 1 }} />
 

@@ -5,3 +5,4 @@ export * from "./radius";
 export * from "./shadows";
 export * from "./theme";
 export * from "./styleGuideContent";
+export * from "./chart";

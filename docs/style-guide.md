@@ -127,11 +127,19 @@ Shared, cross-platform components live in `@zenzoo/ui-web` (React) and
 |---|---|---|---|
 | Button | ✅ | ✅ | `primary` / `secondary` / `danger`, always a pill, 44px tall |
 | Input | ✅ | ✅ | Filled (no border at rest), focus ring in `accent`, error state in `danger` |
-| Select | ✅ | — | Filled field + chevron, floating option panel |
+| Select | ✅ | — | Filled field + chevron; the open list is our own floating panel (`radius-md`, `shadow-md`) with a search box (on by default, `searchable={false}` to hide) and keyboard support, not the browser's. Takes an `options` array. `creatable` adds a "+ Add new…" choice that lets the user type a value |
+| DatePicker | ✅ | — | Date field that looks like an Input (value shown as "4 Oct 2026", calendar icon) and opens our own month grid (`radius-lg`, `shadow-md`), not the browser's. Monday-first, selected day filled `accent`, today ringed in `accent`, neighbouring months faded. The month title opens a month grid, and its year opens a 12-year grid, so far-off dates take two clicks. Arrow keys move between days, Page Up/Down change month, Esc backs out a level. Value is an ISO `YYYY-MM-DD` string. `clearable={false}` for a required date, `min`/`max` limit the range, `align="right"` for fields near the right edge |
+| Switch | ✅ | — | On/off toggle, pill track (`accent` when on, `border` when off), 48×28px, `role="switch"` |
+| Chips | ✅ | — | Pill choices where one can be picked (reasons, filters): `radius-full`, 36px tall, picked chip gets an `accent` outline and a `surfaceSunken` fill. Arrow keys move the choice. `columns` lays them out as an even grid (e.g. 3 columns as a segmented control) |
+| Pagination | ✅ | — | Sits under a table: "Showing 1-10 of 111", an optional "Rows per page" picker, previous/next and page numbers with gaps (…). The current page is a `surfaceSunken` pill |
+| Icon, IconButton | ✅ | — | Outline icons (edit, copy, check, print, close, back, calendar) drawn in the text colour. `IconButton` is a 32px round button for row and header actions; `tone="success"` for a brief confirmation tick |
+| Notice | ✅ | — | A short confirmation after an action: `surfaceSunken`, `radius-md`, `space-4` padding, announced to screen readers |
+| Tabs | ✅ | — | Text tabs on a hairline; the active tab is `ink` + semibold with a 2px `accent` underline. Arrow keys move between tabs |
 | Card | ✅ | ✅ | `radius-lg`, `shadow-sm`, `space-6` padding |
-| Table | ✅ | — | Hairline row dividers, uppercase caption headers, optional column alignment |
+| Table | ✅ | — | Columns share the width equally unless a column sets its own `width`, hairline row dividers, uppercase caption headers, optional column alignment, optional clickable rows (`onRowClick`) |
 | Badge | ✅ | — | Neutral pill + a colored status dot, never a tinted background |
 | Modal | ✅ | ✅ | `radius-xl`, `shadow-lg`, `space-8` padding |
+| Sheet | ✅ | — | Right-edge side panel for add/edit tasks. `radius-xl` on its inner corners, `shadow-lg`, `space-8` padding, 440px wide, light scrim, Esc or scrim click closes. `title` adds the heading and a close button; optional `footer` stays pinned at the bottom while the content scrolls |
 | List | — | ✅ | `FlatList` wrapper with hairline separators |
 
 A live, interactive reference of all of the above is at `/style-guide` in

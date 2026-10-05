@@ -8,7 +8,24 @@ import {
   typeSampleLine,
   useTheme,
 } from "@zenzoo/design-tokens";
-import { Badge, Button, Card, Input, Modal, Select, Table, textStyle } from "@zenzoo/ui-web";
+import {
+  Badge,
+  Button,
+  Card,
+  Chips,
+  DatePicker,
+  IconButton,
+  Input,
+  Modal,
+  Notice,
+  Pagination,
+  Select,
+  Sheet,
+  Switch,
+  Table,
+  Tabs,
+  textStyle,
+} from "@zenzoo/ui-web";
 import { useState, type ReactNode } from "react";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -43,9 +60,23 @@ function ColorSwatch({ name, value }: { name: string; value: string }) {
   );
 }
 
+const categoryChoices = [
+  { value: "beverages", label: "Beverages" },
+  { value: "bakery", label: "Bakery" },
+  { value: "produce", label: "Produce" },
+];
+
 export default function StyleGuidePage() {
   const { colors, radius, spacing, elevation } = useTheme();
   const [modalOpen, setModalOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [switchOn, setSwitchOn] = useState(true);
+  const [date, setDate] = useState("2026-10-04");
+  const [tab, setTab] = useState("current");
+  const [chip, setChip] = useState("damaged");
+  const [pageNumber, setPageNumber] = useState(3);
+  const [pageSize, setPageSize] = useState(10);
+  const [category, setCategory] = useState("beverages");
 
   return (
     <main style={{ padding: spacing[10], maxWidth: 960, marginInline: "auto" }}>
@@ -192,11 +223,23 @@ export default function StyleGuidePage() {
             <Input defaultValue={sampleProduct.sku} disabled />
           </div>
           <div style={{ width: 220 }}>
-            <Select defaultValue="beverages">
-              <option value="beverages">Beverages</option>
-              <option value="bakery">Bakery</option>
-              <option value="produce">Produce</option>
-            </Select>
+            <Select
+              options={categoryChoices}
+              value={category}
+              onChange={setCategory}
+              aria-label="Category"
+            />
+          </div>
+          <div style={{ width: 220 }}>
+            <Select
+              options={categoryChoices}
+              value={category}
+              onChange={setCategory}
+              placeholder="Pick or add"
+              creatable
+              createLabel="Add new category"
+              aria-label="Category (can add new)"
+            />
           </div>
         </div>
       </Section>
@@ -270,6 +313,93 @@ export default function StyleGuidePage() {
             </Button>
           </div>
         </Modal>
+      </Section>
+
+      <Section title="Tabs">
+        <Tabs
+          aria-label="Stock sections"
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { id: "current", label: "Current stock" },
+            { id: "purchases", label: "Purchase history" },
+            { id: "consumption", label: "Consumption" },
+          ]}
+        />
+      </Section>
+
+      <Section title="Pagination">
+        <Pagination
+          page={pageNumber}
+          pageSize={pageSize}
+          total={111}
+          onPageChange={setPageNumber}
+          pageSizeOptions={[10, 25, 50]}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPageNumber(1);
+          }}
+        />
+      </Section>
+
+      <Section title="Chips">
+        <Chips
+          aria-label="Reason"
+          value={chip}
+          onChange={setChip}
+          options={[
+            { value: "damaged", label: "Damaged" },
+            { value: "expired", label: "Expired or old" },
+            { value: "lost", label: "Lost or stolen" },
+          ]}
+        />
+      </Section>
+
+      <Section title="Switch">
+        <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
+          <Switch checked={switchOn} onChange={setSwitchOn} aria-label="Has variants" />
+          <span style={{ ...textStyle("body"), color: colors.ink }}>
+            Has variants: {switchOn ? "on" : "off"}
+          </span>
+        </div>
+      </Section>
+
+      <Section title="Date picker">
+        <div style={{ maxWidth: 320, display: "flex", flexDirection: "column", gap: spacing[3] }}>
+          <DatePicker value={date} onChange={setDate} aria-label="Payment date" />
+          <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
+            Click the month to jump to another month or year. Clear and Today sit at the bottom.
+          </span>
+        </div>
+      </Section>
+
+      <Section title="Icon button">
+        <div style={{ display: "flex", gap: spacing[2] }}>
+          <IconButton icon="edit" label="Edit" onClick={() => {}} />
+          <IconButton icon="copy" label="Copy" onClick={() => {}} />
+          <IconButton icon="print" label="Print" onClick={() => {}} />
+          <IconButton icon="check" label="Done" tone="success" onClick={() => {}} />
+        </div>
+      </Section>
+
+      <Section title="Notice">
+        <Notice>12 pcs added to batch B260920.</Notice>
+      </Section>
+
+      <Section title="Sheet">
+        <Button variant="secondary" onClick={() => setSheetOpen(true)}>
+          Open side panel
+        </Button>
+        <Sheet open={sheetOpen} onClose={() => setSheetOpen(false)} title="Side panel">
+          <p style={{ ...textStyle("callout"), color: colors.inkMuted }}>
+            For add and edit tasks that sit beside the page instead of interrupting it.
+          </p>
+          <div style={{ marginTop: spacing[6] }}>
+            <Button variant="secondary" onClick={() => setSheetOpen(false)}>
+              Close
+            </Button>
+          </div>
+        </Sheet>
       </Section>
     </main>
   );

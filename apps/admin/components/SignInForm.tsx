@@ -2,11 +2,13 @@
 
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Card, Input, textStyle } from "@zenzoo/ui-web";
+import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { signIn } from "../lib/auth";
 
 export default function SignInForm() {
   const { colors, spacing } = useTheme();
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -24,7 +26,9 @@ export default function SignInForm() {
     setLoading(false);
     if (result.error) {
       setError(result.error);
+      return;
     }
+    router.push("/");
   }
 
   return (

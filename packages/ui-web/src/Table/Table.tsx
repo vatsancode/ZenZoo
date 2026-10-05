@@ -7,26 +7,36 @@ export interface TableColumn<Row> {
   header: ReactNode;
   render: (row: Row) => ReactNode;
   align?: "left" | "right";
+  /** Any CSS width (e.g. "30%", "80px"). Columns without one share the remaining width equally. */
+  width?: string;
 }
 
 export interface TableProps<Row> {
   columns: TableColumn<Row>[];
   rows: Row[];
   getRowKey: (row: Row) => string;
+  /** Makes each row clickable (and reachable with Enter from the keyboard). */
+  onRowClick?: (row: Row) => void;
 }
 
-export function Table<Row>({ columns, rows, getRowKey }: TableProps<Row>) {
+export function Table<Row>({ columns, rows, getRowKey, onRowClick }: TableProps<Row>) {
   const { colors, radius, spacing } = useTheme();
 
   return (
     <table
       style={{
         width: "100%",
+        tableLayout: "fixed",
         borderCollapse: "collapse",
         backgroundColor: colors.surfaceRaised,
         borderRadius: radius.lg,
       }}
     >
+      <colgroup>
+        {columns.map((column) => (
+          <col key={column.key} style={column.width ? { width: column.width } : undefined} />
+        ))}
+      </colgroup>
       <thead>
         <tr>
           {columns.map((column) => (
@@ -48,7 +58,19 @@ export function Table<Row>({ columns, rows, getRowKey }: TableProps<Row>) {
       </thead>
       <tbody>
         {rows.map((row, index) => (
-          <tr key={getRowKey(row)}>
+          <tr
+            key={getRowKey(row)}
+            onClick={onRowClick ? () => onRowClick(row) : undefined}
+            onKeyDown={
+              onRowClick
+                ? (event) => {
+                    if (event.key === "Enter" && event.target === event.currentTarget) onRowClick(row);
+                  }
+                : undefined
+            }
+            tabIndex={onRowClick ? 0 : undefined}
+            style={onRowClick ? { cursor: "pointer" } : undefined}
+          >
             {columns.map((column) => (
               <td
                 key={column.key}
