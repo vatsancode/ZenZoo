@@ -1,7 +1,18 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Button, Card, Icon, IconButton, Input, Modal, Notice, textStyle } from "@zenzoo/ui-web";
+import {
+  Badge,
+  Button,
+  Card,
+  Icon,
+  IconButton,
+  Input,
+  Modal,
+  Notice,
+  Switch,
+  textStyle,
+} from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
 import {
   accountMovements,
@@ -10,6 +21,7 @@ import {
   editAccount,
   listAccounts,
   removeAccount,
+  setAccountDisabled,
   type Account,
   type Movement,
 } from "../lib/accounts";
@@ -127,7 +139,18 @@ export default function AccountsSettings() {
                 <Icon name="bank" size={24} />
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ ...textStyle("headline"), color: colors.ink }}>{account.name}</div>
+                <div
+                  style={{
+                    ...textStyle("headline"),
+                    color: account.disabled ? colors.inkMuted : colors.ink,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: spacing[3],
+                  }}
+                >
+                  {account.name}
+                  {account.disabled ? <Badge tone="neutral">Disabled</Badge> : null}
+                </div>
                 <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
                   <span style={textStyle("dataSmall")}>{account.id}</span> · {count}{" "}
                   {count === 1 ? "transaction" : "transactions"}
@@ -141,7 +164,25 @@ export default function AccountsSettings() {
                   Opened with {formatPrice(account.opening)}
                 </div>
               </div>
-              <div style={{ display: "flex", gap: spacing[1] }}>
+              <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
+                <Switch
+                  checked={!account.disabled}
+                  aria-label={
+                    account.disabled ? `Turn ${account.name} on` : `Turn ${account.name} off`
+                  }
+                  onChange={(on) => {
+                    const error = setAccountDisabled(account.id, !on);
+                    if (error) setNotice(error);
+                    else {
+                      setNotice(
+                        on
+                          ? `${account.name} is on again.`
+                          : `${account.name} is off. It keeps its history and balance but isn't offered for new payments.`,
+                      );
+                      void reload();
+                    }
+                  }}
+                />
                 <IconButton
                   icon="edit"
                   label={`Edit ${account.name}`}

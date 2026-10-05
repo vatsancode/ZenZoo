@@ -17,10 +17,13 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   addPurchase,
   lineTotal,
+  getPurchase,
   listPurchases,
   purchaseTotals,
   referenceClash,
   savePurchases,
+  updatePurchase,
+  type Purchase,
   type PurchaseItem,
   type PurchaseStatus,
 } from "../lib/purchases";
@@ -161,7 +164,8 @@ function SummaryLine({
   );
 }
 
-export default function PurchaseForm() {
+/** Records a purchase. With `purchaseId` it edits that draft instead of starting a new one. */
+export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
   const { colors, radius, spacing } = useTheme();
   const router = useRouter();
 
@@ -187,10 +191,54 @@ export default function PurchaseForm() {
   const [variantFor, setVariantFor] = useState<Product | null>(null);
   const [referenceError, setReferenceError] = useState<string | null>(null);
 
+  // undefined while the draft being edited loads; null when it can't be edited.
+  const [editing, setEditing] = useState<Purchase | null | undefined>(
+    purchaseId ? undefined : null,
+  );
+
   useEffect(() => {
     listProducts().then(setProducts);
     listVendors().then(setVendors);
   }, []);
+
+  useEffect(() => {
+    if (!purchaseId) return;
+    getPurchase(purchaseId).then((found) => {
+      if (!found || found.status !== "draft") {
+        setEditing(null);
+        return;
+      }
+      setEditing(found);
+      setVendorId(found.vendorId);
+      setReference(found.reference ?? "");
+      setDate(found.date);
+      setStatus(found.status);
+      setDiscount(found.discount ? String(found.discount) : "");
+      setTax(found.tax ? String(found.tax) : "");
+      setAdjustment(found.adjustment ? String(found.adjustment) : "");
+      setRows(
+        (found.items ?? []).map((item) => ({
+          sku: item.sku,
+          productId: item.productId,
+          name: item.name,
+          unit: item.unit,
+          quantity: String(item.quantity),
+          unitCost: String(item.unitCost),
+          discount: item.discount ? String(item.discount) : undefined,
+        })),
+      );
+      if (found.payments && found.payments.length > 0) {
+        setPayRows(
+          found.payments.map((payment) => ({
+            amount: String(payment.amount),
+            method: payment.method,
+            accountId: payment.accountId,
+            date: payment.date,
+          })),
+        );
+      }
+    });
+  }, [purchaseId]);
 
   const options = useMemo(() => pickOptions(products), [products]);
   const vendorOptions = vendors
@@ -294,30 +342,31 @@ export default function PurchaseForm() {
     setTouched(true);
     if (problems.length > 0) return;
     void listPurchases().then((purchases) => {
-      if (referenceClash(purchases, vendorId, reference, status)) {
+      if (referenceClash(purchases, vendorId, reference, status, purchaseId)) {
         setReferenceError("This vendor already has a purchase with that invoice number.");
         document.getElementById("purchase-reference")?.focus();
         return;
       }
+      const input = {
+        vendorId,
+        reference,
+        date,
+        status,
+        items,
+        discount: number(discount),
+        tax: number(tax),
+        adjustment: number(adjustment),
+        payments: countedRows(payRows).map((row) => ({
+          amount: number(row.amount),
+          method: row.method,
+          accountId: row.accountId,
+          date: row.date,
+        })),
+      };
       savePurchases(
-        addPurchase(purchases, {
-          vendorId,
-          reference,
-          date,
-          status,
-          items,
-          discount: number(discount),
-          tax: number(tax),
-          adjustment: number(adjustment),
-          payments: countedRows(payRows).map((row) => ({
-            amount: number(row.amount),
-            method: row.method,
-            accountId: row.accountId,
-            date: row.date,
-          })),
-        }),
+        purchaseId ? updatePurchase(purchases, purchaseId, input) : addPurchase(purchases, input),
       );
-      router.push("/purchases");
+      router.push(purchaseId ? `/purchases/${encodeURIComponent(purchaseId)}` : "/purchases");
     });
   }
 
@@ -340,13 +389,37 @@ export default function PurchaseForm() {
       ? "minmax(0, 1fr) 100px 100px 120px 120px 120px 36px"
       : "minmax(0, 1fr) 110px 130px 130px 120px 36px";
 
+  if (purchaseId && editing === undefined) {
+    return (
+      <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>Loading purchase...</div>
+    );
+  }
+  if (purchaseId && editing === null) {
+    return (
+      <>
+        <PageHeader
+          title="Can't edit this purchase"
+          backHref="/purchases"
+          backLabel="Back to purchases"
+        />
+        <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>
+          Only a draft purchase can be edited. Once an order is placed it is locked.
+        </div>
+      </>
+    );
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
       <PageHeader
-        title="New purchase"
-        subtitle="Record what you're buying from a vendor"
-        backHref="/purchases"
-        backLabel="Back to purchases"
+        title={purchaseId ? "Edit purchase" : "New purchase"}
+        subtitle={
+          purchaseId
+            ? "Change this draft before placing the order"
+            : "Record what you're buying from a vendor"
+        }
+        backHref={purchaseId ? `/purchases/${encodeURIComponent(purchaseId)}` : "/purchases"}
+        backLabel={purchaseId ? "Back to purchase" : "Back to purchases"}
         action={<PurchaseStatusPicker value={status} onChange={setStatus} />}
       />
 
@@ -688,7 +761,15 @@ export default function PurchaseForm() {
           </button>
         </div>
         <div style={{ display: "flex", gap: spacing[3] }}>
-          <Button type="button" variant="secondary" onClick={() => router.push("/purchases")}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() =>
+              router.push(
+                purchaseId ? `/purchases/${encodeURIComponent(purchaseId)}` : "/purchases",
+              )
+            }
+          >
             Cancel
           </Button>
           <Button type="button" variant="primary" onClick={save}>

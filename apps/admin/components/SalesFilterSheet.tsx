@@ -3,11 +3,7 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Chips, DatePicker, MultiChips, Sheet, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
-import {
-  PAYMENT_ACCOUNT_OPTIONS,
-  PAYMENT_METHOD_OPTIONS,
-  STORE_CREDIT,
-} from "../lib/payment-options";
+import { PAYMENT_ACCOUNT_OPTIONS, listPaymentMethods, STORE_CREDIT } from "../lib/payment-options";
 import { datePresets } from "../lib/date-ranges";
 import FormField from "./FormField";
 
@@ -31,8 +27,10 @@ interface SalesFilterSheetProps {
 }
 
 // Store credit is not a payment method you can pick at the till, but it is a way a sale was paid.
-const METHOD_FILTER_OPTIONS = [
-  ...PAYMENT_METHOD_OPTIONS,
+// Every method ever used, including ones switched off since, so old sales can still be found.
+// Store credit is not a method you can pick at the till, but it is a way a sale was paid.
+const methodFilterOptions = () => [
+  ...listPaymentMethods().map((method) => ({ value: method.value, label: method.label })),
   { value: STORE_CREDIT, label: "Store credit" },
 ];
 
@@ -135,7 +133,7 @@ export default function SalesFilterSheet({
           <div style={{ ...textStyle("headline"), color: colors.ink }}>Payment method</div>
           <MultiChips
             aria-label="Payment methods"
-            options={METHOD_FILTER_OPTIONS}
+            options={methodFilterOptions()}
             value={draft.methods}
             columns={3}
             onChange={(methods) => setDraft((current) => ({ ...current, methods }))}

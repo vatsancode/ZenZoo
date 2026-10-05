@@ -1,7 +1,17 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Badge, Card, Pagination, Table, Tabs, textStyle, type TableColumn } from "@zenzoo/ui-web";
+import {
+  Badge,
+  Button,
+  Card,
+  Notice,
+  Pagination,
+  Table,
+  Tabs,
+  textStyle,
+  type TableColumn,
+} from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
@@ -13,17 +23,26 @@ import {
 } from "../lib/customer-insights";
 import { paymentMethodLabel } from "../lib/payment-options";
 import {
+  dueBalance,
+  dueEntries,
+  editCustomer,
   getCustomer,
+  listCollections,
   listSales,
+  recordCollection,
   SALE_STATUS_LABEL,
+  salePaymentLabel,
   saleRefundTotal,
   saleStatus,
   type Customer,
+  type DueCollection,
   type Sale,
 } from "../lib/sales";
 import { formatDate, formatPrice } from "../lib/stock-display";
 import { listCatalogueItems, type CatalogueItem } from "../lib/catalogue-items";
 import { listProducts, type Product } from "../lib/stocks";
+import CustomerDues from "./CustomerDues";
+import CustomerSheet from "./CustomerSheet";
 import PageHeader from "./PageHeader";
 import StatTile, { StatRow } from "./StatTile";
 
@@ -53,21 +72,33 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
   // undefined while loading, null when there is no such customer.
   const [customer, setCustomer] = useState<Customer | null | undefined>(undefined);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [collections, setCollections] = useState<DueCollection[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [catalogue, setCatalogue] = useState<CatalogueItem[]>([]);
   const [tab, setTab] = useState("overview");
+  const [editOpen, setEditOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     getCustomer(customerId).then(setCustomer);
     listSales().then(setSales);
+    listCollections().then(setCollections);
     listProducts().then(setProducts);
     listCatalogueItems().then((items) => setCatalogue([...items]));
   }, [customerId]);
 
   const mine = useMemo(() => customerSales(sales, customerId), [sales, customerId]);
   const entries = useMemo(() => creditEntries(mine), [mine]);
+  const dues = useMemo(
+    () =>
+      dueEntries(
+        mine,
+        collections.filter((item) => item.customerId === customerId),
+      ),
+    [mine, collections, customerId],
+  );
   const categoryByProduct = useMemo(
     () =>
       new Map([
@@ -104,6 +135,7 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
 
   const spent = netSpent(mine);
   const balance = creditBalance(entries);
+  const owed = dueBalance(dues);
   const issued = entries
     .filter((entry) => entry.amount > 0)
     .reduce((sum, entry) => sum + entry.amount, 0);
@@ -144,7 +176,7 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
     {
       key: "payment",
       header: "Payment",
-      render: (sale) => paymentMethodLabel(sale.payment.method),
+      render: (sale) => salePaymentLabel(sale),
     },
     {
       key: "status",
@@ -205,11 +237,22 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
         backHref="/customers"
         backLabel="Back to customers"
         action={
-          balance > 0 ? (
-            <Badge tone="success">{formatPrice(balance)} store credit</Badge>
-          ) : undefined
+          <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
+            {owed > 0 ? <Badge tone="warning">{formatPrice(owed)} due</Badge> : null}
+            {balance > 0 ? <Badge tone="success">{formatPrice(balance)} store credit</Badge> : null}
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setEditOpen(true)}
+              style={{ backgroundColor: "transparent", border: `1px solid ${colors.border}` }}
+            >
+              Edit customer
+            </Button>
+          </div>
         }
       />
+
+      {notice ? <Notice>{notice}</Notice> : null}
 
       <Tabs aria-label="Customer sections" tabs={TABS} value={tab} onChange={setTab} />
 
@@ -244,6 +287,11 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
                 label="Store credit"
                 value={formatPrice(balance)}
                 hint={balance > 0 ? "Available to spend at the till" : "No credit"}
+              />
+              <StatTile
+                label="Owes you"
+                value={formatPrice(owed)}
+                hint={owed > 0 ? "Left on account" : "Nothing due"}
               />
             </StatRow>
 
@@ -392,6 +440,17 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
                 )}
               </Card>
             </div>
+
+            {dues.length > 0 ? (
+              <CustomerDues
+                entries={dues}
+                onCollect={(input) => {
+                  recordCollection({ ...input, customerId });
+                  listCollections().then((items) => setCollections([...items]));
+                  setNotice(`Recorded ${formatPrice(input.amount)} received.`);
+                }}
+              />
+            ) : null}
 
             <Card>
               <CardTitle hint="Worked out from what they have bought, after returns.">
@@ -545,6 +604,18 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
           </Card>
         )}
       </div>
+
+      <CustomerSheet
+        open={editOpen}
+        customer={customer}
+        onClose={() => setEditOpen(false)}
+        onSubmit={(input) => {
+          editCustomer(customer.id, input);
+          setEditOpen(false);
+          setNotice("Customer updated.");
+          getCustomer(customerId).then(setCustomer);
+        }}
+      />
     </div>
   );
 }

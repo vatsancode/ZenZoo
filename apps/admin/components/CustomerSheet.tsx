@@ -3,6 +3,7 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Input, Sheet } from "@zenzoo/ui-web";
 import { useEffect, useState, type KeyboardEvent } from "react";
+import type { Customer } from "../lib/sales";
 import { emailProblem } from "../lib/vendors";
 import FormField from "./FormField";
 
@@ -14,6 +15,8 @@ export interface CustomerInput {
 
 interface CustomerSheetProps {
   open: boolean;
+  /** When set, the panel edits this customer instead of adding a new one. */
+  customer?: Customer | null;
   onClose: () => void;
   onSubmit: (input: CustomerInput) => void;
 }
@@ -21,7 +24,12 @@ interface CustomerSheetProps {
 const ORDER = ["customer-name", "customer-phone", "customer-email"];
 
 /** Adds a customer: just a name is required, so one can be created in a moment at the till. */
-export default function CustomerSheet({ open, onClose, onSubmit }: CustomerSheetProps) {
+export default function CustomerSheet({
+  open,
+  customer = null,
+  onClose,
+  onSubmit,
+}: CustomerSheetProps) {
   const { spacing } = useTheme();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -29,12 +37,11 @@ export default function CustomerSheet({ open, onClose, onSubmit }: CustomerSheet
   const [touched, setTouched] = useState(false);
 
   useEffect(() => {
-    if (open) return;
-    setName("");
-    setPhone("");
-    setEmail("");
+    setName(open && customer ? customer.name : "");
+    setPhone(open && customer ? (customer.phone ?? "") : "");
+    setEmail(open && customer ? (customer.email ?? "") : "");
     setTouched(false);
-  }, [open]);
+  }, [open, customer]);
 
   const nameError = name.trim() === "" ? "Enter the customer's name." : null;
   const emailError = emailProblem(email);
@@ -59,7 +66,7 @@ export default function CustomerSheet({ open, onClose, onSubmit }: CustomerSheet
     <Sheet
       open={open}
       onClose={onClose}
-      title="Add customer"
+      title={customer ? "Edit customer" : "Add customer"}
       width={480}
       footer={
         <div style={{ display: "flex", gap: spacing[3] }}>
@@ -67,7 +74,7 @@ export default function CustomerSheet({ open, onClose, onSubmit }: CustomerSheet
             Cancel
           </Button>
           <Button type="submit" form="customer-form" variant="primary" style={{ flex: 2 }}>
-            Add customer
+            {customer ? "Save changes" : "Add customer"}
           </Button>
         </div>
       }

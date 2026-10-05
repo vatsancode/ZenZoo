@@ -1,7 +1,9 @@
-import { PAYMENT_ACCOUNT_OPTIONS } from "./payment-options";
+import { PAYMENT_ACCOUNT_LABELS, PAYMENT_ACCOUNT_OPTIONS } from "./payment-options";
+import { logAudit } from "./audit";
 import { listExpenses } from "./expenses";
 import { listPurchases } from "./purchases";
-import { listSales } from "./sales";
+import { listCollections, listCustomers, listSales } from "./sales";
+import { formatPrice } from "./stock-display";
 
 export interface Account {
   /** Also the code stored on payments, e.g. "hdfc-current". */
@@ -9,6 +11,8 @@ export interface Account {
   name: string;
   /** What was in the account when it was added to ZenZoo. */
   opening: number;
+  /** Turned off: it stays in history and keeps its balance, but isn't offered for new payments. */
+  disabled?: boolean;
 }
 
 export interface Transfer {
@@ -49,6 +53,14 @@ function syncOptions() {
   PAYMENT_ACCOUNT_OPTIONS.splice(
     0,
     PAYMENT_ACCOUNT_OPTIONS.length,
+    ...accounts
+      .filter((account) => !account.disabled)
+      .map((account) => ({ value: account.id, label: account.name })),
+  );
+  // Names stay known for every account, so history that mentions a disabled one still reads properly.
+  PAYMENT_ACCOUNT_LABELS.splice(
+    0,
+    PAYMENT_ACCOUNT_LABELS.length,
     ...accounts.map((account) => ({ value: account.id, label: account.name })),
   );
 }
@@ -79,6 +91,14 @@ export function addAccount(name: string, opening: number): string | null {
   if (accounts.some((account) => account.id === id)) id = `${id}-${Date.now()}`;
   accounts = [...accounts, { id, name: clean, opening: round(opening) }];
   syncOptions();
+  logAudit({
+    action: "created",
+    module: "Accounts",
+    entity: "Account",
+    label: clean,
+    before: null,
+    after: { Name: clean, "Opening balance": formatPrice(round(opening)) },
+  });
   return null;
 }
 
@@ -92,10 +112,45 @@ export function editAccount(id: string, name: string, opening: number): string |
   ) {
     return "An account with this name already exists.";
   }
+  const previous = accounts.find((account) => account.id === id);
   accounts = accounts.map((account) =>
     account.id === id ? { ...account, name: clean, opening: round(opening) } : account,
   );
   syncOptions();
+  if (previous) {
+    logAudit({
+      action: "updated",
+      module: "Accounts",
+      entity: "Account",
+      label: clean,
+      before: { Name: previous.name, "Opening balance": formatPrice(previous.opening) },
+      after: { Name: clean, "Opening balance": formatPrice(round(opening)) },
+    });
+  }
+  return null;
+}
+
+/** Turns an account off or back on. At least one account has to stay on. */
+export function setAccountDisabled(id: string, disabled: boolean): string | null {
+  if (
+    disabled &&
+    accounts.filter((account) => !account.disabled && account.id !== id).length === 0
+  ) {
+    return "At least one account has to stay on.";
+  }
+  const previous = accounts.find((account) => account.id === id);
+  accounts = accounts.map((account) => (account.id === id ? { ...account, disabled } : account));
+  syncOptions();
+  if (previous) {
+    logAudit({
+      action: "updated",
+      module: "Accounts",
+      entity: "Account",
+      label: previous.name,
+      before: { Status: previous.disabled ? "Disabled" : "Active" },
+      after: { Status: disabled ? "Disabled" : "Active" },
+    });
+  }
   return null;
 }
 
@@ -107,6 +162,20 @@ export function removeAccount(id: string): void {
 export function addTransfer(input: Omit<Transfer, "id">): Transfer {
   const transfer: Transfer = { ...input, id: `tr-${Date.now()}` };
   transfers = [transfer, ...transfers];
+  const nameOf = (id: string) => accounts.find((account) => account.id === id)?.name ?? id;
+  logAudit({
+    action: "created",
+    module: "Accounts",
+    entity: "Transfer",
+    label: `${nameOf(transfer.fromId)} to ${nameOf(transfer.toId)}`,
+    before: null,
+    after: {
+      From: nameOf(transfer.fromId),
+      To: nameOf(transfer.toId),
+      Amount: formatPrice(transfer.amount),
+      Note: transfer.note ?? null,
+    },
+  });
   return transfer;
 }
 
@@ -126,21 +195,25 @@ export interface Movement {
  * out, and transfers either way. An account's balance is its opening balance plus these.
  */
 export async function accountMovements(): Promise<Movement[]> {
-  const [sales, purchases, expenses] = await Promise.all([
+  const [sales, purchases, expenses, collections, customers] = await Promise.all([
     listSales(),
     listPurchases(),
     listExpenses(),
+    listCollections(),
+    listCustomers(),
   ]);
   const movements: Movement[] = [];
 
   for (const sale of sales) {
-    if (sale.payment.amount > 0 && sale.payment.accountId) {
-      movements.push({
-        date: sale.date,
-        accountId: sale.payment.accountId,
-        amount: sale.payment.amount,
-        label: `Sale ${sale.number} · ${sale.customerName}`,
-      });
+    for (const payment of sale.payments) {
+      if (payment.amount > 0 && payment.accountId) {
+        movements.push({
+          date: sale.date,
+          accountId: payment.accountId,
+          amount: payment.amount,
+          label: `Sale ${sale.number} · ${sale.customerName}`,
+        });
+      }
     }
     for (const ret of sale.returns ?? []) {
       if (ret.refund.mode === "money" && ret.refund.accountId) {
@@ -182,6 +255,15 @@ export async function accountMovements(): Promise<Movement[]> {
       accountId: expense.accountId,
       amount: -expense.total,
       label: `Expense · ${expense.payee ?? expense.lines[0]?.category ?? "bill"}${expense.lines.length > 1 ? ` · ${expense.lines.length} items` : expense.lines[0] ? ` · ${expense.lines[0].category}` : ""}`,
+    });
+  }
+
+  for (const collection of collections) {
+    movements.push({
+      date: collection.date,
+      accountId: collection.accountId,
+      amount: collection.amount,
+      label: `Dues collected · ${customers.find((customer) => customer.id === collection.customerId)?.name ?? "customer"}`,
     });
   }
 

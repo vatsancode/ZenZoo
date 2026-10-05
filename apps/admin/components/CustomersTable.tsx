@@ -13,7 +13,17 @@ import {
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { creditBalance, creditEntries, customerSales, netSpent } from "../lib/customer-insights";
-import { addCustomer, listCustomers, listSales, type Customer, type Sale } from "../lib/sales";
+import {
+  addCustomer,
+  dueBalance,
+  dueEntries,
+  listCollections,
+  listCustomers,
+  listSales,
+  type Customer,
+  type DueCollection,
+  type Sale,
+} from "../lib/sales";
 import { formatDate, formatPrice } from "../lib/stock-display";
 import CustomerSheet from "./CustomerSheet";
 
@@ -23,6 +33,7 @@ interface Row {
   spent: number;
   lastPurchase?: string;
   credit: number;
+  owes: number;
 }
 
 /** Everyone who has bought from you, with what they have spent and any store credit they hold. */
@@ -31,6 +42,7 @@ export default function CustomersTable() {
   const router = useRouter();
   const [customers, setCustomers] = useState<Customer[] | null>(null);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [collections, setCollections] = useState<DueCollection[]>([]);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -40,6 +52,7 @@ export default function CustomersTable() {
   useEffect(() => {
     listCustomers().then(setCustomers);
     listSales().then(setSales);
+    listCollections().then(setCollections);
   }, []);
 
   useEffect(() => {
@@ -58,9 +71,15 @@ export default function CustomersTable() {
           spent: netSpent(mine),
           lastPurchase: mine[0]?.date,
           credit: creditBalance(creditEntries(mine)),
+          owes: dueBalance(
+            dueEntries(
+              mine,
+              collections.filter((item) => item.customerId === customer.id),
+            ),
+          ),
         };
       }),
-    [customers, sales],
+    [customers, sales, collections],
   );
 
   const filtered = useMemo(() => {
@@ -122,6 +141,17 @@ export default function CustomersTable() {
       render: ({ credit }) =>
         credit > 0 ? (
           <span style={{ ...textStyle("data"), color: colors.success }}>{formatPrice(credit)}</span>
+        ) : (
+          muted("-")
+        ),
+    },
+    {
+      key: "owes",
+      header: "Owes you",
+      align: "right",
+      render: ({ owes }) =>
+        owes > 0 ? (
+          <span style={{ ...textStyle("data"), color: colors.warning }}>{formatPrice(owes)}</span>
         ) : (
           muted("-")
         ),

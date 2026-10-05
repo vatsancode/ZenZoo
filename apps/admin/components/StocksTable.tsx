@@ -25,7 +25,6 @@ import {
 import { formatPrice, stockStatus } from "../lib/stock-display";
 import AddStockSheet from "./AddStockSheet";
 
-
 // A single price, or "low - high" when a product's variants are priced differently.
 function priceLabel(product: Product): string {
   const prices = (product.variants ?? []).map((variant) => variant.price);

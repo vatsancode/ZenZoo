@@ -144,8 +144,7 @@ export default function RecordMovementSheet({
     }
   }
 
-  const valid =
-    !batchError && !actionError && !noteError && !quantityError && !purchasePriceError;
+  const valid = !batchError && !actionError && !noteError && !quantityError && !purchasePriceError;
 
   // How the batch changes, once everything needed to know is filled in.
   const delta =
@@ -239,12 +238,7 @@ export default function RecordMovementSheet({
             <Button type="button" variant="secondary" onClick={onClose} style={{ flex: 1 }}>
               Cancel
             </Button>
-            <Button
-              type="submit"
-              form="record-movement-form"
-              variant="primary"
-              style={{ flex: 2 }}
-            >
+            <Button type="submit" form="record-movement-form" variant="primary" style={{ flex: 2 }}>
               {confirming ? "Yes, record it" : "Record movement"}
             </Button>
           </div>
@@ -280,7 +274,6 @@ export default function RecordMovementSheet({
                 </div>
               ) : null}
             </Group>
-
           </div>
 
           {/* Which batch - after the action, since adding can start a new one */}
@@ -379,12 +372,7 @@ export default function RecordMovementSheet({
           ) : null}
 
           {action ? (
-            <FormField
-              id="movement-note"
-              label="NOTE"
-              span={12}
-              error={touched ? noteError : null}
-            >
+            <FormField id="movement-note" label="NOTE" span={12} error={touched ? noteError : null}>
               <Input
                 id="movement-note"
                 autoComplete="off"

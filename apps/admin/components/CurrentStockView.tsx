@@ -109,9 +109,7 @@ export default function CurrentStockView({
   const batches = useMemo(() => allBatches.filter((batch) => batch.remaining > 0), [allBatches]);
 
   // Moves the item's stock (and one batch's) up or down and logs it.
-  function applyMovement(
-    movement: Omit<RecordedMovement, "id" | "date" | "amount" | "sku">,
-  ) {
+  function applyMovement(movement: Omit<RecordedMovement, "id" | "date" | "amount" | "sku">) {
     if (!item || !products) return;
     logMovement({
       ...movement,

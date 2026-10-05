@@ -120,10 +120,13 @@ export default function TransfersSettings() {
     void reload();
   }
 
-  const options = accounts.map((account) => ({
-    value: account.id,
-    label: `${account.name} · ${formatPrice(balances.get(account.id) ?? 0)}`,
-  }));
+  // A disabled account can't send or receive a transfer, but still shows its balance above.
+  const options = accounts
+    .filter((account) => !account.disabled)
+    .map((account) => ({
+      value: account.id,
+      label: `${account.name} · ${formatPrice(balances.get(account.id) ?? 0)}`,
+    }));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: spacing[6] }}>
@@ -192,7 +195,10 @@ export default function TransfersSettings() {
                 }}
               >
                 <Icon name="bank" size={18} />
-                <span style={{ ...textStyle("callout") }}>{account.name}</span>
+                <span style={{ ...textStyle("callout") }}>
+                  {account.name}
+                  {account.disabled ? " · disabled" : ""}
+                </span>
               </span>
               <span style={{ ...textStyle("title1"), color: colors.ink }}>
                 {formatPrice(balances.get(account.id) ?? 0)}

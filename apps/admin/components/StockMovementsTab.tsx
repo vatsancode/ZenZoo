@@ -60,10 +60,7 @@ export default function StockMovementsTab({
 }) {
   const { colors, spacing } = useTheme();
   const [filter, setFilter] = useState("all");
-  const movements = useMemo(
-    () => [...recorded, ...consumptionHistory(item)],
-    [item, recorded],
-  );
+  const movements = useMemo(() => [...recorded, ...consumptionHistory(item)], [item, recorded]);
 
   // Net units sold: sales minus anything customers brought back. Entries that
   // were undone, and the undo entries themselves, cancel out and aren't counted.

@@ -16,7 +16,7 @@ import {
   type TableColumn,
 } from "@zenzoo/ui-web";
 import { useEffect, useMemo, useState } from "react";
-import { PAYMENT_ACCOUNT_OPTIONS } from "../lib/payment-options";
+import { PAYMENT_ACCOUNT_OPTIONS, accountLabel } from "../lib/payment-options";
 import { listVendors, type Vendor } from "../lib/vendors";
 import {
   addExpense,
@@ -43,8 +43,7 @@ interface LineRow {
 
 const blankLine = (): LineRow => ({ description: "", category: "", amount: "" });
 
-const accountName = (id: string) =>
-  PAYMENT_ACCOUNT_OPTIONS.find((option) => option.value === id)?.label ?? id;
+const accountName = (id: string) => accountLabel(id);
 
 // Columns of a line in the form: description, category, amount, remove.
 const LINE_COLUMNS = "minmax(0, 1.3fr) minmax(0, 1fr) 110px 32px";

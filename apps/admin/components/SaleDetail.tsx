@@ -6,8 +6,9 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   PAYMENT_ACCOUNT_OPTIONS,
   PAYMENT_METHOD_OPTIONS,
-  paymentMethodLabel,
   STORE_CREDIT,
+  accountLabel,
+  paymentMethodLabel,
 } from "../lib/payment-options";
 import {
   canReturnSale,
@@ -20,6 +21,7 @@ import {
   type SaleLine,
   type SaleReturn,
   saleDiscountTotal,
+  salePaymentLabel,
   saleLineNet,
   saleProfitOf,
   type Customer,
@@ -183,11 +185,13 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
         ) : null}
         <StatTile
           label="Paid by"
-          value={paymentMethodLabel(sale.payment.method)}
+          value={salePaymentLabel(sale)}
           hint={
-            sale.payment.method === STORE_CREDIT
-              ? "No money taken"
-              : `${labelOf(PAYMENT_ACCOUNT_OPTIONS, sale.payment.accountId)}${sale.creditUsed ? ` + ${formatPrice(sale.creditUsed)} credit` : ""}`
+            sale.payments.length === 0
+              ? sale.dueAmount
+                ? `${formatPrice(sale.dueAmount)} on account`
+                : "No money taken"
+              : `${Array.from(new Set(sale.payments.map((payment) => accountLabel(payment.accountId)))).join(", ")}${sale.creditUsed ? ` + ${formatPrice(sale.creditUsed)} credit` : ""}${sale.dueAmount ? ` · ${formatPrice(sale.dueAmount)} due` : ""}`
           }
         />
       </StatRow>
@@ -333,7 +337,7 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
                   </Badge>
                   <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
                     {ret.refund.mode === "money"
-                      ? `${formatPrice(ret.refund.amount)} · ${labelOf(PAYMENT_METHOD_OPTIONS, ret.refund.method ?? "")} · from ${labelOf(PAYMENT_ACCOUNT_OPTIONS, ret.refund.accountId ?? "")}`
+                      ? `${formatPrice(ret.refund.amount)} · ${paymentMethodLabel(ret.refund.method ?? "")} · from ${accountLabel(ret.refund.accountId ?? "")}`
                       : ret.refund.mode === "credit"
                         ? `${formatPrice(ret.refund.amount)} kept on ${sale.customerName}'s account`
                         : "Nothing paid back"}
@@ -390,19 +394,43 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
                 </span>
               </div>
             ) : null}
-            {sale.payment.method !== STORE_CREDIT ? (
-              <div style={{ display: "flex", justifyContent: "space-between", gap: spacing[4] }}>
+            {sale.payments.map((payment, index) => (
+              <div
+                key={index}
+                style={{ display: "flex", justifyContent: "space-between", gap: spacing[4] }}
+              >
                 <div>
                   <div style={{ ...textStyle("body"), color: colors.ink }}>
-                    {paymentMethodLabel(sale.payment.method)}
+                    {paymentMethodLabel(payment.method)}
                   </div>
                   <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
-                    Received into {labelOf(PAYMENT_ACCOUNT_OPTIONS, sale.payment.accountId)}
+                    Received into {accountLabel(payment.accountId)}
+                    {payment.tendered && payment.tendered > payment.amount
+                      ? ` · ${formatPrice(payment.tendered)} handed over, ${formatPrice(payment.tendered - payment.amount)} change`
+                      : ""}
                   </div>
                 </div>
                 <span style={{ ...textStyle("data"), color: colors.ink }}>
-                  {formatPrice(sale.payment.amount)}
+                  {formatPrice(payment.amount)}
                 </span>
+              </div>
+            ))}
+            {sale.dueAmount ? (
+              <div style={{ display: "flex", justifyContent: "space-between", gap: spacing[4] }}>
+                <div>
+                  <div style={{ ...textStyle("body"), color: colors.ink }}>On account</div>
+                  <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
+                    To be collected from {sale.customerName}
+                  </div>
+                </div>
+                <span style={{ ...textStyle("data"), color: colors.warning }}>
+                  {formatPrice(sale.dueAmount)}
+                </span>
+              </div>
+            ) : null}
+            {sale.payments.length === 0 && !sale.dueAmount && !sale.creditUsed ? (
+              <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>
+                No payment recorded.
               </div>
             ) : null}
           </div>

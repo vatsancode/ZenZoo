@@ -1,3 +1,7 @@
+import { logAudit } from "./audit";
+import { accountLabel } from "./payment-options";
+import { formatDate, formatPrice } from "./stock-display";
+
 /** One thing paid for on a bill: what it was, which category it belongs to, and what it cost. */
 export interface ExpenseLine {
   description: string;
@@ -159,21 +163,72 @@ function clean(input: ExpenseInput) {
   };
 }
 
+/** The fields of a bill as the audit log shows them. */
+function snapshot(expense: Expense) {
+  const accountName = accountLabel(expense.accountId);
+  return {
+    Date: formatDate(expense.date),
+    "Paid to": expense.payee ?? null,
+    "Bill number": expense.reference ?? null,
+    Items: expense.lines
+      .map((line) => `${line.description || line.category} ${formatPrice(line.amount)}`)
+      .join(", "),
+    Category: Array.from(new Set(expense.lines.map((line) => line.category))).join(", "),
+    Total: formatPrice(expense.total),
+    "Paid from": accountName,
+    Note: expense.note ?? null,
+  };
+}
+
+const labelOf = (expense: Expense) =>
+  `${expense.payee ?? expense.lines[0]?.category ?? "Expense"} · ${formatPrice(expense.total)}`;
+
 export function addExpense(input: ExpenseInput): Expense {
   const expense: Expense = { id: `exp-${Date.now()}`, ...clean(input) };
   rememberCategories(expense.lines);
   expenses = [expense, ...expenses];
+  logAudit({
+    action: "created",
+    module: "Expenses",
+    entity: "Expense",
+    label: labelOf(expense),
+    before: null,
+    after: snapshot(expense),
+  });
   return expense;
 }
 
 export function editExpense(id: string, input: ExpenseInput): void {
   const next = clean(input);
   rememberCategories(next.lines);
+  const previous = expenses.find((expense) => expense.id === id);
   expenses = expenses.map((expense) => (expense.id === id ? { id, ...next } : expense));
+  if (previous) {
+    const updated = { id, ...next };
+    logAudit({
+      action: "updated",
+      module: "Expenses",
+      entity: "Expense",
+      label: labelOf(updated),
+      before: snapshot(previous),
+      after: snapshot(updated),
+    });
+  }
 }
 
 export function deleteExpense(id: string): void {
+  const removed = expenses.find((expense) => expense.id === id);
   expenses = expenses.filter((expense) => expense.id !== id);
+  if (removed) {
+    logAudit({
+      action: "deleted",
+      module: "Expenses",
+      entity: "Expense",
+      label: labelOf(removed),
+      before: snapshot(removed),
+      after: null,
+    });
+  }
 }
 
 /** The distinct categories a bill touches, in the order they first appear. */

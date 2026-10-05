@@ -14,7 +14,12 @@ export type IconName =
   | "theme"
   | "bank"
   | "transfer"
-  | "receipt";
+  | "receipt"
+  | "history"
+  | "card"
+  | "users"
+  | "lock"
+  | "user";
 
 // Outline icons on a 24px grid, drawn in the current text colour.
 const SHAPES: Record<IconName, ReactNode> = {
@@ -64,6 +69,37 @@ const SHAPES: Record<IconName, ReactNode> = {
     <>
       <path d="M6 3h12v18l-3-2-3 2-3-2-3 2z" />
       <path d="M9 8h6M9 12h6" />
+    </>
+  ),
+  card: (
+    <>
+      <rect x="3" y="6" width="18" height="13" rx="2.5" />
+      <path d="M3 10.5h18M7 15h4" />
+    </>
+  ),
+  users: (
+    <>
+      <circle cx="9" cy="8.5" r="3.5" />
+      <path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" />
+      <path d="M16 5.2a3.5 3.5 0 0 1 0 6.6M18.5 14.4c1.8.8 3 2.5 3 5.6" />
+    </>
+  ),
+  user: (
+    <>
+      <circle cx="12" cy="8.5" r="3.8" />
+      <path d="M4.5 20c0-4 3.3-6.5 7.5-6.5s7.5 2.5 7.5 6.5" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x="5" y="10.5" width="14" height="10" rx="2" />
+      <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" />
+    </>
+  ),
+  history: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
     </>
   ),
   info: (

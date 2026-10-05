@@ -32,7 +32,7 @@ import {
 import { listCatalogueItems, type CatalogueItem } from "../lib/catalogue-items";
 import { listExpenses, type Expense } from "../lib/expenses";
 import { listPurchases, type Purchase } from "../lib/purchases";
-import { listSales, type Sale } from "../lib/sales";
+import { listCollections, listSales, type DueCollection, type Sale } from "../lib/sales";
 import { formatPrice } from "../lib/stock-display";
 import { listProducts, type Product } from "../lib/stocks";
 import BarList from "./BarList";
@@ -94,11 +94,12 @@ export default function DashboardScreen() {
   const [catalogue, setCatalogue] = useState<CatalogueItem[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
+  const [collections, setCollections] = useState<DueCollection[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     async function load() {
-      const [s, e, p, pu, a, m, c] = await Promise.all([
+      const [s, e, p, pu, a, m, c, col] = await Promise.all([
         listSales(),
         listExpenses(),
         listProducts(),
@@ -106,8 +107,10 @@ export default function DashboardScreen() {
         listAccounts(),
         accountMovements(),
         listCatalogueItems(),
+        listCollections(),
       ]);
       setSales([...s]);
+      setCollections([...col]);
       setExpenses([...e]);
       setProducts([...p]);
       setPurchases([...pu]);
@@ -136,6 +139,16 @@ export default function DashboardScreen() {
   const recent = useMemo(
     () => [...sales].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 5),
     [sales],
+  );
+  // Credit sales across everyone, less every payment collected since.
+  const toCollect = useMemo(
+    () =>
+      Math.max(
+        0,
+        sales.reduce((sum, sale) => sum + (sale.dueAmount ?? 0), 0) -
+          collections.reduce((sum, item) => sum + item.amount, 0),
+      ),
+    [sales, collections],
   );
   const owed = useMemo(() => owedToVendors(purchases), [purchases]);
   const cash = accounts.reduce((sum, account) => sum + balanceOf(account, movements), 0);
@@ -198,6 +211,11 @@ export default function DashboardScreen() {
           hint={now.net >= 0 ? "Profit after expenses" : "Spending is above profit"}
         />
         <StatTile label="Sales" value={String(now.orders)} hint={delta(now.orders, prior.orders)} />
+        <StatTile
+          label="To collect"
+          value={formatPrice(toCollect)}
+          hint={toCollect > 0 ? "Owed by customers" : "Nothing due"}
+        />
         <StatTile
           label="Owed to vendors"
           value={formatPrice(owed)}

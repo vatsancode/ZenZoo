@@ -3,11 +3,14 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Modal, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useMemo, useState } from "react";
-import { PAYMENT_ACCOUNT_OPTIONS, paymentMethodLabel, STORE_CREDIT } from "../lib/payment-options";
+import { accountLabel, paymentMethodLabel } from "../lib/payment-options";
 import {
   addCustomer,
   cartTotals,
   lineDiscount,
+  dueBalance,
+  dueEntries,
+  listCollections,
   listCustomers,
   listSales,
   recordSale,
@@ -15,6 +18,7 @@ import {
   type SellableUnit,
   type CartLine,
   type Customer,
+  type DueCollection,
   type Sale,
 } from "../lib/sales";
 import { formatDate, formatPrice } from "../lib/stock-display";
@@ -24,9 +28,6 @@ import { creditBalance, creditEntries, customerSales } from "../lib/customer-ins
 import PosCheckout, { type CheckoutDetails } from "./PosCheckout";
 import PosLines from "./PosLines";
 import PosSearch from "./PosSearch";
-
-const labelOf = (options: { value: string; label: string }[], value: string) =>
-  options.find((option) => option.value === value)?.label ?? value;
 
 function todayIso(): string {
   const now = new Date();
@@ -43,6 +44,8 @@ export default function PosScreen() {
   const [catalogue, setCatalogue] = useState<CatalogueItem[]>([]);
   // Past sales, so a customer's store credit balance can be worked out.
   const [pastSales, setPastSales] = useState<Sale[]>([]);
+  const [collections, setCollections] = useState<DueCollection[]>([]);
+  const [change, setChange] = useState(0);
   const [lines, setLines] = useState<CartLine[]>([]);
   const [finished, setFinished] = useState<Sale | null>(null);
   // Changing this remounts the cart, which clears its customer, discount and payment choices.
@@ -53,6 +56,7 @@ export default function PosScreen() {
     listCatalogueItems().then((items) => setCatalogue([...items]));
     listCustomers().then(setCustomers);
     listSales().then(setPastSales);
+    listCollections().then(setCollections);
   }, []);
 
   const units = useMemo(() => sellableUnits(products ?? [], catalogue), [products, catalogue]);
@@ -115,7 +119,8 @@ export default function PosScreen() {
       billDiscount: totals.billDiscount,
       total: totals.total,
       creditUsed: details.creditUsed > 0 ? details.creditUsed : undefined,
-      payment: { method: details.method, accountId: details.accountId, amount: details.payNow },
+      payments: details.payments,
+      dueAmount: details.dueAmount > 0 ? details.dueAmount : undefined,
     });
     // What was sold leaves stock.
     void listProducts().then((all) => {
@@ -132,6 +137,7 @@ export default function PosScreen() {
       saveProducts(next);
       setProducts(next);
     });
+    setChange(details.changeGiven);
     setFinished(sale);
     // The credit just spent is no longer available.
     void listSales().then(setPastSales);
@@ -179,6 +185,14 @@ export default function PosScreen() {
           }}
           creditBalanceOf={(customerId) =>
             creditBalance(creditEntries(customerSales(pastSales, customerId)))
+          }
+          dueBalanceOf={(customerId) =>
+            dueBalance(
+              dueEntries(
+                customerSales(pastSales, customerId),
+                collections.filter((item) => item.customerId === customerId),
+              ),
+            )
           }
           onComplete={complete}
         />
@@ -237,10 +251,31 @@ export default function PosScreen() {
                 {finished.creditUsed
                   ? `${formatPrice(finished.creditUsed)} paid with store credit. `
                   : ""}
-                {finished.payment.method === STORE_CREDIT
-                  ? "No money taken."
-                  : `${formatPrice(finished.payment.amount)} paid by ${paymentMethodLabel(finished.payment.method)} into ${labelOf(PAYMENT_ACCOUNT_OPTIONS, finished.payment.accountId)}.`}
+                {finished.payments
+                  .map(
+                    (payment) =>
+                      `${formatPrice(payment.amount)} by ${paymentMethodLabel(payment.method)} into ${accountLabel(payment.accountId)}.`,
+                  )
+                  .join(" ")}
+                {finished.dueAmount ? ` ${formatPrice(finished.dueAmount)} left on account.` : ""}
+                {finished.payments.length === 0 && !finished.dueAmount ? "No money taken." : ""}
               </div>
+              {change > 0 ? (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "baseline",
+                  }}
+                >
+                  <span style={{ ...textStyle("bodyMedium"), color: colors.ink }}>
+                    Change given
+                  </span>
+                  <span style={{ ...textStyle("title3"), color: colors.success }}>
+                    {formatPrice(change)}
+                  </span>
+                </div>
+              ) : null}
             </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: spacing[6] }}>

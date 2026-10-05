@@ -1,3 +1,5 @@
+import { logAudit } from "./audit";
+
 export interface Vendor {
   id: string;
   name: string;
@@ -84,13 +86,47 @@ function fromInput(input: VendorInput) {
   };
 }
 
+/** The fields of a vendor as the audit log shows them. */
+function snapshot(vendor: Vendor) {
+  return {
+    Name: vendor.name,
+    Phone: vendor.phone ?? null,
+    Email: vendor.email ?? null,
+    GSTIN: vendor.taxId ?? null,
+    "Google Maps link": vendor.mapUrl ?? null,
+  };
+}
+
 export function addVendor(vendors: Vendor[], input: VendorInput): Vendor[] {
   const vendor: Vendor = { id: `sup-${Date.now()}`, ...fromInput(input), status: "active" };
+  logAudit({
+    action: "created",
+    module: "Vendors",
+    entity: "Vendor",
+    label: vendor.name,
+    before: null,
+    after: snapshot(vendor),
+  });
   return [vendor, ...vendors];
 }
 
 export function editVendor(vendors: Vendor[], id: string, input: VendorInput): Vendor[] {
-  return vendors.map((vendor) => (vendor.id === id ? { ...vendor, ...fromInput(input) } : vendor));
+  const previous = vendors.find((vendor) => vendor.id === id);
+  const next = vendors.map((vendor) =>
+    vendor.id === id ? { ...vendor, ...fromInput(input) } : vendor,
+  );
+  const updated = next.find((vendor) => vendor.id === id);
+  if (previous && updated) {
+    logAudit({
+      action: "updated",
+      module: "Vendors",
+      entity: "Vendor",
+      label: updated.name,
+      before: snapshot(previous),
+      after: snapshot(updated),
+    });
+  }
+  return next;
 }
 
 /** Accepts full Google Maps links and the short maps.app.goo.gl / goo.gl/maps forms. */

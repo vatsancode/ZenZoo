@@ -4,6 +4,7 @@ import { useTheme } from "@zenzoo/design-tokens";
 import { textStyle } from "@zenzoo/ui-web";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { CURRENT_USER_ID, getRole, getUser } from "../lib/users";
 
 interface NavItem {
   label: string;
@@ -32,6 +33,7 @@ const comingSoon: string[] = [];
 export default function Sidebar() {
   const { colors, spacing, radius } = useTheme();
   const pathname = usePathname();
+  const me = getUser(CURRENT_USER_ID);
 
   return (
     <nav
@@ -111,19 +113,45 @@ export default function Sidebar() {
 
       <div style={{ flex: 1 }} />
 
-      <Link
-        href="/sign-in"
+      <div
         style={{
-          ...textStyle("body"),
-          color: colors.inkMuted,
-          padding: `${spacing[3]}px ${spacing[3]}px ${spacing[2]}px`,
           borderTop: `1px solid ${colors.border}`,
           marginTop: spacing[2],
-          textDecoration: "none",
+          paddingTop: spacing[2],
+          display: "flex",
+          flexDirection: "column",
         }}
       >
-        Sign out
-      </Link>
+        {me ? (
+          <Link
+            href="/profile"
+            style={{
+              ...textStyle("body"),
+              color: colors.ink,
+              padding: `${spacing[2]}px ${spacing[3]}px`,
+              textDecoration: "none",
+              borderRadius: radius.md,
+              backgroundColor: pathname === "/profile" ? colors.surfaceSunken : "transparent",
+            }}
+          >
+            {me.name}
+            <span style={{ ...textStyle("footnote"), color: colors.inkMuted, display: "block" }}>
+              {getRole(me.roleId)?.name ?? "My profile"}
+            </span>
+          </Link>
+        ) : null}
+        <Link
+          href="/sign-in"
+          style={{
+            ...textStyle("body"),
+            color: colors.inkMuted,
+            padding: `${spacing[2]}px ${spacing[3]}px`,
+            textDecoration: "none",
+          }}
+        >
+          Sign out
+        </Link>
+      </div>
     </nav>
   );
 }

@@ -6,6 +6,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { accountMovements, balanceOf, listAccounts } from "../lib/accounts";
 import { listCategories, listUnits } from "../lib/catalogue";
+import { listAuditEntries } from "../lib/audit";
+import { listPaymentMethods } from "../lib/payment-options";
+import { listRoles, listUsers } from "../lib/users";
 import { listExpenseCategories } from "../lib/expenses";
 import { formatPrice } from "../lib/stock-display";
 
@@ -23,6 +26,7 @@ export default function SettingsHome() {
   const { colors, radius, spacing, elevation } = useTheme();
   const { preference } = useThemePreference();
   const [hovered, setHovered] = useState<string | null>(null);
+  const [auditCount, setAuditCount] = useState(0);
   const [counts, setCounts] = useState({
     categories: 0,
     subcategories: 0,
@@ -48,6 +52,7 @@ export default function SettingsHome() {
       });
     }
     void load();
+    listAuditEntries().then((list) => setAuditCount(list.length));
   }, []);
 
   const tiles: Tile[] = [
@@ -93,6 +98,27 @@ export default function SettingsHome() {
       name: "Transfer",
       description: "See what is in each account and move money between them.",
       detail: `${formatPrice(counts.total)} across all accounts`,
+    },
+    {
+      href: "/settings/audit-log",
+      icon: "history",
+      name: "Audit log",
+      description: "Every action, who did it, when and from where, and what changed.",
+      detail: `${auditCount} entries`,
+    },
+    {
+      href: "/settings/payment-methods",
+      icon: "card",
+      name: "Payment methods",
+      description: "Choose which ways of paying are offered: Cash, UPI, Card and Bank.",
+      detail: `${listPaymentMethods().filter((method) => method.enabled).length} on`,
+    },
+    {
+      href: "/settings/users",
+      icon: "users",
+      name: "Users and roles",
+      description: "Who can sign in, and what each role is allowed to see and do.",
+      detail: `${listUsers().length} users · ${listRoles().length} roles`,
     },
   ];
 

@@ -15,11 +15,14 @@ import { useEffect, useMemo, useState } from "react";
 import {
   PAYMENT_ACCOUNT_OPTIONS,
   PAYMENT_METHOD_OPTIONS,
-  paymentMethodLabel,
   STORE_CREDIT,
+  accountLabel,
+  paymentMethodLabel,
 } from "../lib/payment-options";
 import {
   listSales,
+  saleMethods,
+  salePaymentLabel,
   SALE_STATUS_LABEL,
   saleDiscountTotal,
   saleProfitOf,
@@ -54,13 +57,12 @@ export default function SalesTable() {
     const q = query.trim().toLowerCase();
     return (sales ?? []).filter((sale) => {
       // A sale that spent any store credit counts under "Store credit", even if money paid the rest.
-      if (
-        filters.methods.length > 0 &&
-        !filters.methods.includes(sale.payment.method) &&
-        !(filters.methods.includes(STORE_CREDIT) && (sale.creditUsed ?? 0) > 0)
-      )
+      if (filters.methods.length > 0 && !saleMethods(sale).some((m) => filters.methods.includes(m)))
         return false;
-      if (filters.accounts.length > 0 && !filters.accounts.includes(sale.payment.accountId))
+      if (
+        filters.accounts.length > 0 &&
+        !sale.payments.some((payment) => filters.accounts.includes(payment.accountId))
+      )
         return false;
       if (filters.from !== "" && sale.date < filters.from) return false;
       if (filters.to !== "" && sale.date > filters.to) return false;
@@ -123,7 +125,7 @@ export default function SalesTable() {
           {
             key: "accounts",
             label: "Received into",
-            values: filters.accounts.map((id) => labelOf(PAYMENT_ACCOUNT_OPTIONS, id)),
+            values: filters.accounts.map((id) => accountLabel(id)),
             onClear: () => setFilters({ ...filters, accounts: [] }),
           },
         ]
@@ -166,12 +168,15 @@ export default function SalesTable() {
       header: "Payment",
       render: (sale) => (
         <span>
-          {paymentMethodLabel(sale.payment.method)}
+          {salePaymentLabel(sale)}
           <span style={{ ...textStyle("footnote"), color: colors.inkMuted, display: "block" }}>
-            {sale.payment.method === STORE_CREDIT
+            {sale.payments.length === 0
               ? "No money taken"
-              : labelOf(PAYMENT_ACCOUNT_OPTIONS, sale.payment.accountId)}
+              : Array.from(
+                  new Set(sale.payments.map((payment) => accountLabel(payment.accountId))),
+                ).join(", ")}
             {sale.creditUsed ? ` · ${formatPrice(sale.creditUsed)} credit` : ""}
+            {sale.dueAmount ? ` · ${formatPrice(sale.dueAmount)} due` : ""}
           </span>
         </span>
       ),

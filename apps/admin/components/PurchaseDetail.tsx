@@ -14,8 +14,14 @@ import {
   textStyle,
 } from "@zenzoo/ui-web";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { PAYMENT_ACCOUNT_OPTIONS, PAYMENT_METHOD_OPTIONS } from "../lib/payment-options";
+import {
+  PAYMENT_ACCOUNT_OPTIONS,
+  PAYMENT_METHOD_OPTIONS,
+  accountLabel,
+  paymentMethodLabel,
+} from "../lib/payment-options";
 import {
   addPayments,
   addReturn,
@@ -126,6 +132,7 @@ export default function PurchaseDetail({
   initialTab?: string;
 }) {
   const { colors, radius, spacing } = useTheme();
+  const router = useRouter();
   // undefined while loading, null when there is no such purchase.
   const [purchase, setPurchase] = useState<Purchase | null | undefined>(undefined);
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -394,6 +401,16 @@ export default function PurchaseDetail({
               </Button>
             ) : null}
             {purchase.status === "draft" ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => router.push(`/purchases/${encodeURIComponent(purchase.id)}/edit`)}
+                style={{ backgroundColor: "transparent", border: `1px solid ${colors.border}` }}
+              >
+                Edit
+              </Button>
+            ) : null}
+            {purchase.status === "draft" ? (
               <Button type="button" variant="primary" onClick={() => changeStatus("ordered")}>
                 Place order
               </Button>
@@ -536,11 +553,10 @@ export default function PurchaseDetail({
                       >
                         <div style={{ minWidth: 0 }}>
                           <div style={{ ...textStyle("body"), color: colors.ink }}>
-                            {labelOf(PAYMENT_METHOD_OPTIONS, payment.method)}
+                            {paymentMethodLabel(payment.method)}
                           </div>
                           <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
-                            {labelOf(PAYMENT_ACCOUNT_OPTIONS, payment.accountId)} ·{" "}
-                            {formatDate(payment.date)}
+                            {accountLabel(payment.accountId)} · {formatDate(payment.date)}
                           </div>
                         </div>
                         <span style={{ ...textStyle("data"), color: colors.ink }}>
@@ -908,7 +924,7 @@ export default function PurchaseDetail({
                         </Badge>
                         <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
                           {ret.refund.mode === "refunded" && ret.refund.method
-                            ? `${formatPrice(ret.refund.amount)}${ret.refund.amount < ret.credit ? ` of ${formatPrice(ret.credit)}` : ""} · ${labelOf(PAYMENT_METHOD_OPTIONS, ret.refund.method)} · ${labelOf(PAYMENT_ACCOUNT_OPTIONS, ret.refund.accountId ?? "")} · ${ret.refund.date ? formatDate(ret.refund.date) : ""}`
+                            ? `${formatPrice(ret.refund.amount)}${ret.refund.amount < ret.credit ? ` of ${formatPrice(ret.credit)}` : ""} · ${paymentMethodLabel(ret.refund.method)} · ${accountLabel(ret.refund.accountId ?? "")} · ${ret.refund.date ? formatDate(ret.refund.date) : ""}`
                             : ret.refund.mode === "pending"
                               ? `${formatPrice(ret.refund.amount)} still to come from the vendor`
                               : "Taken off what you owe"}

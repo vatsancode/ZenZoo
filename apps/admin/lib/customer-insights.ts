@@ -1,4 +1,4 @@
-import { saleLineNet, saleRefundTotal, type Sale } from "./sales";
+import { saleLineNet, saleMethods, saleRefundTotal, type Sale } from "./sales";
 
 const round = (value: number) => Math.round(value * 100) / 100;
 
@@ -79,7 +79,9 @@ export function preferencesOf(
   let subtotal = 0;
 
   for (const sale of sales) {
-    salesByMethod.set(sale.payment.method, (salesByMethod.get(sale.payment.method) ?? 0) + 1);
+    for (const method of new Set(saleMethods(sale))) {
+      salesByMethod.set(method, (salesByMethod.get(method) ?? 0) + 1);
+    }
     discounts += sale.lineDiscounts + sale.billDiscount;
     subtotal += sale.subtotal;
     for (const line of sale.lines) {

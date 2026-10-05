@@ -44,7 +44,13 @@ export default function PageHeader({
       <div style={{ flex: 1, minWidth: 0 }}>
         <h1 style={{ ...textStyle("title1"), color: colors.ink, margin: 0 }}>{title}</h1>
         {subtitle ? (
-          <p style={{ ...textStyle("callout"), color: colors.inkMuted, margin: `${spacing[1]}px 0 0` }}>
+          <p
+            style={{
+              ...textStyle("callout"),
+              color: colors.inkMuted,
+              margin: `${spacing[1]}px 0 0`,
+            }}
+          >
             {subtitle}
           </p>
         ) : null}

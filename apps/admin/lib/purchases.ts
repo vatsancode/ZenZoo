@@ -336,17 +336,44 @@ export function addPurchase(purchases: Purchase[], input: PurchaseInput): Purcha
   return [purchase, ...purchases];
 }
 
+/** Rewrites a draft purchase; its payments, deliveries and returns are kept as they are. */
+export function updatePurchase(
+  purchases: Purchase[],
+  id: string,
+  input: PurchaseInput,
+): Purchase[] {
+  return purchases.map((purchase) =>
+    purchase.id === id
+      ? {
+          ...purchase,
+          vendorId: input.vendorId,
+          reference: input.reference.trim() || undefined,
+          date: input.date,
+          status: input.status,
+          total: purchaseTotals(input.items, input.discount, input.tax, input.adjustment).total,
+          items: input.items,
+          discount: input.discount,
+          tax: input.tax,
+          adjustment: input.adjustment,
+          payments: input.payments,
+        }
+      : purchase,
+  );
+}
+
 /** The same vendor invoice can't be entered twice, unless the earlier one was cancelled. */
 export function referenceClash(
   purchases: Purchase[],
   vendorId: string,
   reference: string,
   status: PurchaseStatus,
+  ignoreId?: string,
 ): boolean {
   const wanted = reference.trim().toLowerCase();
   if (!wanted || status === "cancelled") return false;
   return purchases.some(
     (purchase) =>
+      purchase.id !== ignoreId &&
       purchase.vendorId === vendorId &&
       purchase.status !== "cancelled" &&
       purchase.reference?.toLowerCase() === wanted,

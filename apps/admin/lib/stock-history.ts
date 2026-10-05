@@ -126,7 +126,10 @@ export function purchaseHistory(item: StockItem): Purchase[] {
 // A valid EAN-13 (India prefix 890) built from a number, so the barcode looks real.
 function ean13(seed: number): string {
   const body = `890${String(seed % 1_000_000_000).padStart(9, "0")}`;
-  const sum = [...body].reduce((total, digit, index) => total + Number(digit) * (index % 2 ? 3 : 1), 0);
+  const sum = [...body].reduce(
+    (total, digit, index) => total + Number(digit) * (index % 2 ? 3 : 1),
+    0,
+  );
   return `${body}${(10 - (sum % 10)) % 10}`;
 }
 
@@ -287,6 +290,8 @@ export const MOVEMENT_ACTIONS: {
 export function markReversed(sku: string, id: string): void {
   movementLog.set(
     sku,
-    getMovements(sku).map((movement) => (movement.id === id ? { ...movement, reversed: true } : movement)),
+    getMovements(sku).map((movement) =>
+      movement.id === id ? { ...movement, reversed: true } : movement,
+    ),
   );
 }

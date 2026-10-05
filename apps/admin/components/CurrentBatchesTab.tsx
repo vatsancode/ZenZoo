@@ -40,7 +40,6 @@ export default function CurrentBatchesTab({
     }
   }
 
-
   const columns: TableColumn<Batch>[] = [
     {
       key: "batchNo",

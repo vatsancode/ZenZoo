@@ -1,3 +1,5 @@
+import { paymentMethodLabel } from "./payment-options";
+import { logAudit } from "./audit";
 import type { CatalogueItem } from "./catalogue-items";
 import type { Product, Unit } from "./stocks";
 
@@ -91,6 +93,16 @@ export interface SaleReturn {
   };
 }
 
+/** One way a sale was paid: how much, by what method, into which account. */
+export interface SalePayment {
+  method: string;
+  accountId: string;
+  /** What this payment counts for on the bill. */
+  amount: number;
+  /** For cash: what the customer actually handed over, when it was more than `amount`. */
+  tendered?: number;
+}
+
 export interface Sale {
   id: string;
   /** What is printed on the bill, e.g. INV-0007. */
@@ -105,8 +117,10 @@ export interface Sale {
   lineDiscounts: number;
   billDiscount: number;
   total: number;
-  /** What was paid by money. When store credit covered everything, method is STORE_CREDIT and amount is 0. */
-  payment: { method: string; accountId: string; amount: number };
+  /** Money taken now, one entry per way it was paid. Empty when store credit or credit sales covered it all. */
+  payments: SalePayment[];
+  /** Left unpaid and put on the customer's account, to be collected later. */
+  dueAmount?: number;
   /** Store credit spent on this sale, taken off what was owed. */
   creditUsed?: number;
   /** Goods the customer brought back, oldest first. */
@@ -243,7 +257,7 @@ let sales: Sale[] = [
     lineDiscounts: 0,
     billDiscount: 0,
     total: 14500,
-    payment: { method: "UPI", accountId: "hdfc-current", amount: 14500 },
+    payments: [{ method: "UPI", accountId: "hdfc-current", amount: 14500 }],
   },
   {
     id: "sale-2",
@@ -265,7 +279,7 @@ let sales: Sale[] = [
     lineDiscounts: 0,
     billDiscount: 50,
     total: 2700,
-    payment: { method: "CASH", accountId: "cash-drawer", amount: 2700 },
+    payments: [{ method: "CASH", accountId: "cash-drawer", amount: 2700 }],
   },
   {
     id: "sale-3",
@@ -288,7 +302,7 @@ let sales: Sale[] = [
     lineDiscounts: 840,
     billDiscount: 0,
     total: 15960,
-    payment: { method: "CARD", accountId: "hdfc-current", amount: 15960 },
+    payments: [{ method: "CARD", accountId: "hdfc-current", amount: 15960 }],
   },
   {
     id: "sale-4",
@@ -307,7 +321,7 @@ let sales: Sale[] = [
     lineDiscounts: 0,
     billDiscount: 700,
     total: 9000,
-    payment: { method: "BANK_TRANSFER", accountId: "icici-savings", amount: 9000 },
+    payments: [{ method: "BANK_TRANSFER", accountId: "icici-savings", amount: 9000 }],
     returns: [
       {
         id: "sret-1",
@@ -349,7 +363,7 @@ let sales: Sale[] = [
     lineDiscounts: 250,
     billDiscount: 0,
     total: 3500,
-    payment: { method: "CASH", accountId: "cash-drawer", amount: 3500 },
+    payments: [{ method: "CASH", accountId: "cash-drawer", amount: 3500 }],
   },
   {
     id: "sale-6",
@@ -362,7 +376,7 @@ let sales: Sale[] = [
     lineDiscounts: 0,
     billDiscount: 0,
     total: 15600,
-    payment: { method: "UPI", accountId: "hdfc-current", amount: 15600 },
+    payments: [{ method: "UPI", accountId: "hdfc-current", amount: 15600 }],
   },
   {
     id: "sale-7",
@@ -374,7 +388,7 @@ let sales: Sale[] = [
     lineDiscounts: 0,
     billDiscount: 0,
     total: 1980,
-    payment: { method: "CASH", accountId: "cash-drawer", amount: 1980 },
+    payments: [{ method: "CASH", accountId: "cash-drawer", amount: 1980 }],
   },
   {
     id: "sale-8",
@@ -407,7 +421,7 @@ let sales: Sale[] = [
     lineDiscounts: 0,
     billDiscount: 0,
     total: 9200,
-    payment: { method: "CARD", accountId: "hdfc-current", amount: 9200 },
+    payments: [{ method: "CARD", accountId: "hdfc-current", amount: 9200 }],
     returns: [
       {
         id: "sret-2",
@@ -427,6 +441,30 @@ let sales: Sale[] = [
         refund: { mode: "credit", amount: 5800 },
       },
     ],
+  },
+  {
+    id: "sale-9",
+    number: "INV-0009",
+    date: "2026-10-05",
+    customerId: "cus-3",
+    customerName: "Priya Raman",
+    lines: [
+      soldLine("SKU-TP-3001-M", "top-block-print", "Block print cotton top - M", 4, 650, 380),
+      soldLine(
+        "SKU-SW-2001-L",
+        "salwar-cotton-set",
+        "Cotton salwar set, printed - L",
+        2,
+        1450,
+        950,
+      ),
+    ],
+    subtotal: 5500,
+    lineDiscounts: 0,
+    billDiscount: 0,
+    total: 5500,
+    payments: [{ method: "CASH", accountId: "cash-drawer", amount: 2000, tendered: 2000 }],
+    dueAmount: 3500,
   },
 ];
 
@@ -453,6 +491,35 @@ export function addCustomer(
   };
   customers = [customer, ...customers];
   return customer;
+}
+
+/** Changes a customer's details. Their past sales keep the name they were made under. */
+export function editCustomer(
+  id: string,
+  details: { name: string; phone?: string; email?: string },
+): void {
+  const before = customers.find((customer) => customer.id === id);
+  customers = customers.map((customer) =>
+    customer.id === id
+      ? {
+          ...customer,
+          name: details.name.trim(),
+          phone: details.phone?.trim() || undefined,
+          email: details.email?.trim().toLowerCase() || undefined,
+        }
+      : customer,
+  );
+  const after = customers.find((customer) => customer.id === id);
+  if (before && after) {
+    logAudit({
+      action: "updated",
+      module: "Customers",
+      entity: "Customer",
+      label: after.name,
+      before: { Name: before.name, Phone: before.phone ?? null, Email: before.email ?? null },
+      after: { Name: after.name, Phone: after.phone ?? null, Email: after.email ?? null },
+    });
+  }
 }
 
 export async function listSales(): Promise<Sale[]> {
@@ -626,4 +693,110 @@ export function recordSaleReturn(saleId: string, ret: SaleReturn): void {
     });
     return { ...sale, lines, returns: [...(sale.returns ?? []), ret] };
   });
+}
+
+// ------------------------------------------------------------------ dues
+
+/** Money a customer paid towards what they owe on account. */
+export interface DueCollection {
+  id: string;
+  customerId: string;
+  /** ISO date, YYYY-MM-DD. */
+  date: string;
+  amount: number;
+  method: string;
+  /** The account the money went into. */
+  accountId: string;
+  note?: string;
+}
+
+// Sample data standing in for a real capability: the `customer_credit_ledger` in
+// docs/db-design.md carries credit sales and payments as signed entries, with no read
+// capability on the backend yet.
+let collections: DueCollection[] = [
+  {
+    id: "col-1",
+    customerId: "cus-3",
+    date: "2026-10-05",
+    amount: 500,
+    method: "UPI",
+    accountId: "hdfc-current",
+    note: "Part payment",
+  },
+];
+
+export async function listCollections(): Promise<DueCollection[]> {
+  return collections;
+}
+
+/** Records a payment towards a customer's dues. */
+export function recordCollection(input: Omit<DueCollection, "id">): DueCollection {
+  const collection: DueCollection = { ...input, id: `col-${Date.now()}` };
+  collections = [collection, ...collections];
+  logAudit({
+    action: "created",
+    module: "Customers",
+    entity: "Payment received",
+    label: `${customers.find((customer) => customer.id === input.customerId)?.name ?? "Customer"} · ₹${input.amount}`,
+    before: null,
+    after: { Amount: `₹${input.amount}`, Date: input.date, Note: input.note ?? null },
+  });
+  return collection;
+}
+
+export interface DueEntry {
+  date: string;
+  kind: "credit_sale" | "payment";
+  reference: string;
+  detail: string;
+  /** Signed: positive when the customer owes more, negative when they pay some back. */
+  amount: number;
+}
+
+/** What a customer owes: every credit sale, less every payment they have made since. Newest first. */
+export function dueEntries(
+  customerSales: Sale[],
+  customerCollections: DueCollection[],
+): DueEntry[] {
+  const owed: DueEntry[] = customerSales
+    .filter((sale) => (sale.dueAmount ?? 0) > 0)
+    .map((sale) => ({
+      date: sale.date,
+      kind: "credit_sale" as const,
+      reference: sale.number,
+      detail: "Left on account",
+      amount: sale.dueAmount ?? 0,
+    }));
+  const paid: DueEntry[] = customerCollections.map((collection) => ({
+    date: collection.date,
+    kind: "payment" as const,
+    reference: collection.id,
+    detail: collection.note ?? "Payment received",
+    amount: -collection.amount,
+  }));
+  return [...owed, ...paid].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+}
+
+export function dueBalance(entries: DueEntry[]): number {
+  return round(entries.reduce((sum, entry) => sum + entry.amount, 0));
+}
+
+/** Money taken now across every way a sale was paid. */
+export function paidNow(sale: Sale): number {
+  return round(sale.payments.reduce((sum, payment) => sum + payment.amount, 0));
+}
+
+/** The method codes a sale used, store credit and paying later included. */
+export function saleMethods(sale: Sale): string[] {
+  return [
+    ...sale.payments.map((payment) => payment.method),
+    ...((sale.creditUsed ?? 0) > 0 ? ["STORE_CREDIT"] : []),
+    ...((sale.dueAmount ?? 0) > 0 ? ["ON_ACCOUNT"] : []),
+  ];
+}
+
+/** However the sale was paid, in words: "UPI + Cash", "Store credit", "Cash + On account". */
+export function salePaymentLabel(sale: Sale): string {
+  const methods = Array.from(new Set(saleMethods(sale)));
+  return methods.length === 0 ? "-" : methods.map(paymentMethodLabel).join(" + ");
 }
