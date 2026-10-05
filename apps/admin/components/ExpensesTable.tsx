@@ -119,7 +119,6 @@ export default function ExpensesTable() {
         );
       })
       .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expenses, query, filters]);
 
   // Spending by category counts each line, so a mixed bill is split across its categories.

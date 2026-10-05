@@ -72,7 +72,7 @@ export default function AuditLog() {
     listAuditEntries().then((list) => setEntries([...list]));
   }, []);
 
-  const all = entries ?? [];
+  const all = useMemo(() => entries ?? [], [entries]);
   const modules = useMemo(
     () => Array.from(new Set(all.map((entry) => entry.module))).sort(),
     [all],

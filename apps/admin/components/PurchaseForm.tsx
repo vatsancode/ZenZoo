@@ -7,7 +7,6 @@ import {
   DatePicker,
   IconButton,
   Input,
-  Modal,
   Notice,
   Select,
   textStyle,
@@ -38,7 +37,6 @@ import {
   type Unit,
   type VariantInput,
 } from "../lib/stocks";
-import { PAYMENT_ACCOUNT_OPTIONS, PAYMENT_METHOD_OPTIONS } from "../lib/payment-options";
 import { listVendors, type Vendor } from "../lib/vendors";
 import AddStockSheet from "./AddStockSheet";
 import ProductPicker from "./ProductPicker";

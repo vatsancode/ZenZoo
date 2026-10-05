@@ -3,13 +3,7 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Badge, Button, Card, Notice, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState, type ReactNode } from "react";
-import {
-  PAYMENT_ACCOUNT_OPTIONS,
-  PAYMENT_METHOD_OPTIONS,
-  STORE_CREDIT,
-  accountLabel,
-  paymentMethodLabel,
-} from "../lib/payment-options";
+import { accountLabel, paymentMethodLabel } from "../lib/payment-options";
 import {
   canReturnSale,
   getSale,
@@ -32,9 +26,6 @@ import { listProducts, receiveStock, saveProducts } from "../lib/stocks";
 import PageHeader from "./PageHeader";
 import SaleReturnSheet from "./SaleReturnSheet";
 import StatTile, { StatRow } from "./StatTile";
-
-const labelOf = (options: { value: string; label: string }[], value: string) =>
-  options.find((option) => option.value === value)?.label ?? value;
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   const { colors, spacing } = useTheme();

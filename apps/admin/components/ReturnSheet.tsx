@@ -1,7 +1,7 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Button, Chips, DatePicker, Icon, Input, Select, Sheet, textStyle } from "@zenzoo/ui-web";
+import { Button, Chips, DatePicker, Input, Select, Sheet, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
 import { PAYMENT_ACCOUNT_OPTIONS, PAYMENT_METHOD_OPTIONS } from "../lib/payment-options";
 import {

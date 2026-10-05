@@ -46,7 +46,6 @@ import {
   type Purchase,
   type PurchaseItem,
   type PurchaseReturn,
-  type PurchasePayment,
 } from "../lib/purchases";
 import { formatDate, formatPrice } from "../lib/stock-display";
 import { listProducts, receiveStock, returnStock, saveProducts } from "../lib/stocks";
@@ -79,9 +78,6 @@ function todayIso(): string {
 }
 
 const pendingOf = (item: PurchaseItem) => Math.max(item.quantity - (item.received ?? 0), 0);
-const labelOf = (options: { value: string; label: string }[], value: string) =>
-  options.find((option) => option.value === value)?.label ?? value;
-
 /** A label above a value, for the small facts in the side cards. */
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   const { colors, spacing } = useTheme();

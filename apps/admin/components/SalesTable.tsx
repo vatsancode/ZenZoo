@@ -12,13 +12,7 @@ import {
 } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import {
-  PAYMENT_ACCOUNT_OPTIONS,
-  PAYMENT_METHOD_OPTIONS,
-  STORE_CREDIT,
-  accountLabel,
-  paymentMethodLabel,
-} from "../lib/payment-options";
+import { accountLabel, paymentMethodLabel } from "../lib/payment-options";
 import {
   listSales,
   saleMethods,
@@ -34,9 +28,6 @@ import { formatDate, formatPrice } from "../lib/stock-display";
 import FilterPills, { type FilterGroup } from "./FilterPills";
 import SalesFilterSheet, { NO_FILTERS, type SalesFilters } from "./SalesFilterSheet";
 import StatTile, { StatRow } from "./StatTile";
-
-const labelOf = (options: { value: string; label: string }[], value: string) =>
-  options.find((option) => option.value === value)?.label ?? value;
 
 /** Every sale that has been made: totals up top, then a searchable, filterable list. */
 export default function SalesTable() {
