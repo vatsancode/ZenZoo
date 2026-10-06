@@ -3,16 +3,10 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Card, DatePicker, Input, Modal, Select, textStyle } from "@zenzoo/ui-web";
 import { useState } from "react";
+import { today } from "../../lib/date-ranges";
 import { PAYMENT_ACCOUNT_OPTIONS, PAYMENT_METHOD_OPTIONS } from "../../lib/payment-options";
 import { dueBalance, type DueEntry } from "../sales/sales";
 import { formatDate, formatPrice } from "../../lib/stock-display";
-
-function today(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
-}
 
 const DEFAULT_ACCOUNT: Record<string, string> = {
   CASH: "cash-drawer",

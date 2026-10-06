@@ -4,6 +4,7 @@ import { useTheme } from "@zenzoo/design-tokens";
 import { Button, DatePicker, Sheet, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
 import type { Purchase, PurchaseItem } from "./purchases";
+import { today } from "../../lib/date-ranges";
 import FormField from "../../components/FormField";
 import InfoTip from "../../components/InfoTip";
 import QuantityPill from "../../components/QuantityPill";
@@ -23,13 +24,6 @@ interface ReceiveSheetProps {
 
 const number = (value: string) => (value.trim() === "" ? 0 : Number(value));
 const pendingOf = (item: PurchaseItem) => Math.max(item.quantity - (item.received ?? 0), 0);
-
-function today(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
-}
 
 /**
  * Records one delivery against a purchase. Each product is one row: how much has

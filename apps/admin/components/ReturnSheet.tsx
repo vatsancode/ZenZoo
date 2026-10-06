@@ -3,6 +3,7 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Chips, DatePicker, Input, Select, Sheet, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
+import { today } from "../lib/date-ranges";
 import { PAYMENT_ACCOUNT_OPTIONS, PAYMENT_METHOD_OPTIONS } from "../lib/payment-options";
 import {
   RETURN_REASONS,
@@ -47,13 +48,6 @@ const REFUND_OPTIONS: { value: RefundMode; label: string; help: string }[] = [
     help: "The credit is taken off what you owe this vendor. No money changes hands.",
   },
 ];
-
-function today(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
-}
 
 /**
  * Sends goods back to the vendor, in two steps in the same side panel as

@@ -3,6 +3,7 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, DatePicker, IconButton, Input, Modal, Select, textStyle } from "@zenzoo/ui-web";
 import type { ReactNode } from "react";
+import { today } from "../../lib/date-ranges";
 import { PAYMENT_ACCOUNT_OPTIONS, PAYMENT_METHOD_OPTIONS } from "../../lib/payment-options";
 
 /** A payment as typed: the amount stays a string until it is saved. */
@@ -11,13 +12,6 @@ export interface PayRow {
   method: string;
   accountId: string;
   date: string;
-}
-
-function today(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
 }
 
 export function newPayRow(): PayRow {

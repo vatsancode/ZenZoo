@@ -26,6 +26,7 @@ import {
   type PurchaseItem,
   type PurchaseStatus,
 } from "./purchases";
+import { today } from "../../lib/date-ranges";
 import { formatPrice } from "../../lib/stock-display";
 import {
   addStock,
@@ -80,13 +81,6 @@ const SAVE_LABEL: Record<PurchaseStatus, string> = {
   received: "Save as received",
   cancelled: "Save as cancelled",
 };
-
-function today(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
-}
 
 const number = (value: string) => (value.trim() === "" ? 0 : Number(value));
 const money = (value: number) => Math.round(value * 100) / 100;

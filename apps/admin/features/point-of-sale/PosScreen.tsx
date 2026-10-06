@@ -3,6 +3,7 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Modal, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useMemo, useState } from "react";
+import { today as todayIso } from "../../lib/date-ranges";
 import { accountLabel, paymentMethodLabel } from "../../lib/payment-options";
 import {
   addCustomer,
@@ -28,13 +29,6 @@ import { creditBalance, creditEntries, customerSales } from "../customers/custom
 import PosCheckout, { type CheckoutDetails } from "./PosCheckout";
 import PosLines from "./PosLines";
 import PosSearch from "./PosSearch";
-
-function todayIso(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
-}
 
 /** The point of sale: pick products into a cart, discount, attach a customer, take payment. */
 export default function PosScreen() {

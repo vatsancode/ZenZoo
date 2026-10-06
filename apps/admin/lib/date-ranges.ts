@@ -3,6 +3,8 @@ const pad = (value: number) => String(value).padStart(2, "0");
 export const isoDate = (date: Date) =>
   `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 
+export const today = () => isoDate(new Date());
+
 const daysAgo = (days: number) => {
   const date = new Date();
   date.setDate(date.getDate() - days);

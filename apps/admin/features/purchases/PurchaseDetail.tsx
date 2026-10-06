@@ -47,6 +47,7 @@ import {
   type PurchaseItem,
   type PurchaseReturn,
 } from "./purchases";
+import { today as todayIso } from "../../lib/date-ranges";
 import { formatDate, formatPrice } from "../../lib/stock-display";
 import { listProducts, receiveStock, returnStock, saveProducts } from "../stocks/stocks";
 import { listVendors, type Vendor } from "../vendors/vendors";
@@ -70,13 +71,6 @@ const TABS = [
 ];
 
 /** Today as YYYY-MM-DD in the viewer's own time zone. */
-function todayIso(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
-}
-
 const pendingOf = (item: PurchaseItem) => Math.max(item.quantity - (item.received ?? 0), 0);
 /** A label above a value, for the small facts in the side cards. */
 function Fact({ label, children }: { label: string; children: ReactNode }) {
