@@ -1,0 +1,14 @@
+-- Real bug found while first exercising provision_new_account() end to
+-- end: check_tenant_has_active_owner() takes `SELECT ... FOR SHARE` on
+-- tenants to guard the owner invariant against a concurrent tenant
+-- status change (see "The owner invariant" in docs/db-design.md). Row
+-- locking (FOR SHARE/FOR UPDATE) requires UPDATE privilege on Postgres,
+-- not just SELECT - but app_role was deliberately granted only
+-- SELECT, INSERT on tenants ("app_role creates new tenants but never
+-- edits existing ones" - the application-role privilege model). Nothing
+-- had called this path for real until now, so the conflict went
+-- unnoticed. Fix: grant UPDATE on exactly one column that is already
+-- trigger-only and never written by application code, which is enough
+-- to satisfy Postgres's lock-privilege check without opening any real
+-- write access - app_role still cannot change name/slug/status/etc.
+GRANT UPDATE (updated_at) ON tenants TO app_role;

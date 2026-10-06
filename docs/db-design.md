@@ -86,6 +86,7 @@ CREATE TABLE users (
     status              VARCHAR(20) NOT NULL DEFAULT 'active'
                             CONSTRAINT users_status_check
                             CHECK (status IN ('active', 'suspended', 'deactivated')),
+    password_hash       VARCHAR(255) NOT NULL,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -103,8 +104,40 @@ CREATE TRIGGER trg_users_set_updated_at
 - **`email`** — same pattern as `tenants.slug`: lowercase enforced by `CHECK`, plain `UNIQUE` (no `CITEXT`), app normalizes before insert. This is the login identifier.
 - **`phone`** — optional, not unique. A shared shop phone or a household number can legitimately belong to more than one person; don't force uniqueness the data doesn't have.
 - **`status`** — `active` / `suspended` (temporary, e.g. security concern) / `deactivated` (terminal soft-delete, same reasoning as `tenants.archived` — no `deleted_at`, no hard delete). Note this is the person's global account status, independent of any particular tenant relationship — a deactivated user's memberships should be handled separately (see `tenant_memberships.status`), not inferred from this field.
-- Deliberately **excluded**: password hash / auth provider fields (belongs to whatever auth system — Supabase Auth, Clerk, custom — is chosen; this table models the user record the app owns, not the credential store), and anything tenant- or role-shaped.
+- **`password_hash`** — **decided**: custom auth, no self-serve signup, no forgot-password. A platform admin sets a tenant owner's password directly at creation time (see `platform_admins` and `provision_new_account()` in "Bootstrapping"); an owner sets an invited staff member's password the same way. Always a hash (bcrypt), never plaintext, and the application never logs or returns it. This reverses the earlier "deliberately excluded, deferred to an auth provider" decision below it replaces — Supabase Auth/Clerk were considered and dropped in favor of owning this directly.
 - **RLS** — this is the one tenant-owned-elsewhere table with no `tenant_id` column of its own, by design (see above). Its policy is membership-based instead of column-based; see "Row-level security" for the actual `CREATE POLICY` statement. `app_role` has no `INSERT` on this table at all — the only way a row is ever created is the dedicated `SECURITY DEFINER` bootstrap function; see "Bootstrapping" for why account creation needs that and ordinary `SELECT`/`UPDATE` don't.
+
+---
+
+## `platform_admins`
+
+A person who can create new tenants — acting *before and outside* any tenant, which is a genuinely different role from `owner`/`manager`/`cashier` in `tenant_memberships` (those only mean something once a tenant exists). Deliberately not a `users` row: that identity space is scoped to "inside a tenant" (see `users`' own notes), and this role never is.
+
+```sql
+CREATE TABLE platform_admins (
+    id              UUID PRIMARY KEY DEFAULT uuidv7(),
+    email           VARCHAR(255) NOT NULL UNIQUE
+                        CONSTRAINT platform_admins_email_lowercase_check
+                        CHECK (email = lower(email)),
+    password_hash   VARCHAR(255) NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TRIGGER trg_platform_admins_set_updated_at
+    BEFORE UPDATE ON platform_admins
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+
+GRANT SELECT ON platform_admins TO app_role;
+```
+
+### Notes
+
+- **No RLS** — not tenant-owned data, and holds at most a handful of rows.
+- **`app_role` gets `SELECT` only — no `INSERT`/`UPDATE`/`DELETE`, ever.** A platform admin account can only be created or rotated by someone with direct database access (see `server/api/src/scripts/hash-password.ts`), never through the live app. This is the same "no self-serve creation" shape `users` already has for its own bootstrap, applied one level higher.
+- **Password verification happens in application code, not SQL.** A bcrypt hash can't be compared with plain equality (same input hashed twice produces different output, by design) — the backend reads `password_hash` via the `SELECT` grant above and calls its hashing library's own `compare`, never a SQL `WHERE password_hash = ...`.
+- **How this is actually used**: see `provision_new_account()` in "Bootstrapping" — a platform admin's one real action is calling that function to create a tenant, its main store, and its owner (with a password) atomically. Nothing else is exposed to this role.
 
 ---
 
@@ -251,7 +284,7 @@ BEGIN
             p_tenant_id, v_tenant_status;
     END IF;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public;
 
 -- guard on tenant_memberships: catches remove / suspend / role-change / delete of an owner
 CREATE FUNCTION trg_fn_tenant_memberships_owner_guard() RETURNS TRIGGER AS $$
@@ -289,6 +322,11 @@ CREATE CONSTRAINT TRIGGER trg_tenants_owner_guard
     FOR EACH ROW
     EXECUTE FUNCTION trg_fn_tenants_owner_guard();
 ```
+
+**Two real bugs found the first time this was actually exercised end to end** (both now fixed above, not just noted):
+
+1. **`check_tenant_has_active_owner()` must be `SECURITY DEFINER`.** The owner-guard triggers are `DEFERRABLE INITIALLY DEFERRED`, so they fire at `COMMIT` — *after* `provision_new_account()` (see "Bootstrapping") has already returned, outside that function's `SECURITY DEFINER` scope. Run as plain `SECURITY INVOKER`, this check executes as `app_role` with no tenant context set (cold start has none, by design), so its own `SELECT count(*) FROM tenant_memberships WHERE tenant_id = ...` gets silently filtered to zero rows by the `tenant_isolation` RLS policy — not because the owner membership wasn't inserted (it was, inside `provision_new_account`'s own elevated scope), but because RLS hides it from this later, context-less check. The invariant then wrongly concludes "no owner" and rolls back a perfectly valid provisioning call. Making this function `SECURITY DEFINER` too (same owner as the tables it reads) fixes it, and is safe: it still only ever returns `VOID` for an already-identified `tenant_id` the caller is already touching, revealing nothing new.
+2. **`app_role` needs `UPDATE` privilege to take the `FOR SHARE` lock, not just `SELECT`.** Postgres requires `UPDATE` (not merely `SELECT`) to acquire a row lock via `FOR UPDATE`/`FOR SHARE` — but "The application-role privilege model" deliberately grants `app_role` only `SELECT, INSERT` on `tenants` ("app_role creates new tenants but never edits existing ones"). The fix keeps that intent intact: `GRANT UPDATE (updated_at) ON tenants TO app_role` — a column that is already trigger-only and never written directly by application code, just enough to satisfy the lock-privilege check without opening any real write access to `name`/`slug`/`status`.
 
 **Why deferred, specifically:** because the check runs at `COMMIT` (or at an explicit `SET CONSTRAINTS ... IMMEDIATE`) rather than after each individual statement, an atomic "swap owner" — `UPDATE ... SET role='manager' WHERE id=<old-owner>` then `INSERT ...` a new owner row, both inside one transaction — passes, because only the *final* state at commit is checked. A bare single-statement removal of the last owner (the common accidental case) still fails, because in autocommit mode each statement is its own transaction and the deferred check fires at the end of it. This is the standard Postgres pattern for exactly this shape of invariant — an aggregate condition over sibling rows that a row-level `CHECK` cannot see.
 
@@ -554,6 +592,9 @@ GRANT SELECT, INSERT, DELETE ON membership_store_access TO app_role;
 --   tenants              — status transitions (suspend/archive) are a platform-admin
 --                           operation, not yet built (see that table's own RLS note);
 --                           app_role creates new tenants but never edits existing ones.
+--                           The one exception is below: UPDATE on just `updated_at`,
+--                           needed only to take the row lock check_tenant_has_active_owner()
+--                           uses — not a real write path (see "The owner invariant").
 --   inventory_batches    — immutable in every column except available_quantity (and
 --                           updated_at), and even those two are trigger-only; app_role
 --                           has no legitimate direct UPDATE here at all (see below).
@@ -570,12 +611,22 @@ REVOKE UPDATE (available_quantity) ON inventory_batches FROM app_role;
 REVOKE UPDATE, DELETE, TRUNCATE ON stock_movements FROM app_role;
 REVOKE UPDATE, DELETE, TRUNCATE ON customer_credit_ledger FROM app_role;
 
+-- see "The owner invariant": Postgres requires UPDATE (not just SELECT) to take
+-- a FOR SHARE row lock, which check_tenant_has_active_owner() does on tenants.
+-- Grant it on exactly one trigger-only column, never a real content column.
+GRANT UPDATE (updated_at) ON tenants TO app_role;
+
 -- users: no INSERT at all (see "Bootstrapping" — the only way a users row is ever
 -- created is the dedicated SECURITY DEFINER function, never a direct app_role insert).
 -- SELECT/UPDATE are governed by the tenant_membership_or_self policy from "Row-level
 -- security" — an UPDATE is only visible/writable for your own row or a fellow member of
 -- your current tenant, same as a SELECT would be.
 GRANT SELECT, UPDATE ON users TO app_role;
+
+-- platform_admins: SELECT only, for the login check (see that table's own notes) -
+-- never INSERT/UPDATE/DELETE, so an admin account can only be created or rotated
+-- with direct database access, never through the live app.
+GRANT SELECT ON platform_admins TO app_role;
 ```
 
 **Why `inventory_batches` needs no `UPDATE` grant at all, not even a column-restricted one.** `trg_inventory_batches_prevent_core_change` already blocks every column except `available_quantity`/`updated_at` from changing by application-level content rules; between those two, `available_quantity` must only ever move via the ledger and `updated_at` is trigger-set. There is, in other words, no column on this table app_role has any legitimate reason to `UPDATE` directly — so the grant is withheld entirely, and the explicit column-level `REVOKE` above is pure documentation of intent, not load-bearing on its own.
@@ -597,54 +648,68 @@ Every policy in "Row-level security" assumes a tenant and/or user context alread
 
 **Cold start is handled by one narrowly-scoped `SECURITY DEFINER` function — not by granting `app_role` any broader bypass:**
 
+**Who may call this at all is an application-layer decision, not a database one.** Nothing in Postgres's grants can distinguish "this `app_role` connection is the platform admin" from "this `app_role` connection is a cashier" — every live request connects as the exact same database role. The database's job is only "can this function create an island safely if called"; "is the caller actually allowed to call it" is enforced one layer up, by `server/api`'s own platform-admin check (HTTP Basic Auth against `platform_admins`, verified before this function is ever reached — see `server/api/src/auth/platform-admin.ts`).
+
 ```sql
 -- the ONE deliberate, narrow exception to "app_role never bypasses RLS." Runs as
--- app_owner (its definer), which — as the owner of users/tenants/tenant_memberships —
--- is exempt from RLS on them, for exactly the three inserts below and nothing else.
--- It is not a general-purpose escape hatch: it takes no caller-supplied tenant_id or
--- user_id to attach new rows to an EXISTING tenant, it only ever creates a brand-new
--- user, a brand-new tenant, and the one membership tying them together — and it hands
--- back only the three ids it just created. There is no code path through this function
--- that can read or write a tenant that already exists.
+-- app_owner (its definer), which — as the owner of users/tenants/stores/
+-- tenant_memberships — is exempt from RLS on them, for exactly the four inserts
+-- below and nothing else. It is not a general-purpose escape hatch: it takes no
+-- caller-supplied tenant_id or user_id to attach new rows to an EXISTING tenant,
+-- it only ever creates a brand-new user, a brand-new tenant, its main store, and
+-- the one membership tying them together — and it hands back only the ids it
+-- just created. There is no code path through this function that can read or
+-- write a tenant that already exists.
 CREATE FUNCTION provision_new_account(
-    p_email       VARCHAR(255),
-    p_first_name  VARCHAR(100),
-    p_last_name   VARCHAR(100),
-    p_tenant_name VARCHAR(200),
-    p_tenant_slug VARCHAR(100)
-) RETURNS TABLE (user_id UUID, tenant_id UUID, membership_id UUID) AS $$
+    p_email         VARCHAR(255),
+    p_password_hash VARCHAR(255),
+    p_first_name    VARCHAR(100),
+    p_last_name     VARCHAR(100),
+    p_tenant_name   VARCHAR(200),
+    p_tenant_slug   VARCHAR(100),
+    p_store_name    VARCHAR(200),
+    p_store_code    VARCHAR(50)
+) RETURNS TABLE (user_id UUID, tenant_id UUID, store_id UUID, membership_id UUID) AS $$
 DECLARE
     v_user_id       UUID;
     v_tenant_id     UUID;
+    v_store_id      UUID;
     v_membership_id UUID;
 BEGIN
-    INSERT INTO users (email, first_name, last_name)
-    VALUES (lower(p_email), p_first_name, p_last_name)
+    INSERT INTO users (email, password_hash, first_name, last_name)
+    VALUES (lower(p_email), p_password_hash, p_first_name, p_last_name)
     RETURNING id INTO v_user_id;
 
     -- status is 'trial' here, which is exactly what requires an active owner — see the
-    -- next insert, and "Required provisioning order" under tenant_memberships
+    -- tenant_memberships insert below, and "Required provisioning order" under
+    -- tenant_memberships
     INSERT INTO tenants (name, slug, status)
     VALUES (p_tenant_name, p_tenant_slug, 'trial')
     RETURNING id INTO v_tenant_id;
+
+    INSERT INTO stores (tenant_id, name, code)
+    VALUES (v_tenant_id, p_store_name, p_store_code)
+    RETURNING id INTO v_store_id;
 
     INSERT INTO tenant_memberships (tenant_id, user_id, role, status)
     VALUES (v_tenant_id, v_user_id, 'owner', 'active')
     RETURNING id INTO v_membership_id;
 
-    RETURN QUERY SELECT v_user_id, v_tenant_id, v_membership_id;
+    RETURN QUERY SELECT v_user_id, v_tenant_id, v_store_id, v_membership_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public;
 
-REVOKE EXECUTE ON FUNCTION provision_new_account(VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION provision_new_account(VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR) TO app_role;
+REVOKE EXECUTE ON FUNCTION provision_new_account(VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION provision_new_account(VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR) TO app_role;
 ```
 
-**Why this doesn't weaken tenant isolation.** `app_role` is granted `EXECUTE` on this *one* function, not `INSERT` on `users`/`tenants`/`tenant_memberships` directly (the privilege model above grants `app_role` no `INSERT` on `users` at all, and only a plain, RLS-governed `INSERT` on `tenants`/`tenant_memberships` for case 2 above). The function's own body is the entire bypass surface, and it is fixed, reviewable code with no caller-supplied id that could redirect it at an existing tenant — a caller can make it create a new island, never touch an existing one. Calling it twice creates two unrelated tenants, never adds a second owner to the first.
+**Why this doesn't weaken tenant isolation.** `app_role` is granted `EXECUTE` on this *one* function, not `INSERT` on `users`/`tenants`/`stores`/`tenant_memberships` directly (the privilege model above grants `app_role` no `INSERT` on `users` at all, and only a plain, RLS-governed `INSERT` on `tenants`/`tenant_memberships` for case 2 above). The function's own body is the entire bypass surface, and it is fixed, reviewable code with no caller-supplied id that could redirect it at an existing tenant — a caller can make it create a new island, never touch an existing one. Calling it twice creates two unrelated tenants, never adds a second owner to the first.
 
-**When session context becomes available.** There is none during the call itself — that's the whole reason this function exists. Immediately after it returns, the application's authentication layer (Supabase Auth, Clerk, or custom — same external system `users`' own notes already defer credential storage to) mints the real session for the new `user_id`, and every request from that point on carries `tenant_id`/`user_id` as verified JWT claims, populating `app.current_tenant_id`/`app.current_user_id` exactly as "Row-level security" describes for any other authenticated request. Nothing about steady-state request handling is special-cased for a freshly-provisioned account.
+**No self-serve signup and no forgot-password — decided.** `p_password_hash` is supplied by the caller (the platform admin's own request, for the tenant's owner; an owner's own request, for an invited staff member's first password), hashed before this function is ever called — never a plaintext password typed by the new user themselves on a public signup page. There is no password-reset flow built or planned; a forgotten password is reset by whoever is allowed to set one in the first place (the platform admin for an owner, an owner/manager for their own staff).
 
-**Atomicity and the owner invariant.** All three inserts run inside the one statement that calls this function; if any of them fails (a duplicate email, a duplicate slug), the whole call rolls back and nothing is left half-created. `trg_tenants_owner_guard`'s deferred check — which requires an active owner before a `trial`/`active` tenant's *outer* transaction can commit — sees the owner membership already inserted by the time it runs, satisfying "Required provisioning order" automatically as long as the caller wraps this single function call in its own transaction (or lets it run as the implicit single-statement transaction it already is).
+**When session context becomes available.** There is none during the call itself — that's the whole reason this function exists. Immediately after it returns, the application's authentication layer mints the real session for the new `user_id` by checking the owner's email/password directly against `users.password_hash`, and every request from that point on carries `tenant_id`/`user_id` as verified claims, populating `app.current_tenant_id`/`app.current_user_id` exactly as "Row-level security" describes for any other authenticated request. Nothing about steady-state request handling is special-cased for a freshly-provisioned account.
+
+**Atomicity and the owner invariant.** All four inserts run inside the one statement that calls this function; if any of them fails (a duplicate email, a duplicate slug), the whole call rolls back and nothing is left half-created. `trg_tenants_owner_guard`'s deferred check — which requires an active owner before a `trial`/`active` tenant's *outer* transaction can commit — sees the owner membership already inserted by the time it runs, satisfying "Required provisioning order" automatically as long as the caller wraps this single function call in its own transaction (or lets it run as the implicit single-statement transaction it already is). See "The owner invariant" above for the two real bugs this exposed the first time it was actually called, and their fixes.
 
 **The same pattern extends to invite acceptance, not built out further here.** Accepting a `tenant_memberships` invite (`status='invited'`, `user_id IS NULL`) has an identical cold-start shape — the invited person has no `users` row and no session either — so it needs its own, equally narrow `SECURITY DEFINER` function (create the `users` row, then update the *one* specific, already-`invited` membership row a validated invite token names, nothing else reachable). It is not specified in full here because it wasn't part of the flow this pass was asked to resolve, but any implementation must follow this exact template — one function, one narrow job, no caller-supplied access to anything pre-existing beyond the single row an out-of-band-verified token already identifies — rather than widening `provision_new_account` or granting `app_role` any broader insert/update privilege to cover it.
 

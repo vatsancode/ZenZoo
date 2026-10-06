@@ -1,0 +1,21 @@
+-- Second real bug found while first exercising provision_new_account()
+-- end to end: check_tenant_has_active_owner() is SECURITY INVOKER, but
+-- it is called from a DEFERRABLE INITIALLY DEFERRED trigger - which
+-- fires at COMMIT, outside the dynamic scope of the SECURITY DEFINER
+-- call that queued it. By commit time it runs as app_role with no
+-- tenant context set (the cold-start case has none, by design - see
+-- "Bootstrapping" in docs/db-design.md), so its own
+-- `SELECT count(*) FROM tenant_memberships WHERE tenant_id = ...` gets
+-- silently filtered to zero rows by the tenant_isolation RLS policy -
+-- not because the owner membership wasn't inserted (it was, inside
+-- provision_new_account's own SECURITY DEFINER scope), but because RLS
+-- hides it from this later, context-less check. The owner invariant
+-- then wrongly concludes "no owner" and rolls back a perfectly valid
+-- provisioning call. Same fix as provision_new_account itself: run this
+-- check with the privileges of its (table-owning) owner, bypassing RLS,
+-- the same way app_current_tenant_id()'s own callers already rely on
+-- for other cross-cutting checks. It still only ever returns VOID
+-- (raises or passes) for an already-identified tenant_id the caller is
+-- already touching, so this reveals nothing new to any caller.
+ALTER FUNCTION check_tenant_has_active_owner(UUID)
+    SECURITY DEFINER SET search_path = pg_catalog, public;

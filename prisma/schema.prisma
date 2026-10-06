@@ -339,22 +339,22 @@ model sale_payments {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model sale_return_items {
-  id                 String              @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  tenant_id          String              @db.Uuid
-  store_id           String              @db.Uuid
-  variant_id         String              @db.Uuid
-  sale_return_id     String              @db.Uuid
-  sale_item_id       String              @db.Uuid
-  sale_item_batch_id String              @db.Uuid
+  id                 String             @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id          String             @db.Uuid
+  store_id           String             @db.Uuid
+  variant_id         String             @db.Uuid
+  sale_return_id     String             @db.Uuid
+  sale_item_id       String             @db.Uuid
+  sale_item_batch_id String             @db.Uuid
   quantity           Int
-  notes              String?             @db.VarChar(500)
-  created_at         DateTime            @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime            @default(now()) @db.Timestamptz(6)
+  notes              String?            @db.VarChar(500)
+  created_at         DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime           @default(now()) @db.Timestamptz(6)
   inventory_batches  inventory_batches[]
   sale_item_batches  sale_item_batches   @relation(fields: [tenant_id, store_id, sale_item_batch_id, sale_item_id, variant_id], references: [tenant_id, store_id, id, sale_item_id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "sale_return_items_batch_fk")
-  sale_returns       sale_returns        @relation(fields: [tenant_id, store_id, sale_return_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sale_return_items_return_fk")
-  sale_items         sale_items          @relation(fields: [tenant_id, store_id, sale_item_id, variant_id], references: [tenant_id, store_id, id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "sale_return_items_sale_item_fk")
-  tenants            tenants             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  sale_returns       sale_returns       @relation(fields: [tenant_id, store_id, sale_return_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sale_return_items_return_fk")
+  sale_items         sale_items         @relation(fields: [tenant_id, store_id, sale_item_id, variant_id], references: [tenant_id, store_id, id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "sale_return_items_sale_item_fk")
+  tenants            tenants            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([tenant_id, store_id, id, variant_id], map: "sale_return_items_target_unique")
   @@index([tenant_id, store_id, sale_item_batch_id], map: "idx_sale_return_items_batch")
@@ -576,6 +576,7 @@ model users {
   status                 String                   @default("active") @db.VarChar(20)
   created_at             DateTime                 @default(now()) @db.Timestamptz(6)
   updated_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  password_hash          String                   @db.VarChar(255)
   customer_credit_ledger customer_credit_ledger[]
   purchase_returns       purchase_returns[]
   sale_payments          sale_payments[]
@@ -611,4 +612,13 @@ model variants {
   @@index([tenant_id, sellable_id], map: "idx_variants_sellable")
   @@index([tenant_id, store_id], map: "idx_variants_store")
   @@index([tenant_id, store_id, status], map: "idx_variants_store_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model platform_admins {
+  id            String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  email         String   @unique @db.VarChar(255)
+  password_hash String   @db.VarChar(255)
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @db.Timestamptz(6)
 }
