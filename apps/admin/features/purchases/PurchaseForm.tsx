@@ -25,8 +25,8 @@ import {
   type Purchase,
   type PurchaseItem,
   type PurchaseStatus,
-} from "../lib/purchases";
-import { formatPrice } from "../lib/stock-display";
+} from "./purchases";
+import { formatPrice } from "../../lib/stock-display";
 import {
   addStock,
   addVariant,
@@ -36,20 +36,20 @@ import {
   type Product,
   type Unit,
   type VariantInput,
-} from "../lib/stocks";
-import { listVendors, type Vendor } from "../lib/vendors";
-import AddStockSheet from "./AddStockSheet";
-import ProductPicker from "./ProductPicker";
-import VariantSheet from "./VariantSheet";
-import FormField from "./FormField";
-import PageHeader from "./PageHeader";
+} from "../../lib/stocks";
+import { listVendors, type Vendor } from "../../lib/vendors";
+import AddStockSheet from "../../components/AddStockSheet";
+import ProductPicker from "../../components/ProductPicker";
+import VariantSheet from "../../components/VariantSheet";
+import FormField from "../../components/FormField";
+import PageHeader from "../../components/PageHeader";
 import PaymentsModal, {
   countedRows,
   newPayRow,
   payRowProblems,
   rowsTotal,
   type PayRow,
-} from "./PaymentsModal";
+} from "../../components/PaymentsModal";
 import PurchaseStatusPicker from "./PurchaseStatusPicker";
 
 /** A line as typed: quantity and cost stay strings until the form is saved. */

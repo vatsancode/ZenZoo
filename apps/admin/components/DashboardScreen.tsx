@@ -31,7 +31,7 @@ import {
 } from "../lib/dashboard";
 import { listCatalogueItems, type CatalogueItem } from "../lib/catalogue-items";
 import { listExpenses, type Expense } from "../lib/expenses";
-import { listPurchases, type Purchase } from "../lib/purchases";
+import { listPurchases, type Purchase } from "../features/purchases/purchases";
 import { listCollections, listSales, type DueCollection, type Sale } from "../lib/sales";
 import { formatPrice } from "../lib/stock-display";
 import { listProducts, type Product } from "../lib/stocks";

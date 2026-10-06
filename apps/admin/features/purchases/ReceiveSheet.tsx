@@ -3,10 +3,10 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, DatePicker, Sheet, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
-import type { Purchase, PurchaseItem } from "../lib/purchases";
-import FormField from "./FormField";
-import InfoTip from "./InfoTip";
-import QuantityPill from "./QuantityPill";
+import type { Purchase, PurchaseItem } from "./purchases";
+import FormField from "../../components/FormField";
+import InfoTip from "../../components/InfoTip";
+import QuantityPill from "../../components/QuantityPill";
 
 export interface DeliveryInput {
   date: string;

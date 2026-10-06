@@ -1,7 +1,7 @@
 import { PAYMENT_ACCOUNT_LABELS, PAYMENT_ACCOUNT_OPTIONS } from "./payment-options";
 import { logAudit } from "./audit";
 import { listExpenses } from "./expenses";
-import { listPurchases } from "./purchases";
+import { listPurchases } from "../features/purchases/purchases";
 import { listCollections, listCustomers, listSales } from "./sales";
 import { formatPrice } from "./stock-display";
 

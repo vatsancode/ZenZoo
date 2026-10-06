@@ -1,5 +1,5 @@
 import type { Expense } from "./expenses";
-import { purchaseBalance, type Purchase } from "./purchases";
+import { purchaseBalance, type Purchase } from "../features/purchases/purchases";
 import { saleLineNet, saleProfitOf, saleRefundTotal, type Sale } from "./sales";
 import type { Product } from "./stocks";
 

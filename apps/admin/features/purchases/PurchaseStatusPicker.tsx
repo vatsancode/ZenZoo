@@ -3,7 +3,7 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Icon, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useRef, useState } from "react";
-import { PURCHASE_STATUS_LABEL, type PurchaseStatus } from "../lib/purchases";
+import { PURCHASE_STATUS_LABEL, type PurchaseStatus } from "./purchases";
 
 interface PurchaseStatusPickerProps {
   value: PurchaseStatus;

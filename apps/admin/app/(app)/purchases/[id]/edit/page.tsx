@@ -1,6 +1,6 @@
 import { spacing } from "@zenzoo/design-tokens";
 import type { Metadata } from "next";
-import PurchaseForm from "../../../../../components/PurchaseForm";
+import PurchaseForm from "../../../../../features/purchases/PurchaseForm";
 
 export const metadata: Metadata = {
   title: "Edit purchase - ZenZoo Admin",

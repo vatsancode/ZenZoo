@@ -21,7 +21,7 @@ import {
   PAYMENT_METHOD_OPTIONS,
   accountLabel,
   paymentMethodLabel,
-} from "../lib/payment-options";
+} from "../../lib/payment-options";
 import {
   addPayments,
   addReturn,
@@ -46,22 +46,22 @@ import {
   type Purchase,
   type PurchaseItem,
   type PurchaseReturn,
-} from "../lib/purchases";
-import { formatDate, formatPrice } from "../lib/stock-display";
-import { listProducts, receiveStock, returnStock, saveProducts } from "../lib/stocks";
-import { listVendors, type Vendor } from "../lib/vendors";
-import FormField from "./FormField";
-import PageHeader from "./PageHeader";
-import ReturnSheet from "./ReturnSheet";
+} from "./purchases";
+import { formatDate, formatPrice } from "../../lib/stock-display";
+import { listProducts, receiveStock, returnStock, saveProducts } from "../../lib/stocks";
+import { listVendors, type Vendor } from "../../lib/vendors";
+import FormField from "../../components/FormField";
+import PageHeader from "../../components/PageHeader";
+import ReturnSheet from "../../components/ReturnSheet";
 import PaymentsModal, {
   countedRows,
   newPayRow,
   payRowProblems,
   rowsTotal,
   type PayRow,
-} from "./PaymentsModal";
+} from "../../components/PaymentsModal";
 import ReceiveSheet, { type DeliveryInput } from "./ReceiveSheet";
-import StatTile, { StatRow } from "./StatTile";
+import StatTile, { StatRow } from "../../components/StatTile";
 
 const TABS = [
   { id: "overview", label: "Overview" },

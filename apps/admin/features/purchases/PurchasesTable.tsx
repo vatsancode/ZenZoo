@@ -17,9 +17,9 @@ import {
   PURCHASE_STATUS_LABEL,
   PURCHASE_STATUS_TONE,
   type Purchase,
-} from "../lib/purchases";
-import { formatDate, formatPrice } from "../lib/stock-display";
-import { listVendors, type Vendor } from "../lib/vendors";
+} from "./purchases";
+import { formatDate, formatPrice } from "../../lib/stock-display";
+import { listVendors, type Vendor } from "../../lib/vendors";
 
 export default function PurchasesTable() {
   const { colors, spacing } = useTheme();

@@ -12,7 +12,7 @@ import {
   type PurchaseItem,
   type PurchaseReturn,
   type RefundMode,
-} from "../lib/purchases";
+} from "../features/purchases/purchases";
 import { formatPrice } from "../lib/stock-display";
 import FormField from "./FormField";
 import InfoTip from "./InfoTip";
