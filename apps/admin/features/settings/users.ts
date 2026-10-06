@@ -3,13 +3,14 @@ import { logAudit } from "../../lib/audit";
 // Sample data standing in for a real capability: there is no users, roles or auth read
 // capability on the backend yet. Replace with real calls once they exist.
 
-export const ACCESS_LEVELS = ["none", "view", "edit"] as const;
+export const ACCESS_LEVELS = ["none", "view", "edit", "delete"] as const;
 export type AccessLevel = (typeof ACCESS_LEVELS)[number];
 
 export const ACCESS_LABEL: Record<AccessLevel, string> = {
   none: "No access",
   view: "Can view",
   edit: "Can view and change",
+  delete: "Can view, change and delete",
 };
 
 /** The areas of the app a role can be given access to. */
@@ -67,7 +68,7 @@ let roles: Role[] = [
     id: "owner",
     name: "Owner",
     description: "Everything, including users and settings.",
-    permissions: all("edit"),
+    permissions: all("delete"),
     locked: true,
   },
   {
@@ -148,10 +149,10 @@ export const getRole = (id: string): Role | undefined => roles.find((role) => ro
 
 export function roleSummary(role: Role): string {
   const levels = Object.values(role.permissions);
-  const edit = levels.filter((level) => level === "edit").length;
-  const view = levels.filter((level) => level === "view").length;
-  if (edit === levels.length) return "Full access";
-  return `${edit} can change · ${view} view only`;
+  const canChange = levels.filter((level) => level === "edit" || level === "delete").length;
+  const viewOnly = levels.filter((level) => level === "view").length;
+  if (levels.every((level) => level === "delete")) return "Full access";
+  return `${canChange} can change · ${viewOnly} view only`;
 }
 
 const emailOk = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
