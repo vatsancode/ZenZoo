@@ -1,33 +1,52 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
-const UI_ONLY_SKIP_AUTH = true;
+export type SessionKind = "platform_admin" | "tenant_user";
 
 export interface SignInResult {
   error: string | null;
+  kind: SessionKind | null;
 }
 
 /**
- * Not wired to a real capability yet - server/api has no /auth/sign-in
- * route, so this genuinely fails today. It's a real network call, not an
- * invented stub, so the sign-in form's error handling is exercised against
- * real behavior from day one.
+ * Calls the real POST /auth/sign-in route. The server sets the session as
+ * an httpOnly cookie on success - credentials: "include" is what makes the
+ * browser send/receive it, since this app and the API run on different
+ * ports (different origins) in dev.
  */
 export async function signIn(email: string, password: string): Promise<SignInResult> {
-  // UI-only phase: skip the server and let every sign-in through.
-  // Remove this line once server/api has a real /auth/sign-in route.
-  if (UI_ONLY_SKIP_AUTH) return { error: null };
-
   try {
     const response = await fetch(`${API_URL}/auth/sign-in`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ email, password }),
     });
     if (!response.ok) {
-      throw new Error(`Sign-in failed with status ${response.status}`);
+      return { error: "Invalid email or password.", kind: null };
     }
-    return { error: null };
+    const data = (await response.json()) as { kind: SessionKind };
+    return { error: null, kind: data.kind };
   } catch {
-    return { error: "Sign-in isn't connected to the server yet." };
+    return { error: "Couldn't reach the server. Is it running?", kind: null };
+  }
+}
+
+/** Clears the session cookie on the server. The cookie is httpOnly, so this is the only way to clear it. */
+export async function signOut(): Promise<void> {
+  try {
+    await fetch(`${API_URL}/auth/sign-out`, { method: "POST", credentials: "include" });
+  } catch {
+    // Best-effort - the user is navigated to sign-in regardless.
+  }
+}
+
+/**
+ * A missing or expired session shows up as a 401 from any platform-admin
+ * route. Rather than surface that as a generic error, send the admin back
+ * to the sign-in page.
+ */
+export function redirectToSignInIfUnauthorized(response: Response): void {
+  if (response.status === 401 && typeof window !== "undefined") {
+    window.location.href = "/sign-in";
   }
 }

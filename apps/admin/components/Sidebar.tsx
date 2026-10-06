@@ -3,8 +3,9 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { textStyle } from "@zenzoo/ui-web";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { CURRENT_USER_ID, getRole, getUser } from "../features/settings/users";
+import { signOut } from "../lib/auth";
 
 interface NavItem {
   label: string;
@@ -33,6 +34,7 @@ const comingSoon: string[] = [];
 export default function Sidebar() {
   const { colors, spacing, radius } = useTheme();
   const pathname = usePathname();
+  const router = useRouter();
   const me = getUser(CURRENT_USER_ID);
 
   return (
@@ -140,17 +142,23 @@ export default function Sidebar() {
             </span>
           </Link>
         ) : null}
-        <Link
-          href="/sign-in"
+        <button
+          type="button"
+          onClick={() => {
+            signOut().then(() => router.push("/sign-in"));
+          }}
           style={{
             ...textStyle("body"),
             color: colors.inkMuted,
             padding: `${spacing[2]}px ${spacing[3]}px`,
-            textDecoration: "none",
+            textAlign: "left",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
           }}
         >
           Sign out
-        </Link>
+        </button>
       </div>
     </nav>
   );

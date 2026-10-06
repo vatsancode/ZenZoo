@@ -28,7 +28,7 @@ export default function SignInForm() {
       setError(result.error);
       return;
     }
-    router.push("/");
+    router.push(result.kind === "platform_admin" ? "/platform/tenants" : "/");
   }
 
   return (

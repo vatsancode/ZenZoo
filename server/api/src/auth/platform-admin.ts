@@ -1,6 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
 import { prisma } from "../shared/prisma";
 import { verifyPassword } from "../shared/password";
+import { verifySessionToken } from "../shared/jwt";
+import { readCookie, SESSION_COOKIE_NAME, type SessionPayload } from "./session";
 
 // A fixed dummy hash to compare against when no admin matches, so a lookup
 // miss takes the same bcrypt-compare time as a real one - otherwise an
@@ -17,11 +19,14 @@ async function verifyPlatformAdmin(email: string, password: string): Promise<boo
 }
 
 /**
- * HTTP Basic Auth against platform_admins. Deliberately separate from
- * the CapabilityActor/tenant-scoped pipeline in capabilities/capability.ts
- * - a platform admin acts before and outside any tenant, the same
- * cold-start case docs/db-design.md describes for provision_new_account,
- * so there is no tenantId to build a CapabilityActor from here.
+ * HTTP Basic Auth against platform_admins, OR a signed-in platform
+ * admin's session cookie (set by POST /auth/sign-in) - the browser-facing
+ * "invite a tenant" page has no way to send a Basic Auth header, so it
+ * authenticates with the cookie instead. Deliberately separate from the
+ * CapabilityActor/tenant-scoped pipeline in capabilities/capability.ts -
+ * a platform admin acts before and outside any tenant, the same cold-start
+ * case docs/db-design.md describes for provision_new_account, so there is
+ * no tenantId to build a CapabilityActor from here.
  */
 export async function requirePlatformAdmin(
   req: Request,
@@ -30,7 +35,16 @@ export async function requirePlatformAdmin(
 ): Promise<void> {
   const header = req.headers.authorization;
   if (!header?.startsWith("Basic ")) {
-    res.set("WWW-Authenticate", "Basic");
+    const cookie = readCookie(req, SESSION_COOKIE_NAME);
+    const session = cookie ? verifySessionToken<SessionPayload>(cookie) : null;
+    if (session?.kind === "platform_admin") {
+      next();
+      return;
+    }
+    // No WWW-Authenticate here: this is the browser-session path (no Basic
+    // header was even sent), and that header is what makes browsers pop up
+    // their native credentials dialog - only the actual Basic-Auth branch
+    // below should trigger that, for non-browser callers like curl/Postman.
     res.status(401).json({ error: "Platform admin credentials required" });
     return;
   }
