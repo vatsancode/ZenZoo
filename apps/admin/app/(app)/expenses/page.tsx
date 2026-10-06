@@ -1,7 +1,7 @@
 import { spacing } from "@zenzoo/design-tokens";
 import { textStyle } from "@zenzoo/ui-web";
 import type { Metadata } from "next";
-import ExpensesTable from "../../../components/ExpensesTable";
+import ExpensesTable from "../../../features/expenses/ExpensesTable";
 
 export const metadata: Metadata = {
   title: "Expenses - ZenZoo Admin",

@@ -1,6 +1,6 @@
 import { spacing } from "@zenzoo/design-tokens";
 import type { Metadata } from "next";
-import ExpenseCategoriesSettings from "../../../../components/ExpenseCategoriesSettings";
+import ExpenseCategoriesSettings from "../../../../features/settings/ExpenseCategoriesSettings";
 
 export const metadata: Metadata = {
   title: "Expense categories - ZenZoo Admin",

@@ -1,6 +1,6 @@
 import { spacing } from "@zenzoo/design-tokens";
 import type { Metadata } from "next";
-import PosScreen from "../../../components/PosScreen";
+import PosScreen from "../../../features/point-of-sale/PosScreen";
 
 export const metadata: Metadata = {
   title: "Point of Sale - ZenZoo Admin",

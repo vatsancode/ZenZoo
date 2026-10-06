@@ -1,6 +1,6 @@
 import { spacing } from "@zenzoo/design-tokens";
 import type { Metadata } from "next";
-import UnitsSettings from "../../../../components/UnitsSettings";
+import UnitsSettings from "../../../../features/settings/UnitsSettings";
 
 export const metadata: Metadata = {
   title: "Units - ZenZoo Admin",

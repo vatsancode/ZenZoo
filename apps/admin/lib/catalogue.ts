@@ -1,4 +1,4 @@
-import { UNIT_OPTIONS, type Product } from "./stocks";
+import { UNIT_OPTIONS, type Product } from "../features/stocks/stocks";
 
 export interface Category {
   id: string;

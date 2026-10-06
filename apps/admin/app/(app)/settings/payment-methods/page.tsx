@@ -1,6 +1,6 @@
 import { spacing } from "@zenzoo/design-tokens";
 import type { Metadata } from "next";
-import PaymentMethodsSettings from "../../../../components/PaymentMethodsSettings";
+import PaymentMethodsSettings from "../../../../features/settings/PaymentMethodsSettings";
 
 export const metadata: Metadata = {
   title: "Payment methods - ZenZoo Admin",

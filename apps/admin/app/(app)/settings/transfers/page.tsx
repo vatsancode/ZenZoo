@@ -1,6 +1,6 @@
 import { spacing } from "@zenzoo/design-tokens";
 import type { Metadata } from "next";
-import TransfersSettings from "../../../../components/TransfersSettings";
+import TransfersSettings from "../../../../features/settings/TransfersSettings";
 
 export const metadata: Metadata = {
   title: "Transfer - ZenZoo Admin",

@@ -19,7 +19,7 @@ import {
   type Purchase,
 } from "./purchases";
 import { formatDate, formatPrice } from "../../lib/stock-display";
-import { listVendors, type Vendor } from "../../lib/vendors";
+import { listVendors, type Vendor } from "../vendors/vendors";
 
 export default function PurchasesTable() {
   const { colors, spacing } = useTheme();

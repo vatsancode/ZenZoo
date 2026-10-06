@@ -1,6 +1,6 @@
 import { spacing } from "@zenzoo/design-tokens";
 import type { Metadata } from "next";
-import VariantsTable from "../../../../../components/VariantsTable";
+import VariantsTable from "../../../../../features/stocks/VariantsTable";
 
 export const metadata: Metadata = {
   title: "Variants - ZenZoo Admin",

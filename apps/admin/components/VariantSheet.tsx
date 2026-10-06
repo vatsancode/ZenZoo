@@ -3,8 +3,13 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Input, Select, Sheet } from "@zenzoo/ui-web";
 import { useEffect, useState, type KeyboardEvent } from "react";
-import { priceProblem, quantityProblem, toPrice } from "../lib/stock-validation";
-import { UNIT_OPTIONS, type Unit, type Variant, type VariantInput } from "../lib/stocks";
+import { priceProblem, quantityProblem, toPrice } from "../features/stocks/stock-validation";
+import {
+  UNIT_OPTIONS,
+  type Unit,
+  type Variant,
+  type VariantInput,
+} from "../features/stocks/stocks";
 import FormField from "./FormField";
 
 interface VariantSheetProps {

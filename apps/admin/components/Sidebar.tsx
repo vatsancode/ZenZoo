@@ -4,7 +4,7 @@ import { useTheme } from "@zenzoo/design-tokens";
 import { textStyle } from "@zenzoo/ui-web";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CURRENT_USER_ID, getRole, getUser } from "../lib/users";
+import { CURRENT_USER_ID, getRole, getUser } from "../features/settings/users";
 
 interface NavItem {
   label: string;

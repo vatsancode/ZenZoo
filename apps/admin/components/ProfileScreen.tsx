@@ -13,7 +13,7 @@ import {
   getUser,
   updateProfile,
   type User,
-} from "../lib/users";
+} from "../features/settings/users";
 import FormField from "./FormField";
 import PageHeader from "./PageHeader";
 

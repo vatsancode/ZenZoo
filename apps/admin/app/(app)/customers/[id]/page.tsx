@@ -1,6 +1,6 @@
 import { spacing } from "@zenzoo/design-tokens";
 import type { Metadata } from "next";
-import CustomerDetail from "../../../../components/CustomerDetail";
+import CustomerDetail from "../../../../features/customers/CustomerDetail";
 
 export const metadata: Metadata = {
   title: "Customer - ZenZoo Admin",

@@ -1,7 +1,7 @@
-import type { Expense } from "./expenses";
+import type { Expense } from "../features/expenses/expenses";
 import { purchaseBalance, type Purchase } from "../features/purchases/purchases";
-import { saleLineNet, saleProfitOf, saleRefundTotal, type Sale } from "./sales";
-import type { Product } from "./stocks";
+import { saleLineNet, saleProfitOf, saleRefundTotal, type Sale } from "../features/sales/sales";
+import type { Product } from "../features/stocks/stocks";
 
 export interface DateRange {
   /** ISO dates, YYYY-MM-DD, both included. */

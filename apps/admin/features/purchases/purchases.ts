@@ -1,4 +1,4 @@
-import type { Unit } from "../../lib/stocks";
+import type { Unit } from "../stocks/stocks";
 
 // "partially_received" is a working state the screens offer; the `purchases` table in
 // docs/db-design.md has no such status yet (receiving there is tracked per line), so it

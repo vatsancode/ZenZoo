@@ -1,6 +1,6 @@
 import { spacing } from "@zenzoo/design-tokens";
 import type { Metadata } from "next";
-import CurrentStockView from "../../../../../components/CurrentStockView";
+import CurrentStockView from "../../../../../features/stocks/CurrentStockView";
 
 export const metadata: Metadata = {
   title: "Current stock - ZenZoo Admin",

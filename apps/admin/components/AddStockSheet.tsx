@@ -3,9 +3,14 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Input, Select, Sheet, Switch, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
-import { priceProblem, quantityProblem, toPrice } from "../lib/stock-validation";
+import { priceProblem, quantityProblem, toPrice } from "../features/stocks/stock-validation";
 import { categoriesSnapshot } from "../lib/catalogue";
-import { UNIT_OPTIONS, type AddStockInput, type Product, type Unit } from "../lib/stocks";
+import {
+  UNIT_OPTIONS,
+  type AddStockInput,
+  type Product,
+  type Unit,
+} from "../features/stocks/stocks";
 import FormField from "./FormField";
 
 interface AddStockSheetProps {

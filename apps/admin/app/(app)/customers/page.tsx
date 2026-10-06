@@ -1,7 +1,7 @@
 import { spacing } from "@zenzoo/design-tokens";
 import { textStyle } from "@zenzoo/ui-web";
 import type { Metadata } from "next";
-import CustomersTable from "../../../components/CustomersTable";
+import CustomersTable from "../../../features/customers/CustomersTable";
 
 export const metadata: Metadata = {
   title: "Customers - ZenZoo Admin",

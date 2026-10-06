@@ -10,7 +10,7 @@ import {
   listAccounts,
   type Account,
   type Movement,
-} from "../lib/accounts";
+} from "../features/settings/accounts";
 import {
   categoryBreakdown,
   changePercent,
@@ -30,11 +30,11 @@ import {
   type DateRange,
 } from "../lib/dashboard";
 import { listCatalogueItems, type CatalogueItem } from "../lib/catalogue-items";
-import { listExpenses, type Expense } from "../lib/expenses";
+import { listExpenses, type Expense } from "../features/expenses/expenses";
 import { listPurchases, type Purchase } from "../features/purchases/purchases";
-import { listCollections, listSales, type DueCollection, type Sale } from "../lib/sales";
+import { listCollections, listSales, type DueCollection, type Sale } from "../features/sales/sales";
 import { formatPrice } from "../lib/stock-display";
-import { listProducts, type Product } from "../lib/stocks";
+import { listProducts, type Product } from "../features/stocks/stocks";
 import BarList from "./BarList";
 import CategoryBreakdownCard from "./CategoryBreakdownCard";
 import DateRangePicker from "./DateRangePicker";

@@ -1,6 +1,6 @@
 import { spacing } from "@zenzoo/design-tokens";
 import type { Metadata } from "next";
-import UsersSettings from "../../../../components/UsersSettings";
+import UsersSettings from "../../../../features/settings/UsersSettings";
 
 export const metadata: Metadata = {
   title: "Users and roles - ZenZoo Admin",

@@ -36,10 +36,10 @@ import {
   type Product,
   type Unit,
   type VariantInput,
-} from "../../lib/stocks";
-import { listVendors, type Vendor } from "../../lib/vendors";
+} from "../stocks/stocks";
+import { listVendors, type Vendor } from "../vendors/vendors";
 import AddStockSheet from "../../components/AddStockSheet";
-import ProductPicker from "../../components/ProductPicker";
+import ProductPicker from "./ProductPicker";
 import VariantSheet from "../../components/VariantSheet";
 import FormField from "../../components/FormField";
 import PageHeader from "../../components/PageHeader";
@@ -49,7 +49,7 @@ import PaymentsModal, {
   payRowProblems,
   rowsTotal,
   type PayRow,
-} from "../../components/PaymentsModal";
+} from "./PaymentsModal";
 import PurchaseStatusPicker from "./PurchaseStatusPicker";
 
 /** A line as typed: quantity and cost stay strings until the form is saved. */

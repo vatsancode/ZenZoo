@@ -48,8 +48,8 @@ import {
   type PurchaseReturn,
 } from "./purchases";
 import { formatDate, formatPrice } from "../../lib/stock-display";
-import { listProducts, receiveStock, returnStock, saveProducts } from "../../lib/stocks";
-import { listVendors, type Vendor } from "../../lib/vendors";
+import { listProducts, receiveStock, returnStock, saveProducts } from "../stocks/stocks";
+import { listVendors, type Vendor } from "../vendors/vendors";
 import FormField from "../../components/FormField";
 import PageHeader from "../../components/PageHeader";
 import ReturnSheet from "../../components/ReturnSheet";
@@ -59,7 +59,7 @@ import PaymentsModal, {
   payRowProblems,
   rowsTotal,
   type PayRow,
-} from "../../components/PaymentsModal";
+} from "./PaymentsModal";
 import ReceiveSheet, { type DeliveryInput } from "./ReceiveSheet";
 import StatTile, { StatRow } from "../../components/StatTile";
 

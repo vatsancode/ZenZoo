@@ -1,6 +1,6 @@
 import { spacing } from "@zenzoo/design-tokens";
 import type { Metadata } from "next";
-import AuditLog from "../../../../components/AuditLog";
+import AuditLog from "../../../../features/settings/AuditLog";
 
 export const metadata: Metadata = {
   title: "Audit log - ZenZoo Admin",
