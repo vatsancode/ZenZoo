@@ -197,9 +197,7 @@ CREATE TABLE tenant_memberships (
     invited_email       VARCHAR(255)
                             CONSTRAINT tenant_memberships_invited_email_lowercase_check
                             CHECK (invited_email = lower(invited_email)),
-    role                VARCHAR(20) NOT NULL
-                            CONSTRAINT tenant_memberships_role_check
-                            CHECK (role IN ('owner', 'manager', 'cashier')),
+    role_id             UUID NOT NULL,
     status              VARCHAR(20) NOT NULL DEFAULT 'invited'
                             CONSTRAINT tenant_memberships_status_check
                             CHECK (status IN ('invited', 'active', 'suspended', 'removed')),
@@ -211,6 +209,13 @@ CREATE TABLE tenant_memberships (
             (status = 'invited' AND user_id IS NULL AND invited_email IS NOT NULL)
             OR (status != 'invited' AND user_id IS NOT NULL)
         ),
+
+    -- the role being held: tenant must agree, same composite-FK shape as
+    -- membership_store_access below — closes the "membership from tenant A,
+    -- role from tenant B" gap a plain FK on role_id alone couldn't
+    CONSTRAINT tenant_memberships_role_fk
+        FOREIGN KEY (tenant_id, role_id)
+        REFERENCES roles (tenant_id, id),
 
     -- target for membership_store_access's composite FK
     CONSTRAINT tenant_memberships_tenant_id_id_unique UNIQUE (tenant_id, id)
@@ -228,6 +233,7 @@ CREATE UNIQUE INDEX idx_tenant_memberships_invite_unique
 
 CREATE INDEX idx_tenant_memberships_tenant_id ON tenant_memberships (tenant_id);
 CREATE INDEX idx_tenant_memberships_user_id ON tenant_memberships (user_id);
+CREATE INDEX idx_tenant_memberships_role_id ON tenant_memberships (role_id);
 
 CREATE TRIGGER trg_tenant_memberships_set_updated_at
     BEFORE UPDATE ON tenant_memberships
@@ -238,9 +244,9 @@ CREATE TRIGGER trg_tenant_memberships_set_updated_at
 ### Notes
 
 - **`user_id` is nullable** to support the invite flow: an owner can invite `cashier@example.com` before that person has ever signed up. The row starts as `status='invited'` with `invited_email` set and `user_id NULL`; on acceptance, the application sets `user_id` and flips `status` to `active` (the `CHECK` constraint enforces that these two facts move together — you can't be `invited` with a `user_id`, or non-`invited` without one).
-- **`role`** — three values for now (`owner`, `manager`, `cashier`), matching the operator language in the requirements doc. Kept as a `CHECK` rather than a lookup table for the same reason as `tenants.status` — cheap to extend by migration, no need for a join until roles need to be tenant-customizable.
+- **`role_id`** — roles are now tenant-customizable (see `roles` and `role_permissions`, next), not a fixed three-value `CHECK`. The three-value shape (`owner`/`manager`/`cashier`) described in an earlier pass of this document was deliberately cheap to extend "until roles need to be tenant-customizable" — that point has now arrived, driven by the Settings → Users permission grid (`apps/admin/features/settings/users.ts`) the frontend already shipped ahead of this schema catching up to it. Every tenant still gets exactly one permanent `Owner` role (seeded by `provision_new_account()`), but anything beyond that — a "Weekend Supervisor," an "Accountant" — is a row a tenant creates for itself, not a value this schema hardcodes.
 - **`status`** — `invited` → `active` → `suspended` (temporarily blocked, e.g. staff on leave, reversible) → `removed` (terminal soft-delete, no `deleted_at`, same pattern as everywhere else). A `removed` membership is history, not deleted — useful for "who used to work here" audit trails.
-- **No `permissions` JSONB.** Role alone drives authorization for now. If a specific merchant needs a one-off exception, that's a future `membership_overrides` table, not a schema change here.
+- **No `permissions` JSONB on this table.** Authorization is driven by `role_id` → `role_permissions`, a real per-area table, not a JSONB blob here — see `role_permissions` for why a normalized table was chosen over a document column.
 - **RLS** — scoped to `tenant_id` per N-05, same as every other tenant-owned table; see "Row-level security" for the actual `CREATE POLICY` statement.
 
 ### The owner invariant
@@ -251,8 +257,8 @@ A hard rule, enforced transactionally, not just documented: **an operating tenan
 
 | Tenant status | Owner requirement |
 |---|---|
-| `trial` | ≥ 1 membership with `role='owner'`, `status='active'` |
-| `active` | ≥ 1 membership with `role='owner'`, `status='active'` |
+| `trial` | ≥ 1 membership holding the tenant's `Owner` role (`roles.is_owner_role`), `status='active'` |
+| `active` | ≥ 1 membership holding the tenant's `Owner` role (`roles.is_owner_role`), `status='active'` |
 | `suspended` | none — an owner may still exist, but nothing enforces it |
 | `archived` | none |
 
@@ -273,10 +279,11 @@ BEGIN
     END IF;
 
     SELECT count(*) INTO v_owner_count
-    FROM tenant_memberships
-    WHERE tenant_id = p_tenant_id
-      AND role = 'owner'
-      AND status = 'active';
+    FROM tenant_memberships tm
+    JOIN roles r ON r.id = tm.role_id
+    WHERE tm.tenant_id = p_tenant_id
+      AND r.is_owner_role
+      AND tm.status = 'active';
 
     IF v_owner_count = 0 THEN
         RAISE EXCEPTION
@@ -328,7 +335,7 @@ CREATE CONSTRAINT TRIGGER trg_tenants_owner_guard
 1. **`check_tenant_has_active_owner()` must be `SECURITY DEFINER`.** The owner-guard triggers are `DEFERRABLE INITIALLY DEFERRED`, so they fire at `COMMIT` — *after* `provision_new_account()` (see "Bootstrapping") has already returned, outside that function's `SECURITY DEFINER` scope. Run as plain `SECURITY INVOKER`, this check executes as `app_role` with no tenant context set (cold start has none, by design), so its own `SELECT count(*) FROM tenant_memberships WHERE tenant_id = ...` gets silently filtered to zero rows by the `tenant_isolation` RLS policy — not because the owner membership wasn't inserted (it was, inside `provision_new_account`'s own elevated scope), but because RLS hides it from this later, context-less check. The invariant then wrongly concludes "no owner" and rolls back a perfectly valid provisioning call. Making this function `SECURITY DEFINER` too (same owner as the tables it reads) fixes it, and is safe: it still only ever returns `VOID` for an already-identified `tenant_id` the caller is already touching, revealing nothing new.
 2. **`app_role` needs `UPDATE` privilege to take the `FOR SHARE` lock, not just `SELECT`.** Postgres requires `UPDATE` (not merely `SELECT`) to acquire a row lock via `FOR UPDATE`/`FOR SHARE` — but "The application-role privilege model" deliberately grants `app_role` only `SELECT, INSERT` on `tenants` ("app_role creates new tenants but never edits existing ones"). The fix keeps that intent intact: `GRANT UPDATE (updated_at) ON tenants TO app_role` — a column that is already trigger-only and never written directly by application code, just enough to satisfy the lock-privilege check without opening any real write access to `name`/`slug`/`status`.
 
-**Why deferred, specifically:** because the check runs at `COMMIT` (or at an explicit `SET CONSTRAINTS ... IMMEDIATE`) rather than after each individual statement, an atomic "swap owner" — `UPDATE ... SET role='manager' WHERE id=<old-owner>` then `INSERT ...` a new owner row, both inside one transaction — passes, because only the *final* state at commit is checked. A bare single-statement removal of the last owner (the common accidental case) still fails, because in autocommit mode each statement is its own transaction and the deferred check fires at the end of it. This is the standard Postgres pattern for exactly this shape of invariant — an aggregate condition over sibling rows that a row-level `CHECK` cannot see.
+**Why deferred, specifically:** because the check runs at `COMMIT` (or at an explicit `SET CONSTRAINTS ... IMMEDIATE`) rather than after each individual statement, an atomic "swap owner" — `UPDATE ... SET role_id=<manager-role-id> WHERE id=<old-owner>` then `INSERT ...` a new owner row, both inside one transaction — passes, because only the *final* state at commit is checked. A bare single-statement removal of the last owner (the common accidental case) still fails, because in autocommit mode each statement is its own transaction and the deferred check fires at the end of it. This is the standard Postgres pattern for exactly this shape of invariant — an aggregate condition over sibling rows that a row-level `CHECK` cannot see.
 
 **Required provisioning order, not optional:** a tenant starts `trial`, which this invariant already requires an active owner for — so tenant creation and its first owner membership **must** be created in one transaction, in this order:
 
@@ -339,6 +346,155 @@ CREATE CONSTRAINT TRIGGER trg_tenants_owner_guard
 `trg_tenants_owner_guard` fires `AFTER INSERT` on `tenants` but is `DEFERRABLE INITIALLY DEFERRED`, so it only actually checks at `COMMIT` (or an explicit `SET CONSTRAINTS ... IMMEDIATE`) — which is exactly what makes step 2 able to follow step 1 as a later statement in the same transaction rather than needing to happen first. A tenant row committed *without* a same-transaction owner membership fails at commit, by construction. That is the invariant doing its job, not a bug to route around — the provisioning/signup flow must be built around this ordering from day one, not discovered by it failing in production. This also means provisioning must always be a single transaction, never two separate round-trips (e.g. "create the tenant" as one request and "add the owner" as a second, later one) — the tenant would be uncommittable in between.
 
 **This ordering is no longer just a rule the application must remember — for a brand-new signup, it's structurally enforced by `provision_new_account()`** (see "Bootstrapping," under "Row-level security"), which performs exactly these two inserts, in exactly this order, inside the one function call `app_role` is permitted to run for cold-start signup. For an already-authenticated user opening an *additional* tenant, the application still issues the two inserts directly (ordinary, RLS-governed statements — see that same section), and must still follow this order and transaction boundary by hand.
+
+---
+
+## `roles`
+
+A tenant-defined role: a name, and (via `role_permissions`, next) a grid of what it can do. Replaces the old fixed three-value `tenant_memberships.role` `CHECK` — roles are no longer a closed set the schema hardcodes, they're rows a tenant creates, renames, and deletes for itself through the application (the Settings → Users screen already shipped this grid in the frontend, `apps/admin/features/settings/users.ts`, ahead of the schema that now backs it).
+
+```sql
+CREATE TABLE roles (
+    id              UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id       UUID NOT NULL REFERENCES tenants (id),
+    name            VARCHAR(50) NOT NULL,
+    is_owner_role   BOOLEAN NOT NULL DEFAULT false,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT roles_name_unique UNIQUE (tenant_id, name),
+    -- target for role_permissions' and tenant_memberships' composite FK
+    CONSTRAINT roles_tenant_id_id_unique UNIQUE (tenant_id, id)
+);
+
+-- at most one Owner role per tenant - the owner invariant (see
+-- check_tenant_has_active_owner, above) depends on this being unambiguous
+CREATE UNIQUE INDEX idx_roles_one_owner_role ON roles (tenant_id) WHERE is_owner_role;
+
+CREATE INDEX idx_roles_tenant_id ON roles (tenant_id);
+
+CREATE TRIGGER trg_roles_set_updated_at
+    BEFORE UPDATE ON roles
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+```
+
+### Notes
+
+- **`is_owner_role`** — exactly one `true` row per tenant, enforced by the partial unique index above, created only by `provision_new_account()` (see "Bootstrapping") — never by an ordinary application insert. It exists so the owner invariant has something stable to check that survives the Owner role being renamed in every cosmetic respect except this one. It isn't, by itself, a permissions bypass: a tenant could in principle still leave the Owner role's `role_permissions` rows wrong, which is why the guard below exists too.
+- **The Owner role can't be deleted, renamed, or demoted.** A hard rule, enforced the same way as the owner invariant itself — not just documented:
+
+```sql
+CREATE FUNCTION trg_fn_roles_protect_owner_role() RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.is_owner_role THEN
+            RAISE EXCEPTION 'the Owner role cannot be deleted';
+        END IF;
+        RETURN OLD;
+    END IF;
+
+    IF OLD.is_owner_role IS DISTINCT FROM NEW.is_owner_role THEN
+        RAISE EXCEPTION 'is_owner_role cannot change after a role is created';
+    END IF;
+    IF OLD.is_owner_role AND OLD.name IS DISTINCT FROM NEW.name THEN
+        RAISE EXCEPTION 'the Owner role cannot be renamed';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_roles_protect_owner_role
+    BEFORE UPDATE OR DELETE ON roles
+    FOR EACH ROW
+    EXECUTE FUNCTION trg_fn_roles_protect_owner_role();
+```
+
+This is deliberately a plain (non-deferred) `BEFORE` trigger, not a `CONSTRAINT TRIGGER` like the owner invariant — it only ever needs to see the single row being changed, never sibling rows, so there's no aggregate condition to defer to commit time.
+
+- **RLS** — scoped to `tenant_id` per N-05, same as every other tenant-owned table; see "Row-level security" for the actual `CREATE POLICY` statement.
+- **Non-owner roles are freely deletable.** Deleting a role a membership still points to is blocked by the ordinary `tenant_memberships_role_fk` foreign key (no `ON DELETE CASCADE`) — the application must reassign or remove those memberships first, the same shape as any other FK in this schema, not a special case.
+
+---
+
+## `role_permissions`
+
+One row per `(role, area)`: the access level that role grants for that area of the product. `area` and `access_level` mirror the frontend's existing `PERMISSION_AREAS` / `ACCESS_LEVELS` (`apps/admin/features/settings/users.ts`) exactly, so the UI's permission grid maps onto this table one column, one row at a time — nothing in the grid's shape needed to change to become real.
+
+```sql
+CREATE TABLE role_permissions (
+    role_id       UUID NOT NULL,
+    tenant_id     UUID NOT NULL,
+    area          VARCHAR(20) NOT NULL
+                      CONSTRAINT role_permissions_area_check
+                      CHECK (area IN (
+                          'dashboard', 'stocks', 'catalogue', 'vendors', 'purchases',
+                          'expenses', 'pos', 'sales', 'customers', 'settings', 'users'
+                      )),
+    access_level  VARCHAR(10) NOT NULL DEFAULT 'none'
+                      CONSTRAINT role_permissions_access_level_check
+                      CHECK (access_level IN ('none', 'view', 'edit', 'delete')),
+
+    PRIMARY KEY (role_id, area),
+    -- tenant must agree between the role and the permission row, same shape as
+    -- membership_store_access's own composite FKs - closes the "role from
+    -- tenant A, permission row claimed for tenant B" gap. ON DELETE CASCADE:
+    -- a permission row has no meaning independent of its role, so deleting a
+    -- (non-Owner) role cleans up its permission rows in one statement rather
+    -- than requiring the application to delete all eleven first.
+    CONSTRAINT role_permissions_role_fk
+        FOREIGN KEY (tenant_id, role_id)
+        REFERENCES roles (tenant_id, id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_role_permissions_tenant_id ON role_permissions (tenant_id);
+```
+
+### Notes
+
+- **No `updated_at`.** Same reasoning as `membership_store_access`: a permission row's `access_level` is edited in place often enough that it would look like any other mutable column, but in practice a role edit rewrites some or all of a role's eleven rows together as one grid save — there's no per-row edit history worth tracking independent of the role's own `updated_at`.
+- **`area`/`access_level` as `CHECK`-constrained strings, not a lookup table.** Same reasoning as `tenants.status` and the old `tenant_memberships.role` — this is a closed, small, and rarely-changing set (new product areas are a deliberate, infrequent decision, not something a tenant should ever be adding rows for); a `CHECK` is cheap to extend by migration and avoids a join for every permission read.
+- **No row means `none`, not "unspecified."** The application should treat a missing `(role_id, area)` row identically to an explicit `access_level='none'` row — `provision_new_account()` and the role-creation capability built on top of this table are expected to always write all eleven rows for a new role so this distinction never has to be relied on, but nothing at the database level forces that, so defensive reads should not assume it.
+- **The Owner role's permissions are locked at `delete` for every area**, enforced alongside the Owner role's own identity lock:
+
+```sql
+CREATE FUNCTION trg_fn_role_permissions_protect_owner_role() RETURNS TRIGGER AS $$
+DECLARE
+    v_is_owner_role BOOLEAN;
+BEGIN
+    SELECT is_owner_role INTO v_is_owner_role
+    FROM roles WHERE id = COALESCE(NEW.role_id, OLD.role_id);
+
+    -- a missing parent row here means ON DELETE CASCADE already removed it as
+    -- part of deleting the (necessarily non-Owner - the guard on roles itself
+    -- blocks deleting the real Owner role) parent role; NULL must read as
+    -- "not the Owner role", not fall through to the opposite via NOT NULL = NULL
+    IF COALESCE(v_is_owner_role, false) IS NOT TRUE THEN
+        RETURN COALESCE(NEW, OLD);
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'the Owner role''s permissions cannot be removed';
+    END IF;
+    IF NEW.access_level <> 'delete' THEN
+        RAISE EXCEPTION 'the Owner role always has full access to every area';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_role_permissions_protect_owner_role
+    BEFORE INSERT OR UPDATE OR DELETE ON role_permissions
+    FOR EACH ROW
+    EXECUTE FUNCTION trg_fn_role_permissions_protect_owner_role();
+```
+
+**A real bug found exercising this end to end:** deleting a non-Owner role cascades (via `role_permissions_role_fk`'s `ON DELETE CASCADE`) into a `DELETE` on this trigger's own table — but by the time that cascade fires, the parent `roles` row is already gone, so `SELECT is_owner_role INTO v_is_owner_role ... WHERE id = OLD.role_id` finds nothing and leaves `v_is_owner_role` `NULL`. A naive `IF NOT v_is_owner_role` then falls through to "treat as Owner" (`NOT NULL` is `NULL`, not `TRUE`, so the early-return branch is skipped) and wrongly blocks deleting an ordinary role's permissions. The fix above — `IF COALESCE(v_is_owner_role, false) IS NOT TRUE` — reads a missing parent row as "definitely not the Owner role," which is safe precisely because `trg_fn_roles_protect_owner_role` on `roles` itself already guarantees the real Owner role can never reach this cascade in the first place.
+
+This trigger's own `SELECT ... FROM roles` runs under whatever role is executing the triggering statement (it is plain `SECURITY INVOKER`, the default) — for an ordinary `app_role` request this is filtered by `roles`' own `tenant_isolation` policy exactly as any other read would be, which is fine because the caller's tenant context is already set by then. The one place this trigger fires *before* any such context exists — `provision_new_account()` inserting the brand-new Owner role's eleven rows — runs the whole function as `app_owner` (the trigger inherits the `SECURITY DEFINER` scope of the statement that fired it), which owns `roles` and so bypasses RLS entirely; unlike the owner invariant's own deferred trigger (see its "two real bugs" note), this one is a plain, immediate `BEFORE` trigger that never outlives the scope it was queued in, so that particular pitfall doesn't apply here.
+
+- **RLS** — scoped to `tenant_id` per N-05, same as every other tenant-owned table; see "Row-level security" for the actual `CREATE POLICY` statement.
 
 ---
 
@@ -417,6 +573,8 @@ Every table below has an explicit `tenant_id` column (this is exactly what N-05'
 ```sql
 ALTER TABLE stores                  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenant_memberships      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE roles                   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE role_permissions        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE membership_store_access ENABLE ROW LEVEL SECURITY;
 ALTER TABLE suppliers               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sellables               ENABLE ROW LEVEL SECURITY;
@@ -442,6 +600,12 @@ CREATE POLICY tenant_isolation ON stores
     USING (tenant_id = app_current_tenant_id())
     WITH CHECK (tenant_id = app_current_tenant_id());
 CREATE POLICY tenant_isolation ON tenant_memberships
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON roles
+    USING (tenant_id = app_current_tenant_id())
+    WITH CHECK (tenant_id = app_current_tenant_id());
+CREATE POLICY tenant_isolation ON role_permissions
     USING (tenant_id = app_current_tenant_id())
     WITH CHECK (tenant_id = app_current_tenant_id());
 CREATE POLICY tenant_isolation ON membership_store_access
@@ -582,6 +746,13 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     sale_return_items, sale_payments
     TO app_role;
 
+-- Group 2b: roles and role_permissions - a tenant really can delete a custom
+-- role (or a permission row), so DELETE is granted on both. The Owner role's
+-- own row-level protection is the trg_roles_protect_owner_role /
+-- trg_role_permissions_protect_owner_role triggers (see those tables' own
+-- notes), not the absence of this grant.
+GRANT SELECT, INSERT, UPDATE, DELETE ON roles, role_permissions TO app_role;
+
 -- Group 3: membership_store_access has no content column and no status column at all —
 -- "you add or remove a row rather than editing one" (see its own notes) — so it gets
 -- real DELETE instead of UPDATE.
@@ -674,6 +845,7 @@ DECLARE
     v_user_id       UUID;
     v_tenant_id     UUID;
     v_store_id      UUID;
+    v_owner_role_id UUID;
     v_membership_id UUID;
 BEGIN
     INSERT INTO users (email, password_hash, first_name, last_name)
@@ -691,8 +863,21 @@ BEGIN
     VALUES (v_tenant_id, p_store_name, p_store_code)
     RETURNING id INTO v_store_id;
 
-    INSERT INTO tenant_memberships (tenant_id, user_id, role, status)
-    VALUES (v_tenant_id, v_user_id, 'owner', 'active')
+    -- every tenant's one permanent, locked role - see "roles" - created here and
+    -- nowhere else in application code
+    INSERT INTO roles (tenant_id, name, is_owner_role)
+    VALUES (v_tenant_id, 'Owner', true)
+    RETURNING id INTO v_owner_role_id;
+
+    INSERT INTO role_permissions (role_id, tenant_id, area, access_level)
+    SELECT v_owner_role_id, v_tenant_id, area, 'delete'
+    FROM unnest(ARRAY[
+        'dashboard', 'stocks', 'catalogue', 'vendors', 'purchases',
+        'expenses', 'pos', 'sales', 'customers', 'settings', 'users'
+    ]) AS area;
+
+    INSERT INTO tenant_memberships (tenant_id, user_id, role_id, status)
+    VALUES (v_tenant_id, v_user_id, v_owner_role_id, 'active')
     RETURNING id INTO v_membership_id;
 
     RETURN QUERY SELECT v_user_id, v_tenant_id, v_store_id, v_membership_id;
@@ -709,7 +894,7 @@ GRANT EXECUTE ON FUNCTION provision_new_account(VARCHAR, VARCHAR, VARCHAR, VARCH
 
 **When session context becomes available.** There is none during the call itself — that's the whole reason this function exists. Immediately after it returns, the application's authentication layer mints the real session for the new `user_id` by checking the owner's email/password directly against `users.password_hash`, and every request from that point on carries `tenant_id`/`user_id` as verified claims, populating `app.current_tenant_id`/`app.current_user_id` exactly as "Row-level security" describes for any other authenticated request. Nothing about steady-state request handling is special-cased for a freshly-provisioned account.
 
-**Atomicity and the owner invariant.** All four inserts run inside the one statement that calls this function; if any of them fails (a duplicate email, a duplicate slug), the whole call rolls back and nothing is left half-created. `trg_tenants_owner_guard`'s deferred check — which requires an active owner before a `trial`/`active` tenant's *outer* transaction can commit — sees the owner membership already inserted by the time it runs, satisfying "Required provisioning order" automatically as long as the caller wraps this single function call in its own transaction (or lets it run as the implicit single-statement transaction it already is). See "The owner invariant" above for the two real bugs this exposed the first time it was actually called, and their fixes.
+**Atomicity and the owner invariant.** All six inserts (user, tenant, store, the Owner role, its eleven permission rows, and the owner membership) run inside the one statement that calls this function; if any of them fails (a duplicate email, a duplicate slug), the whole call rolls back and nothing is left half-created. `trg_tenants_owner_guard`'s deferred check — which requires an active owner before a `trial`/`active` tenant's *outer* transaction can commit — sees the owner membership already inserted by the time it runs, satisfying "Required provisioning order" automatically as long as the caller wraps this single function call in its own transaction (or lets it run as the implicit single-statement transaction it already is). See "The owner invariant" above for the two real bugs this exposed the first time it was actually called, and their fixes.
 
 **The same pattern extends to invite acceptance, not built out further here.** Accepting a `tenant_memberships` invite (`status='invited'`, `user_id IS NULL`) has an identical cold-start shape — the invited person has no `users` row and no session either — so it needs its own, equally narrow `SECURITY DEFINER` function (create the `users` row, then update the *one* specific, already-`invited` membership row a validated invite token names, nothing else reachable). It is not specified in full here because it wasn't part of the flow this pass was asked to resolve, but any implementation must follow this exact template — one function, one narrow job, no caller-supplied access to anything pre-existing beyond the single row an out-of-band-verified token already identifies — rather than widening `provision_new_account` or granting `app_role` any broader insert/update privilege to cover it.
 
