@@ -8,7 +8,8 @@ import { accountMovements, balanceOf, listAccounts } from "./accounts";
 import { listCategories, listUnits } from "../../lib/catalogue";
 import { listAuditEntries } from "../../lib/audit";
 import { listPaymentMethods } from "../../lib/payment-options";
-import { listRoles, listUsers } from "./users";
+import { listRoles } from "./roles";
+import { listUsers } from "./userDirectory";
 import { listExpenseCategories } from "../expenses/expenses";
 import { formatPrice } from "../../lib/stock-display";
 
@@ -33,15 +34,19 @@ export default function SettingsHome() {
     units: 0,
     accounts: 0,
     total: 0,
+    users: 0,
+    roles: 0,
   });
 
   useEffect(() => {
     async function load() {
-      const [categories, units, accounts, movements] = await Promise.all([
+      const [categories, units, accounts, movements, users, roles] = await Promise.all([
         listCategories(),
         listUnits(),
         listAccounts(),
         accountMovements(),
+        listUsers(),
+        listRoles(),
       ]);
       setCounts({
         categories: categories.length,
@@ -49,6 +54,8 @@ export default function SettingsHome() {
         units: units.length,
         accounts: accounts.length,
         total: accounts.reduce((sum, account) => sum + balanceOf(account, movements), 0),
+        users: users.length,
+        roles: roles.length,
       });
     }
     void load();
@@ -118,7 +125,7 @@ export default function SettingsHome() {
       icon: "users",
       name: "Users and roles",
       description: "Who can sign in, and what each role is allowed to see and do.",
-      detail: `${listUsers().length} users · ${listRoles().length} roles`,
+      detail: `${counts.users} users · ${counts.roles} roles`,
     },
   ];
 

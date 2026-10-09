@@ -1,10 +1,41 @@
 import cors from "cors";
-import express, { type Express } from "express";
+import express, { type Express, type Response } from "express";
+import type { CapabilityResult } from "@zenzoo/types";
 import { requirePlatformAdmin } from "./auth/platform-admin";
+import { requireTenantUser } from "./auth/requireTenantUser";
+import { getActor } from "./auth/actor";
 import { signIn } from "./auth/signIn";
 import { SESSION_COOKIE_NAME } from "./auth/session";
 import { listTenants } from "./modules/platform/listTenants";
 import { provisionTenant, type ProvisionTenantInput } from "./modules/platform/provisionTenant";
+import { listRoles } from "./capabilities/reads/listRoles";
+import { createRole } from "./capabilities/actions/createRole";
+import { updateRole } from "./capabilities/actions/updateRole";
+import { deleteRole } from "./capabilities/actions/deleteRole";
+import { listUsers } from "./capabilities/reads/listUsers";
+import { getCurrentUser } from "./modules/self/getCurrentUser";
+import { createUser } from "./capabilities/actions/createUser";
+import { updateUser } from "./capabilities/actions/updateUser";
+import { setUserStatus } from "./capabilities/actions/setUserStatus";
+import { resetUserPassword } from "./capabilities/actions/resetUserPassword";
+
+const CAPABILITY_FAILURE_STATUS: Record<string, number> = {
+  NOT_FOUND: 404,
+  VALIDATION_ERROR: 400,
+  PERMISSION_DENIED: 403,
+  POLICY_VIOLATION: 409,
+  CONFLICT: 409,
+  INTERNAL_ERROR: 400,
+};
+
+/** Sends a capability's result as the route's response - 2xx with its data, or the matching status with { error: message } on failure. */
+function sendCapabilityResult<T>(res: Response, result: CapabilityResult<T>, successStatus = 200): void {
+  if (result.ok) {
+    res.status(successStatus).json(result.data);
+    return;
+  }
+  res.status(CAPABILITY_FAILURE_STATUS[result.error.code] ?? 400).json({ error: result.error.message });
+}
 
 const REQUIRED_FIELDS: (keyof ProvisionTenantInput)[] = [
   "ownerEmail",
@@ -77,6 +108,61 @@ export function createApp(): Express {
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : "Unknown error" });
     }
+  });
+
+  app.get("/roles", requireTenantUser, async (req, res) => {
+    const result = await listRoles.execute(getActor(req), undefined);
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/roles", requireTenantUser, async (req, res) => {
+    const result = await createRole.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.put("/roles/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await updateRole.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.delete("/roles/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await deleteRole.execute(getActor(req), { id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/me", requireTenantUser, async (req, res) => {
+    const me = await getCurrentUser(getActor(req));
+    res.json(me);
+  });
+
+  app.get("/users", requireTenantUser, async (req, res) => {
+    const result = await listUsers.execute(getActor(req), undefined);
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/users", requireTenantUser, async (req, res) => {
+    const result = await createUser.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.put("/users/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await updateUser.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.put("/users/:id/status", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await setUserStatus.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/users/:id/reset-password", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await resetUserPassword.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
   });
 
   return app;

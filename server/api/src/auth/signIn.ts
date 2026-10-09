@@ -17,7 +17,6 @@ interface LoginCredentialsRow {
   user_id: string;
   password_hash: string;
   tenant_id: string | null;
-  role: string | null;
 }
 
 /**
@@ -47,7 +46,7 @@ export async function signIn(email: string, password: string): Promise<SignInSuc
   `;
   const credentials = rows[0];
   const userMatches = await verifyPassword(password, credentials?.password_hash ?? DUMMY_HASH);
-  if (!credentials || !userMatches || !credentials.tenant_id || !credentials.role) {
+  if (!credentials || !userMatches || !credentials.tenant_id) {
     return null;
   }
 
@@ -55,7 +54,6 @@ export async function signIn(email: string, password: string): Promise<SignInSuc
     kind: "tenant_user",
     userId: credentials.user_id,
     tenantId: credentials.tenant_id,
-    role: credentials.role,
   };
   return { token: signSessionToken(payload), payload };
 }

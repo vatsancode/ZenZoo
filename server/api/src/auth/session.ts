@@ -4,7 +4,7 @@ export const SESSION_COOKIE_NAME = "zenzoo_session";
 
 export type SessionPayload =
   | { kind: "platform_admin"; adminId: string }
-  | { kind: "tenant_user"; userId: string; tenantId: string; role: string };
+  | { kind: "tenant_user"; userId: string; tenantId: string };
 
 /**
  * Express has no built-in cookie parsing and this is the only cookie the

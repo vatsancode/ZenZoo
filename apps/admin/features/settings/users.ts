@@ -1,7 +1,16 @@
 import { logAudit } from "../../lib/audit";
 
-// Sample data standing in for a real capability: there is no users, roles or auth read
-// capability on the backend yet. Replace with real calls once they exist.
+// The admin-directory parts of this file (addUser, editUser, listUsers,
+// setUserDisabled, UserInput, the mock `users` array) are now dead code -
+// the real thing lives in ./userDirectory.ts, wired to the real API, which
+// is what UsersSettings.tsx actually uses. What's left here and still real
+// is ProfileScreen.tsx's own narrow need: the signed-in person's OWN
+// mock record (CURRENT_USER_ID, getUser, updateProfile) and their own
+// password change (changePassword, passwordProblem) - genuinely unrelated
+// to the admin directory, and still mock because there's no self-profile
+// capability yet either. The Role/Permissions machinery below is kept only
+// so that mock record has a role to point at and display - the real Role
+// type and role list live in ./roles.ts, not here.
 
 export const ACCESS_LEVELS = ["none", "view", "edit", "delete"] as const;
 export type AccessLevel = (typeof ACCESS_LEVELS)[number];
@@ -157,11 +166,37 @@ export function roleSummary(role: Role): string {
 
 const emailOk = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 
+export const MIN_PASSWORD_LENGTH = 8;
+
+const PASSWORD_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+
+/** A random password to hand to a new (or reset) user - meets passwordStrengthProblem by construction. */
+export function generatePassword(): string {
+  let password = "";
+  for (let i = 0; i < 10; i += 1) {
+    password += PASSWORD_CHARS[Math.floor(Math.random() * PASSWORD_CHARS.length)];
+  }
+  return password;
+}
+
+/** What is wrong with a password being set *for* someone (no "current password" involved) - null when it is fine. */
+export function passwordStrengthProblem(password: string): string | null {
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return `The password needs at least ${MIN_PASSWORD_LENGTH} characters.`;
+  }
+  if (!/[a-zA-Z]/.test(password) || !/\d/.test(password)) {
+    return "Use letters and at least one number in the password.";
+  }
+  return null;
+}
+
 export interface UserInput {
   name: string;
   email: string;
   phone?: string;
   roleId: string;
+  /** Only read when creating a user - see addUser. There is no invite link: whoever adds a person types their password here and shares it with them directly. */
+  password?: string;
 }
 
 function checkUser(input: UserInput, ignoreId?: string): string | null {
@@ -180,7 +215,7 @@ function checkUser(input: UserInput, ignoreId?: string): string | null {
 }
 
 export function addUser(input: UserInput): string | null {
-  const problem = checkUser(input);
+  const problem = checkUser(input) ?? passwordStrengthProblem(input.password ?? "");
   if (problem) return problem;
   const user: User = {
     id: `usr-${Date.now()}`,
@@ -366,17 +401,11 @@ export function updateProfile(input: ProfileInput): string | null {
   return editUser(CURRENT_USER_ID, { ...input, roleId: me.roleId });
 }
 
-export const MIN_PASSWORD_LENGTH = 8;
-
 /** What is wrong with a new password, or null when it is fine. */
 export function passwordProblem(current: string, next: string, confirm: string): string | null {
   if (current === "") return "Enter your current password.";
-  if (next.length < MIN_PASSWORD_LENGTH) {
-    return `The new password needs at least ${MIN_PASSWORD_LENGTH} characters.`;
-  }
-  if (!/[a-zA-Z]/.test(next) || !/\d/.test(next)) {
-    return "Use letters and at least one number in the new password.";
-  }
+  const strength = passwordStrengthProblem(next);
+  if (strength) return strength.replace("The password", "The new password");
   if (next === current) return "The new password must be different from the current one.";
   if (next !== confirm) return "The two new passwords don't match.";
   return null;
@@ -397,6 +426,29 @@ export function changePassword(current: string, next: string, confirm: string): 
     before: null,
     after: null,
     note: "Password changed.",
+  });
+  return null;
+}
+
+/**
+ * An admin setting a *different* person's password - no "current password" needed, since
+ * this is them resetting it on someone else's behalf (a forgotten password, a new hire).
+ * Not wired to a real capability yet, same caveat as changePassword: the password itself is
+ * never stored or logged, only that a reset happened.
+ */
+export function resetUserPassword(id: string, next: string): string | null {
+  const user = getUser(id);
+  if (!user) return "That user no longer exists.";
+  const problem = passwordStrengthProblem(next);
+  if (problem) return problem;
+  logAudit({
+    action: "updated",
+    module: "Users",
+    entity: "Password",
+    label: user.name,
+    before: null,
+    after: null,
+    note: "Password reset.",
   });
   return null;
 }

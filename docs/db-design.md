@@ -358,6 +358,7 @@ CREATE TABLE roles (
     id              UUID PRIMARY KEY DEFAULT uuidv7(),
     tenant_id       UUID NOT NULL REFERENCES tenants (id),
     name            VARCHAR(50) NOT NULL,
+    description     VARCHAR(200) NOT NULL DEFAULT '',
     is_owner_role   BOOLEAN NOT NULL DEFAULT false,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -381,6 +382,7 @@ CREATE TRIGGER trg_roles_set_updated_at
 
 ### Notes
 
+- **`description`** — free text, shown in the role editor (e.g. "Everything, including users and settings."); no behavior depends on it, purely explanatory for whoever is picking a role for a teammate.
 - **`is_owner_role`** — exactly one `true` row per tenant, enforced by the partial unique index above, created only by `provision_new_account()` (see "Bootstrapping") — never by an ordinary application insert. It exists so the owner invariant has something stable to check that survives the Owner role being renamed in every cosmetic respect except this one. It isn't, by itself, a permissions bypass: a tenant could in principle still leave the Owner role's `role_permissions` rows wrong, which is why the guard below exists too.
 - **The Owner role can't be deleted, renamed, or demoted.** A hard rule, enforced the same way as the owner invariant itself — not just documented:
 
@@ -865,8 +867,8 @@ BEGIN
 
     -- every tenant's one permanent, locked role - see "roles" - created here and
     -- nowhere else in application code
-    INSERT INTO roles (tenant_id, name, is_owner_role)
-    VALUES (v_tenant_id, 'Owner', true)
+    INSERT INTO roles (tenant_id, name, description, is_owner_role)
+    VALUES (v_tenant_id, 'Owner', 'Everything, including users and settings.', true)
     RETURNING id INTO v_owner_role_id;
 
     INSERT INTO role_permissions (role_id, tenant_id, area, access_level)
@@ -897,6 +899,45 @@ GRANT EXECUTE ON FUNCTION provision_new_account(VARCHAR, VARCHAR, VARCHAR, VARCH
 **Atomicity and the owner invariant.** All six inserts (user, tenant, store, the Owner role, its eleven permission rows, and the owner membership) run inside the one statement that calls this function; if any of them fails (a duplicate email, a duplicate slug), the whole call rolls back and nothing is left half-created. `trg_tenants_owner_guard`'s deferred check — which requires an active owner before a `trial`/`active` tenant's *outer* transaction can commit — sees the owner membership already inserted by the time it runs, satisfying "Required provisioning order" automatically as long as the caller wraps this single function call in its own transaction (or lets it run as the implicit single-statement transaction it already is). See "The owner invariant" above for the two real bugs this exposed the first time it was actually called, and their fixes.
 
 **The same pattern extends to invite acceptance, not built out further here.** Accepting a `tenant_memberships` invite (`status='invited'`, `user_id IS NULL`) has an identical cold-start shape — the invited person has no `users` row and no session either — so it needs its own, equally narrow `SECURITY DEFINER` function (create the `users` row, then update the *one* specific, already-`invited` membership row a validated invite token names, nothing else reachable). It is not specified in full here because it wasn't part of the flow this pass was asked to resolve, but any implementation must follow this exact template — one function, one narrow job, no caller-supplied access to anything pre-existing beyond the single row an out-of-band-verified token already identifies — rather than widening `provision_new_account` or granting `app_role` any broader insert/update privilege to cover it.
+
+### Adding a person to a tenant that already exists
+
+Decided (see "No self-serve signup and no forgot-password" above): no invite-by-email flow. An owner, or anyone holding `users:edit`, picks a new teammate's password directly and shares it with them outside the app. The person doing this already has a session — `app.current_tenant_id`/`app.current_user_id` are already set — so this is *not* the cold-start case `provision_new_account` solves. What it shares with that case is narrower: `app_role` still has no `INSERT` grant on `users` at all, a table-privilege lock that has nothing to do with RLS or which tenant is in session — so creating the new person's row still needs the same kind of escape hatch, just a second, smaller door for a different situation.
+
+```sql
+CREATE FUNCTION add_tenant_user(
+    p_tenant_id     UUID,
+    p_role_id       UUID,
+    p_email         VARCHAR(255),
+    p_password_hash VARCHAR(255),
+    p_first_name    VARCHAR(100),
+    p_last_name     VARCHAR(100)
+) RETURNS TABLE (user_id UUID, membership_id UUID) AS $$
+DECLARE
+    v_user_id       UUID;
+    v_membership_id UUID;
+BEGIN
+    INSERT INTO users (email, password_hash, first_name, last_name)
+    VALUES (lower(p_email), p_password_hash, p_first_name, p_last_name)
+    RETURNING id INTO v_user_id;
+
+    INSERT INTO tenant_memberships (tenant_id, user_id, role_id, status)
+    VALUES (p_tenant_id, v_user_id, p_role_id, 'active')
+    RETURNING id INTO v_membership_id;
+
+    RETURN QUERY SELECT v_user_id, v_membership_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public;
+
+REVOKE EXECUTE ON FUNCTION add_tenant_user(UUID, UUID, VARCHAR, VARCHAR, VARCHAR, VARCHAR) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION add_tenant_user(UUID, UUID, VARCHAR, VARCHAR, VARCHAR, VARCHAR) TO app_role;
+```
+
+**Narrower than it looks, on purpose.** This function takes no access to anything pre-existing beyond the one `tenant_id`/`role_id` pair its caller already named — it can create a brand-new person and attach them to that tenant with that role, and nothing else. `tenant_memberships_role_fk` (see "roles") independently rejects a `role_id` that doesn't actually belong to `p_tenant_id`, so even a caller that got those two values wrong can't attach a new person to a tenant/role pair that doesn't really match — the function's own two inserts don't have to re-check that themselves.
+
+**Who may call this is still an application-layer decision**, exactly as provision_new_account's own note says — this function has no idea whether the caller actually holds `users:edit` for `p_tenant_id`; that check happens one layer up, before this is ever reached (see `server/api/src/capabilities/actions/createUser.ts`). The function's only job is "is it safe to let this specific insert through," not "should this particular actor be allowed to ask."
+
+**No `SECURITY DEFINER` needed for the `tenant_memberships` insert on its own merits** — `app_role` already has `INSERT` there (Group 1 grant) and RLS already allows it, since the caller's own tenant context matches `p_tenant_id`. It runs under the same elevated scope as the `users` insert only because both statements share one function body, not because it individually needs the bypass — same shape as `provision_new_account`'s four inserts.
 
 ---
 
@@ -1478,6 +1519,12 @@ CREATE TABLE inventory_batches (
     -- branch of trg_fn_inventory_batches_insert_guard below need no "total across several
     -- batches" check the way the purchase-origin branch does
     CONSTRAINT inventory_batches_sale_return_item_unique UNIQUE (sale_return_item_id),
+
+    -- redundant with the single-column unique above - added only so Prisma's relation
+    -- validator accepts the (tenant_id, store_id, sale_return_item_id, variant_id) FK below
+    -- as one-to-one; see prisma/README.md's note on this relation for why
+    CONSTRAINT inventory_batches_sale_return_item_relation_unique
+        UNIQUE (tenant_id, store_id, sale_return_item_id, variant_id),
 
     -- tenant, store and variant must all match the purchase line that produced the batch.
     -- MATCH SIMPLE (the default) skips this entirely for a return-origin batch, where

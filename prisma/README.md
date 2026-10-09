@@ -53,8 +53,16 @@ affected models say so explicitly:
   the database), but Prisma's relation modeling requires a `@@unique`
   covering the _entire_ field tuple used in the FK
   (`tenant_id, store_id, sale_return_item_id, variant_id`), not just the
-  one column that's actually unique - adding a redundant composite unique
-  index purely to satisfy Prisma was judged a worse trade-off than this.
+  one column that's actually unique. Originally judged not worth a
+  redundant composite unique index purely to satisfy Prisma - revisited
+  once that turned out to be a hard `prisma generate` failure (P1012)
+  under newer Prisma CLI versions, not just an imprecise type, blocking
+  every model's client generation, not only this relation's. See
+  `inventory_batches_sale_return_item_relation_unique`
+  (migration `20261008010000_inventory_batches_prisma_relation_unique`) -
+  a redundant index that can never be violated independently of the
+  single-column unique it duplicates, added once "nobody can run
+  `prisma generate`" outweighed the earlier objection.
   `sale_return_items.inventory_batches` is therefore typed as an array
   (`inventory_batches[]`) in the generated client, even though the database
   guarantees it will only ever contain zero or one element. Application

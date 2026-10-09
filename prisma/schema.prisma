@@ -95,6 +95,7 @@ model inventory_batches {
   stock_movements       stock_movements[]
 
   @@unique([tenant_id, store_id, id, variant_id], map: "inventory_batches_movement_target_unique")
+  @@unique([tenant_id, store_id, sale_return_item_id, variant_id], map: "inventory_batches_sale_return_item_relation_unique")
   @@unique([tenant_id, barcode], map: "inventory_batches_tenant_barcode_unique")
   @@index([tenant_id, purchase_item_id], map: "idx_inventory_batches_purchase_item")
   @@index([tenant_id, store_id, variant_id, received_at], map: "idx_inventory_batches_store_variant")
@@ -153,6 +154,15 @@ model payment_methods {
   @@unique([tenant_id, code], map: "payment_methods_tenant_code_unique")
   @@unique([tenant_id, id], map: "payment_methods_tenant_id_id_unique")
   @@index([tenant_id, status], map: "idx_payment_methods_tenant_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model platform_admins {
+  id            String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  email         String   @unique @db.VarChar(255)
+  password_hash String   @db.VarChar(255)
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @db.Timestamptz(6)
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -261,6 +271,37 @@ model purchases {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model role_permissions {
+  role_id      String @db.Uuid
+  tenant_id    String @db.Uuid
+  area         String @db.VarChar(20)
+  access_level String @default("none") @db.VarChar(10)
+  roles        roles  @relation(fields: [tenant_id, role_id], references: [tenant_id, id], onDelete: Cascade, onUpdate: NoAction, map: "role_permissions_role_fk")
+
+  @@id([role_id, area])
+  @@index([tenant_id], map: "idx_role_permissions_tenant_id")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model roles {
+  id                 String               @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id          String               @db.Uuid
+  name               String               @db.VarChar(50)
+  is_owner_role      Boolean              @default(false)
+  created_at         DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime             @default(now()) @db.Timestamptz(6)
+  description        String               @default("") @db.VarChar(200)
+  role_permissions   role_permissions[]
+  tenants            tenants              @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  tenant_memberships tenant_memberships[]
+
+  @@unique([tenant_id, name], map: "roles_name_unique")
+  @@unique([tenant_id, id], map: "roles_tenant_id_id_unique")
+  @@index([tenant_id], map: "idx_roles_tenant_id")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model sale_item_batches {
   id                String              @id @default(dbgenerated("uuidv7()")) @db.Uuid
   tenant_id         String              @db.Uuid
@@ -350,8 +391,8 @@ model sale_return_items {
   notes              String?            @db.VarChar(500)
   created_at         DateTime           @default(now()) @db.Timestamptz(6)
   updated_at         DateTime           @default(now()) @db.Timestamptz(6)
-  inventory_batches  inventory_batches[]
-  sale_item_batches  sale_item_batches   @relation(fields: [tenant_id, store_id, sale_item_batch_id, sale_item_id, variant_id], references: [tenant_id, store_id, id, sale_item_id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "sale_return_items_batch_fk")
+  inventory_batches  inventory_batches?
+  sale_item_batches  sale_item_batches  @relation(fields: [tenant_id, store_id, sale_item_batch_id, sale_item_id, variant_id], references: [tenant_id, store_id, id, sale_item_id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "sale_return_items_batch_fk")
   sale_returns       sale_returns       @relation(fields: [tenant_id, store_id, sale_return_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sale_return_items_return_fk")
   sale_items         sale_items         @relation(fields: [tenant_id, store_id, sale_item_id, variant_id], references: [tenant_id, store_id, id, variant_id], onDelete: NoAction, onUpdate: NoAction, map: "sale_return_items_sale_item_fk")
   tenants            tenants            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -515,15 +556,17 @@ model tenant_memberships {
   tenant_id               String                    @db.Uuid
   user_id                 String?                   @db.Uuid
   invited_email           String?                   @db.VarChar(255)
-  role                    String                    @db.VarChar(20)
   status                  String                    @default("invited") @db.VarChar(20)
   created_at              DateTime                  @default(now()) @db.Timestamptz(6)
   updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  role_id                 String                    @db.Uuid
   membership_store_access membership_store_access[]
+  roles                   roles                     @relation(fields: [tenant_id, role_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "tenant_memberships_role_fk")
   tenants                 tenants                   @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                   users?                    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([tenant_id, id], map: "tenant_memberships_tenant_id_id_unique")
+  @@index([role_id], map: "idx_tenant_memberships_role_id")
   @@index([tenant_id], map: "idx_tenant_memberships_tenant_id")
   @@index([user_id], map: "idx_tenant_memberships_user_id")
 }
@@ -549,6 +592,7 @@ model tenants {
   purchase_return_items   purchase_return_items[]
   purchase_returns        purchase_returns[]
   purchases               purchases[]
+  roles                   roles[]
   sale_item_batches       sale_item_batches[]
   sale_items              sale_items[]
   sale_payments           sale_payments[]
@@ -612,13 +656,4 @@ model variants {
   @@index([tenant_id, sellable_id], map: "idx_variants_sellable")
   @@index([tenant_id, store_id], map: "idx_variants_store")
   @@index([tenant_id, store_id, status], map: "idx_variants_store_status")
-}
-
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
-model platform_admins {
-  id            String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  email         String   @unique @db.VarChar(255)
-  password_hash String   @db.VarChar(255)
-  created_at    DateTime @default(now()) @db.Timestamptz(6)
-  updated_at    DateTime @default(now()) @db.Timestamptz(6)
 }
