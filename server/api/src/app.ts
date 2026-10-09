@@ -23,6 +23,13 @@ import { listCategories } from "./capabilities/reads/listCategories";
 import { createCategory } from "./capabilities/actions/createCategory";
 import { renameCategory } from "./capabilities/actions/renameCategory";
 import { deleteCategory } from "./capabilities/actions/deleteCategory";
+import { listProducts } from "./capabilities/reads/listProducts";
+import { createProduct } from "./capabilities/actions/createProduct";
+import { updateProduct } from "./capabilities/actions/updateProduct";
+import { setProductStatus } from "./capabilities/actions/setProductStatus";
+import { createVariant } from "./capabilities/actions/createVariant";
+import { updateVariant } from "./capabilities/actions/updateVariant";
+import { setVariantStatus } from "./capabilities/actions/setVariantStatus";
 
 const CAPABILITY_FAILURE_STATUS: Record<string, number> = {
   NOT_FOUND: 404,
@@ -171,6 +178,51 @@ export function createApp(): Express {
   app.delete("/categories/:id", requireTenantUser, async (req, res) => {
     const id = req.params.id as string;
     const result = await deleteCategory.execute(getActor(req), { id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/products", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await listProducts.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/products", requireTenantUser, async (req, res) => {
+    const result = await createProduct.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.put("/products/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await updateProduct.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.put("/products/:id/status", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await setProductStatus.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/products/:id/variants", requireTenantUser, async (req, res) => {
+    const sellableId = req.params.id as string;
+    const result = await createVariant.execute(getActor(req), { ...req.body, sellableId });
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.put("/variants/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await updateVariant.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.put("/variants/:id/status", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await setVariantStatus.execute(getActor(req), { ...req.body, id });
     sendCapabilityResult(res, result);
   });
 
