@@ -755,6 +755,12 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
 -- notes), not the absence of this grant.
 GRANT SELECT, INSERT, UPDATE, DELETE ON roles, role_permissions TO app_role;
 
+-- Group 2c: categories - no status/archived lifecycle (see "categories"'
+-- own notes), so a real DELETE is granted, guarded by sellables_category_fk
+-- (ON DELETE RESTRICT) and trg_categories_one_level_deep rather than by
+-- withholding the grant.
+GRANT SELECT, INSERT, UPDATE, DELETE ON categories TO app_role;
+
 -- Group 3: membership_store_access has no content column and no status column at all —
 -- "you add or remove a row rather than editing one" (see its own notes) — so it gets
 -- real DELETE instead of UPDATE.
@@ -1013,6 +1019,88 @@ CREATE TRIGGER trg_suppliers_set_updated_at
 
 ---
 
+## `categories`
+
+How a store groups its own sellables for browsing and filtering — "Beverages", "Snacks" — with one optional level of subcategories ("Snacks → Chips"). Store-scoped, same as `sellables`/`variants` in Phase 1: two stores under the same tenant keep independent category lists, even if they happen to use the same names. This is a deliberate consequence of Phase 1's "no catalogue sharing between stores" scope (see above) applying to categories too, not just to sellables — a tenant with two differently-assorted stores (say, a clothing store and a café) is free to give them unrelated category trees, at the cost of recreating "Beverages" per store if two stores do sell the same kinds of things.
+
+```sql
+CREATE TABLE categories (
+    id         UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id  UUID NOT NULL REFERENCES tenants (id),
+    store_id   UUID NOT NULL,
+    parent_id  UUID,
+    name       VARCHAR(100) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT categories_tenant_store_id_unique UNIQUE (tenant_id, store_id, id),
+    CONSTRAINT categories_store_fk
+        FOREIGN KEY (tenant_id, store_id) REFERENCES stores (tenant_id, id),
+    -- a subcategory's parent must live in the same tenant AND store.
+    -- ON DELETE CASCADE: deleting a category takes its subcategories with it
+    CONSTRAINT categories_parent_fk
+        FOREIGN KEY (tenant_id, store_id, parent_id)
+        REFERENCES categories (tenant_id, store_id, id)
+        ON DELETE CASCADE
+);
+
+-- split in two because NULLs never collide in a Postgres unique index -
+-- a plain UNIQUE(tenant_id, store_id, parent_id, name) would let two
+-- top-level categories (parent_id NULL) share a name
+CREATE UNIQUE INDEX idx_categories_top_level_name_unique
+    ON categories (tenant_id, store_id, name) WHERE parent_id IS NULL;
+CREATE UNIQUE INDEX idx_categories_subcategory_name_unique
+    ON categories (tenant_id, store_id, parent_id, name) WHERE parent_id IS NOT NULL;
+
+CREATE INDEX idx_categories_store ON categories (tenant_id, store_id);
+CREATE INDEX idx_categories_parent ON categories (tenant_id, store_id, parent_id);
+
+CREATE TRIGGER trg_categories_set_updated_at
+    BEFORE UPDATE ON categories
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+
+-- one level deep only, checked from both directions
+CREATE FUNCTION trg_fn_categories_one_level_deep() RETURNS TRIGGER AS $$
+DECLARE
+    v_parent_has_parent BOOLEAN;
+    v_has_children      BOOLEAN;
+BEGIN
+    IF NEW.parent_id IS NOT NULL THEN
+        SELECT (parent_id IS NOT NULL) INTO v_parent_has_parent
+        FROM categories WHERE id = NEW.parent_id;
+
+        IF v_parent_has_parent IS NULL THEN
+            RAISE EXCEPTION 'parent category % does not exist', NEW.parent_id;
+        END IF;
+        IF v_parent_has_parent THEN
+            RAISE EXCEPTION 'category % is already a subcategory and cannot have its own subcategories', NEW.parent_id;
+        END IF;
+    END IF;
+
+    IF TG_OP = 'UPDATE' AND NEW.parent_id IS DISTINCT FROM OLD.parent_id THEN
+        SELECT EXISTS (SELECT 1 FROM categories WHERE parent_id = NEW.id) INTO v_has_children;
+        IF v_has_children THEN
+            RAISE EXCEPTION 'category % has subcategories and cannot become a subcategory itself', NEW.id;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_categories_one_level_deep
+    BEFORE INSERT OR UPDATE ON categories
+    FOR EACH ROW
+    EXECUTE FUNCTION trg_fn_categories_one_level_deep();
+```
+
+- **No `status` column.** Unlike `sellables`/`suppliers`, a category isn't soft-deleted — it's either there or it's really gone. Deleting one that's still in use on a sellable is rejected at the FK level (see `sellables.category_id` below), not silently allowed and hidden. Deleting one that still has subcategories, by contrast, is allowed and takes them with it (`categories_parent_fk`'s `ON DELETE CASCADE`) — a subcategory has no identity independent of its parent the way a sellable does, so there's nothing to protect by blocking that delete.
+- **One level deep, enforced by trigger in both directions** — a subcategory can't be given its own subcategories (checked when the child is written), and a top-level category that already has subcategories can't be turned into a subcategory itself (checked when the parent is written). A `CHECK` constraint can't express this on its own since it depends on sibling rows, the same reason `sale_items`' active-variant rule needed a trigger instead.
+- **Why store-scoped and not tenant-wide, unlike `suppliers`.** `suppliers` is deliberately tenant-level because who a tenant buys from has nothing to do with which store sells what. Categories describe *what a store sells*, the same dimension `sellables` and `variants` are already scoped to — keeping them store-scoped avoids introducing the one tenant-wide catalogue concept Phase 1's "no catalogue sharing" boundary otherwise avoids everywhere else.
+
+---
+
 ## `sellables`
 
 The conceptual thing the business can sell: "Silk Saree", "Haircut". It is created within a store (**`stores 1:N sellables`**). It has no price and no stock: those live on variants and batches.
@@ -1031,17 +1119,26 @@ CREATE TABLE sellables (
                             CHECK (status IN ('active', 'archived')),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- nullable: a sellable can go uncategorized indefinitely, both today and
+    -- going forward - added by the 20261009010000_categories migration
+    category_id         UUID,
 
     CONSTRAINT sellables_tenant_id_id_unique UNIQUE (tenant_id, id),
     -- target for variants: keeps a variant in the same tenant AND store as its sellable
     CONSTRAINT sellables_tenant_store_id_unique UNIQUE (tenant_id, store_id, id),
     CONSTRAINT sellables_store_fk
-        FOREIGN KEY (tenant_id, store_id) REFERENCES stores (tenant_id, id)
+        FOREIGN KEY (tenant_id, store_id) REFERENCES stores (tenant_id, id),
+    -- ON DELETE RESTRICT (the default): a category still in use on a sellable
+    -- cannot be deleted out from under it - see "categories" above
+    CONSTRAINT sellables_category_fk
+        FOREIGN KEY (tenant_id, store_id, category_id)
+        REFERENCES categories (tenant_id, store_id, id)
 );
 
 CREATE INDEX idx_sellables_store ON sellables (tenant_id, store_id);
 -- lifecycle filtering: catalogue browsing filters on exactly this triple
 CREATE INDEX idx_sellables_store_status ON sellables (tenant_id, store_id, status);
+CREATE INDEX idx_sellables_category ON sellables (tenant_id, store_id, category_id);
 
 CREATE TRIGGER trg_sellables_set_updated_at
     BEFORE UPDATE ON sellables
@@ -3690,6 +3787,9 @@ Because price sits on the variant and cost sits on the purchase line and batch, 
 |---|---|
 | `stores 1:N sellables` | A sellable is created within a store. This gives every catalogue row a home now, without any sharing model. |
 | `sellables 1:N variants` | The sellable is the idea ("Silk Saree"); the variant is the thing you can stock, price and sell (Red/6m). Splitting them lets one idea have many prices and stock levels. `variants.store_id` is denormalised from the sellable (and FK-tied to it), so a variant's store is directly, not just transitively, enforceable further down the chain. |
+| `stores 1:N categories` | Categories describe what a store sells, the same dimension sellables/variants are already scoped to - no tenant-wide catalogue concept is introduced just for this. |
+| `categories 1:N categories` (self) | One level of subcategories, via `parent_id` pointing at another row in the same table. `trg_categories_one_level_deep` stops it from going any deeper. |
+| `categories 1:N sellables` | A sellable optionally belongs to one category for browsing/filtering. Nullable - "uncategorized" is a normal, permanent state, not a migration step. |
 | `stores 1:N purchases` | Purchasing is an operational event at a store, and the store is where stock arrives. |
 | `suppliers 1:N purchases` | One supplier serves many purchases, and reports like "spend by supplier" need the link. Suppliers are tenant-level. |
 | `purchases 1:N purchase_items` | A purchase is a header plus lines. |

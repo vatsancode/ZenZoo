@@ -17,6 +17,7 @@ import {
 } from "../../lib/catalogue";
 import { listProducts, saveProducts, type Product } from "../stocks/stocks";
 import PageHeader from "../../components/PageHeader";
+import StoreSwitcher from "../../components/StoreSwitcher";
 
 /** Categories and their subcategories: add, rename, remove, and see how many products use each. */
 export default function CategoriesSettings() {
@@ -45,12 +46,14 @@ export default function CategoriesSettings() {
     return () => clearTimeout(timer);
   }, [notice]);
 
-  function create() {
-    const category = addCategory(newName);
+  async function create() {
+    if (newName.trim() === "") {
+      setError("Enter a name.");
+      return;
+    }
+    const category = await addCategory(newName);
     if (!category) {
-      setError(
-        newName.trim() === "" ? "Enter a name." : "A category with this name already exists.",
-      );
+      setError("A category with this name already exists.");
       return;
     }
     setNewName("");
@@ -61,10 +64,12 @@ export default function CategoriesSettings() {
 
   async function saveRename(category: Category) {
     if (!renaming) return;
-    if (!renameCategory(category.id, renaming.name)) {
-      setError(
-        renaming.name.trim() === "" ? "Enter a name." : "A category with this name already exists.",
-      );
+    if (renaming.name.trim() === "") {
+      setError("Enter a name.");
+      return;
+    }
+    if (!(await renameCategory(category.id, renaming.name))) {
+      setError("A category with this name already exists.");
       return;
     }
     // Products carry the category by name, so they follow the rename.
@@ -75,16 +80,18 @@ export default function CategoriesSettings() {
     void reload();
   }
 
-  function saveSub(category: Category) {
+  async function saveSub(category: Category) {
     if (!addingSubTo) return;
-    if (addSubcategory(category.id, addingSubTo.name)) {
+    if (addingSubTo.name.trim() === "") {
+      setError("Enter a name.");
+      return;
+    }
+    if (await addSubcategory(category.id, addingSubTo.name)) {
       setAddingSubTo(null);
       setError(null);
       void reload();
     } else {
-      setError(
-        addingSubTo.name.trim() === "" ? "Enter a name." : "This subcategory already exists.",
-      );
+      setError("This subcategory already exists.");
     }
   }
 
@@ -114,6 +121,7 @@ export default function CategoriesSettings() {
         subtitle="Group your products. Subcategories sit inside a category."
         backHref="/settings"
         backLabel="Back to settings"
+        action={<StoreSwitcher onChange={() => void reload()} />}
       />
 
       {notice ? <Notice>{notice}</Notice> : null}
@@ -131,7 +139,7 @@ export default function CategoriesSettings() {
               setError(null);
             }}
             onKeyDown={(event) => {
-              if (event.key === "Enter") create();
+              if (event.key === "Enter") void create();
             }}
           />
           {error && !renaming && !addingSubTo ? (
@@ -143,7 +151,7 @@ export default function CategoriesSettings() {
             </div>
           ) : null}
         </div>
-        <Button type="button" variant="primary" onClick={create}>
+        <Button type="button" variant="primary" onClick={() => void create()}>
           Add category
         </Button>
       </div>
@@ -260,8 +268,7 @@ export default function CategoriesSettings() {
                         type="button"
                         aria-label={`Remove ${name}`}
                         onClick={() => {
-                          removeSubcategory(category.id, name);
-                          void reload();
+                          void removeSubcategory(category.id, name).then(() => reload());
                         }}
                         style={{
                           display: "inline-flex",
@@ -296,7 +303,7 @@ export default function CategoriesSettings() {
                         setError(null);
                       }}
                       onKeyDown={(event) => {
-                        if (event.key === "Enter") saveSub(category);
+                        if (event.key === "Enter") void saveSub(category);
                         if (event.key === "Escape") setAddingSubTo(null);
                       }}
                     />
@@ -304,7 +311,7 @@ export default function CategoriesSettings() {
                   <Button
                     type="button"
                     variant="primary"
-                    onClick={() => saveSub(category)}
+                    onClick={() => void saveSub(category)}
                     style={{ height: 36 }}
                   >
                     Add
@@ -376,9 +383,13 @@ export default function CategoriesSettings() {
               type="button"
               variant="danger"
               onClick={() => {
-                if (deleting) deleteCategory(deleting.id);
+                if (!deleting) return;
+                const target = deleting;
                 setDeleting(null);
-                void reload();
+                void deleteCategory(target.id).then((deleteError) => {
+                  if (deleteError) setNotice(deleteError);
+                  void reload();
+                });
               }}
             >
               Delete

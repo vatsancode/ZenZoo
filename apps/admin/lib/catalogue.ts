@@ -1,4 +1,8 @@
 import { UNIT_OPTIONS, type Product } from "../features/stocks/stocks";
+import { redirectToSignInIfUnauthorized } from "./auth";
+import { ensureStoreId } from "./storeContext";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 export interface Category {
   id: string;
@@ -6,73 +10,118 @@ export interface Category {
   subcategories: string[];
 }
 
-// Sample data standing in for a real capability, same as lib/stocks.ts: there is no
-// catalogue capability on the backend yet. The starting set matches what the sample
-// products already use, so every product belongs to a listed category.
-let categories: Category[] = [
-  { id: "cat-sarees", name: "Sarees", subcategories: ["Silk", "Cotton"] },
-  { id: "cat-salwar", name: "Salwar", subcategories: ["Cotton", "Anarkali", "Palazzo"] },
-  { id: "cat-tops", name: "Tops", subcategories: ["Cotton", "Kurti"] },
-];
-
-export async function listCategories(): Promise<Category[]> {
-  return categories;
+interface CategoryResponse {
+  id: string;
+  storeId: string;
+  name: string;
+  parentId: string | null;
 }
 
-/** The categories as they are right now, for a form that builds its list synchronously. */
+// Raw rows from the last listCategories() call, kept so removeSubcategory
+// (which only gets a name, like the rest of this UI) can resolve it back to
+// the real row id the API needs - see categoriesSnapshot/rawSnapshot below.
+let rawSnapshot: CategoryResponse[] = [];
+
+function toCategories(rows: CategoryResponse[]): Category[] {
+  const topLevel = rows.filter((row) => row.parentId === null);
+  return topLevel.map((row) => ({
+    id: row.id,
+    name: row.name,
+    subcategories: rows.filter((child) => child.parentId === row.id).map((child) => child.name),
+  }));
+}
+
+async function parseError(response: Response): Promise<string> {
+  try {
+    const data = (await response.json()) as { error?: string };
+    return data.error ?? "Something went wrong.";
+  } catch {
+    return "Something went wrong.";
+  }
+}
+
+/** Lists this store's categories from the real API - requires at least "catalogue:view". */
+export async function listCategories(): Promise<Category[]> {
+  const storeId = await ensureStoreId();
+  const response = await fetch(`${API_URL}/categories?storeId=${storeId}`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    throw new Error(await parseError(response));
+  }
+  rawSnapshot = (await response.json()) as CategoryResponse[];
+  return toCategories(rawSnapshot);
+}
+
+/** The categories as of the last listCategories() call, for a form that builds its list synchronously. */
 export function categoriesSnapshot(): Category[] {
-  return categories;
+  return toCategories(rawSnapshot);
+}
+
+/** Creates a top-level category - requires "catalogue:edit". Returns the new category, or null on error. */
+export async function addCategory(name: string): Promise<Category | null> {
+  const storeId = await ensureStoreId();
+  const response = await fetch(`${API_URL}/categories`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ storeId, name }),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return null;
+  }
+  const row = (await response.json()) as CategoryResponse;
+  return { id: row.id, name: row.name, subcategories: [] };
+}
+
+/** Renames a category or subcategory - requires "catalogue:edit". Returns false on error. */
+export async function renameCategory(id: string, name: string): Promise<boolean> {
+  const response = await fetch(`${API_URL}/categories/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) redirectToSignInIfUnauthorized(response);
+  return response.ok;
+}
+
+/** Deletes a category (and its subcategories) - requires "catalogue:delete". Returns an error message, or null on success. */
+export async function deleteCategory(id: string): Promise<string | null> {
+  const response = await fetch(`${API_URL}/categories/${id}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  return null;
+}
+
+/** Adds a subcategory under an existing top-level category - requires "catalogue:edit". Returns false on error. */
+export async function addSubcategory(id: string, name: string): Promise<boolean> {
+  const storeId = await ensureStoreId();
+  const response = await fetch(`${API_URL}/categories`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ storeId, name, parentId: id }),
+  });
+  if (!response.ok) redirectToSignInIfUnauthorized(response);
+  return response.ok;
+}
+
+/** Removes a subcategory by name, resolved against the last listCategories() snapshot. */
+export async function removeSubcategory(id: string, name: string): Promise<void> {
+  const child = rawSnapshot.find((row) => row.parentId === id && row.name === name);
+  if (!child) return;
+  await fetch(`${API_URL}/categories/${child.id}`, { method: "DELETE", credentials: "include" });
 }
 
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
-
-export function addCategory(name: string): Category | null {
-  const clean = name.trim();
-  if (clean === "" || categories.some((category) => same(category.name, clean))) return null;
-  const category: Category = { id: `cat-${Date.now()}`, name: clean, subcategories: [] };
-  categories = [...categories, category];
-  return category;
-}
-
-/** Returns false when the new name is empty or already taken by another category. */
-export function renameCategory(id: string, name: string): boolean {
-  const clean = name.trim();
-  if (
-    clean === "" ||
-    categories.some((category) => category.id !== id && same(category.name, clean))
-  ) {
-    return false;
-  }
-  categories = categories.map((category) =>
-    category.id === id ? { ...category, name: clean } : category,
-  );
-  return true;
-}
-
-export function deleteCategory(id: string): void {
-  categories = categories.filter((category) => category.id !== id);
-}
-
-export function addSubcategory(id: string, name: string): boolean {
-  const clean = name.trim();
-  const target = categories.find((category) => category.id === id);
-  if (!target || clean === "" || target.subcategories.some((item) => same(item, clean)))
-    return false;
-  categories = categories.map((category) =>
-    category.id === id
-      ? { ...category, subcategories: [...category.subcategories, clean] }
-      : category,
-  );
-  return true;
-}
-
-export function removeSubcategory(id: string, name: string): void {
-  categories = categories.map((category) =>
-    category.id === id
-      ? { ...category, subcategories: category.subcategories.filter((item) => item !== name) }
-      : category,
-  );
-}
 
 /** Products using a category, so it can be shown and protected from deletion. */
 export function productsInCategory(products: Product[], name: string): number {
