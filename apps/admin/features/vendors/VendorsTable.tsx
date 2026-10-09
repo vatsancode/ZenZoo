@@ -14,14 +14,7 @@ import {
 } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import {
-  addVendor,
-  editVendor,
-  listVendors,
-  saveVendors,
-  type Vendor,
-  type VendorInput,
-} from "./vendors";
+import { addVendor, editVendor, listVendors, type Vendor, type VendorInput } from "./vendors";
 import VendorSheet from "./VendorSheet";
 
 export default function VendorsTable() {
@@ -35,8 +28,12 @@ export default function VendorsTable() {
   const [editing, setEditing] = useState<Vendor | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  function reload() {
+    return listVendors().then(setVendors);
+  }
+
   useEffect(() => {
-    listVendors().then(setVendors);
+    void reload();
   }, []);
 
   useEffect(() => {
@@ -51,11 +48,13 @@ export default function VendorsTable() {
   }
 
   // One sheet serves both: adding a new vendor, or editing the clicked row.
-  function handleSubmit(input: VendorInput) {
-    if (!vendors) return;
-    const next = editing ? editVendor(vendors, editing.id, input) : addVendor(vendors, input);
-    setVendors(next);
-    saveVendors(next);
+  async function handleSubmit(input: VendorInput) {
+    const result = editing ? await editVendor(editing.id, input) : await addVendor(input);
+    if (typeof result === "string") {
+      setNotice(result);
+      return;
+    }
+    await reload();
     // A new vendor lands at the top of the list, so go there to show it.
     if (!editing) setPage(1);
     setNotice(editing ? `${input.name.trim()} updated.` : `${input.name.trim()} added.`);

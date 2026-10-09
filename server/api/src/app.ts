@@ -30,6 +30,10 @@ import { setProductStatus } from "./capabilities/actions/setProductStatus";
 import { createVariant } from "./capabilities/actions/createVariant";
 import { updateVariant } from "./capabilities/actions/updateVariant";
 import { setVariantStatus } from "./capabilities/actions/setVariantStatus";
+import { listSuppliers } from "./capabilities/reads/listSuppliers";
+import { createSupplier } from "./capabilities/actions/createSupplier";
+import { updateSupplier } from "./capabilities/actions/updateSupplier";
+import { setSupplierStatus } from "./capabilities/actions/setSupplierStatus";
 
 const CAPABILITY_FAILURE_STATUS: Record<string, number> = {
   NOT_FOUND: 404,
@@ -251,6 +255,28 @@ export function createApp(): Express {
   app.post("/users/:id/reset-password", requireTenantUser, async (req, res) => {
     const id = req.params.id as string;
     const result = await resetUserPassword.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/suppliers", requireTenantUser, async (req, res) => {
+    const result = await listSuppliers.execute(getActor(req), undefined);
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/suppliers", requireTenantUser, async (req, res) => {
+    const result = await createSupplier.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.put("/suppliers/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await updateSupplier.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.put("/suppliers/:id/status", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await setSupplierStatus.execute(getActor(req), { ...req.body, id });
     sendCapabilityResult(res, result);
   });
 
