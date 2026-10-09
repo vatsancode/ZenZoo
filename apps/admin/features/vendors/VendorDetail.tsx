@@ -1,16 +1,9 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Badge, Button, Card, textStyle } from "@zenzoo/ui-web";
+import { Badge, Button, Card, Notice, Switch, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState, type ReactNode } from "react";
-import {
-  editVendor,
-  getVendor,
-  listVendors,
-  saveVendors,
-  type Vendor,
-  type VendorInput,
-} from "./vendors";
+import { editVendor, getVendor, setVendorStatus, type Vendor, type VendorInput } from "./vendors";
 import PageHeader from "../../components/PageHeader";
 import StatTile, { StatRow } from "../../components/StatTile";
 import VendorSheet from "./VendorSheet";
@@ -20,19 +13,31 @@ export default function VendorDetail({ vendorId }: { vendorId: string }) {
   // undefined while loading, null when there is no such vendor.
   const [vendor, setVendor] = useState<Vendor | null | undefined>(undefined);
   const [editOpen, setEditOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     getVendor(vendorId).then(setVendor);
   }, [vendorId]);
 
-  function handleSubmit(input: VendorInput) {
+  async function handleSubmit(input: VendorInput) {
     if (!vendor) return;
-    listVendors().then((all) => {
-      const next = editVendor(all, vendor.id, input);
-      saveVendors(next);
-      setVendor(next.find((item) => item.id === vendor.id) ?? null);
-    });
+    const result = await editVendor(vendor.id, input);
+    if (typeof result === "string") {
+      setNotice(result);
+      return;
+    }
+    setVendor(result);
     setEditOpen(false);
+  }
+
+  async function toggleArchived(archived: boolean) {
+    if (!vendor) return;
+    const result = await setVendorStatus(vendor.id, archived);
+    if (typeof result === "string") {
+      setNotice(result);
+      return;
+    }
+    setVendor(result);
   }
 
   if (vendor === undefined) {
@@ -85,6 +90,8 @@ export default function VendorDetail({ vendorId }: { vendorId: string }) {
         }
       />
 
+      {notice ? <Notice>{notice}</Notice> : null}
+
       {/* No purchases exist yet, so these stay empty until that data does. */}
       <StatRow>
         <StatTile label="Total purchases" value="-" hint="No purchases yet" />
@@ -102,9 +109,18 @@ export default function VendorDetail({ vendorId }: { vendorId: string }) {
           }}
         >
           <div style={{ ...textStyle("headline"), color: colors.ink }}>Vendor details</div>
-          <Badge tone={vendor.status === "active" ? "success" : "neutral"}>
-            {vendor.status === "active" ? "Active" : "Archived"}
-          </Badge>
+          <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
+            <Badge tone={vendor.status === "active" ? "success" : "neutral"}>
+              {vendor.status === "active" ? "Active" : "Archived"}
+            </Badge>
+            <Switch
+              checked={vendor.status === "active"}
+              aria-label={
+                vendor.status === "active" ? `Archive ${vendor.name}` : `Reactivate ${vendor.name}`
+              }
+              onChange={(on) => void toggleArchived(!on)}
+            />
+          </div>
         </div>
         <div
           style={{

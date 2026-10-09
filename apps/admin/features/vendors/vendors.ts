@@ -1,4 +1,6 @@
-import { logAudit } from "../../lib/audit";
+import { redirectToSignInIfUnauthorized } from "../../lib/auth";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 export interface Vendor {
   id: string;
@@ -12,58 +14,52 @@ export interface Vendor {
   status: "active" | "archived";
 }
 
-// Sample data standing in for a real capability, same as lib/stocks.ts: there
-// is no vendors read capability on the backend yet. Fields mirror the
-// `suppliers` table in docs/db-design.md (called vendors in the app), plus `mapUrl`. Swap the bodies of
-// listVendors/saveVendors for real API calls once the capability exists.
-let store: Vendor[] = [
-  {
-    id: "sup-1",
-    name: "Kumaran Silks",
-    phone: "+91 98765 43210",
-    email: "orders@kumaransilks.in",
-    taxId: "33AABCK1234F1Z5",
-    mapUrl: "https://maps.app.goo.gl/kumaransilks",
-    status: "active",
-  },
-  {
-    id: "sup-2",
-    name: "Varanasi Weavers Co-op",
-    phone: "+91 98450 11223",
-    email: "sales@vwcoop.in",
-    taxId: "09AAAAV5678K1Z2",
-    status: "active",
-  },
-  {
-    id: "sup-3",
-    name: "Jaipur Block Prints",
-    phone: "+91 99280 55671",
-    email: "hello@jaipurblock.in",
-    taxId: "08AACCJ4321P1Z9",
-    status: "active",
-  },
-  {
-    id: "sup-4",
-    name: "Surat Textile Hub",
-    phone: "+91 98240 77889",
-    taxId: "24AAEFS9087L1Z4",
-    status: "active",
-  },
-  {
-    id: "sup-5",
-    name: "Lucknow Chikan House",
-    phone: "+91 94150 33445",
-    email: "info@lucknowchikan.in",
-    status: "archived",
-  },
-];
-
-export async function listVendors(): Promise<Vendor[]> {
-  return store;
+interface SupplierResponse {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  taxId: string | null;
+  mapUrl: string | null;
+  status: "active" | "archived";
 }
 
-export function saveVendors(next: Vendor[]): void {
-  store = next;
+function toVendor(response: SupplierResponse): Vendor {
+  return {
+    id: response.id,
+    name: response.name,
+    phone: response.phone ?? undefined,
+    email: response.email ?? undefined,
+    taxId: response.taxId ?? undefined,
+    mapUrl: response.mapUrl ?? undefined,
+    status: response.status,
+  };
+}
+
+async function parseError(response: Response): Promise<string> {
+  try {
+    const data = (await response.json()) as { error?: string };
+    return data.error ?? "Something went wrong.";
+  } catch {
+    return "Something went wrong.";
+  }
+}
+
+/** Lists this tenant's vendors (the `suppliers` table) from the real API - requires at least "vendors:view". */
+export async function listVendors(): Promise<Vendor[]> {
+  const response = await fetch(`${API_URL}/suppliers`, { credentials: "include" });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    throw new Error(await parseError(response));
+  }
+  const data = (await response.json()) as SupplierResponse[];
+  return data.map(toVendor);
+}
+
+/** No GET /suppliers/:id route - the list is small, so this just fetches it and finds the one row. */
+export async function getVendor(id: string): Promise<Vendor | null> {
+  const vendors = await listVendors();
+  return vendors.find((vendor) => vendor.id === id) ?? null;
 }
 
 export interface VendorInput {
@@ -74,59 +70,49 @@ export interface VendorInput {
   mapUrl: string;
 }
 
-const blankToUndefined = (value: string) => value.trim() || undefined;
-
-function fromInput(input: VendorInput) {
-  return {
-    name: input.name.trim(),
-    phone: blankToUndefined(input.phone),
-    email: blankToUndefined(input.email)?.toLowerCase(),
-    taxId: blankToUndefined(input.taxId)?.toUpperCase(),
-    mapUrl: blankToUndefined(input.mapUrl),
-  };
-}
-
-/** The fields of a vendor as the audit log shows them. */
-function snapshot(vendor: Vendor) {
-  return {
-    Name: vendor.name,
-    Phone: vendor.phone ?? null,
-    Email: vendor.email ?? null,
-    GSTIN: vendor.taxId ?? null,
-    "Google Maps link": vendor.mapUrl ?? null,
-  };
-}
-
-export function addVendor(vendors: Vendor[], input: VendorInput): Vendor[] {
-  const vendor: Vendor = { id: `sup-${Date.now()}`, ...fromInput(input), status: "active" };
-  logAudit({
-    action: "created",
-    module: "Vendors",
-    entity: "Vendor",
-    label: vendor.name,
-    before: null,
-    after: snapshot(vendor),
+/** Creates a vendor - requires "vendors:edit". Returns the new vendor, or an error message. */
+export async function addVendor(input: VendorInput): Promise<Vendor | string> {
+  const response = await fetch(`${API_URL}/suppliers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(input),
   });
-  return [vendor, ...vendors];
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  return toVendor((await response.json()) as SupplierResponse);
 }
 
-export function editVendor(vendors: Vendor[], id: string, input: VendorInput): Vendor[] {
-  const previous = vendors.find((vendor) => vendor.id === id);
-  const next = vendors.map((vendor) =>
-    vendor.id === id ? { ...vendor, ...fromInput(input) } : vendor,
-  );
-  const updated = next.find((vendor) => vendor.id === id);
-  if (previous && updated) {
-    logAudit({
-      action: "updated",
-      module: "Vendors",
-      entity: "Vendor",
-      label: updated.name,
-      before: snapshot(previous),
-      after: snapshot(updated),
-    });
+/** Edits an existing vendor - requires "vendors:edit". Returns the updated vendor, or an error message. */
+export async function editVendor(id: string, input: VendorInput): Promise<Vendor | string> {
+  const response = await fetch(`${API_URL}/suppliers/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
   }
-  return next;
+  return toVendor((await response.json()) as SupplierResponse);
+}
+
+/** Archives or reactivates a vendor - requires "vendors:edit". Returns the updated vendor, or an error message. */
+export async function setVendorStatus(id: string, archived: boolean): Promise<Vendor | string> {
+  const response = await fetch(`${API_URL}/suppliers/${id}/status`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ archived }),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  return toVendor((await response.json()) as SupplierResponse);
 }
 
 /** Accepts full Google Maps links and the short maps.app.goo.gl / goo.gl/maps forms. */
@@ -151,8 +137,4 @@ export function mapUrlProblem(value: string): string | null {
 export function emailProblem(value: string): string | null {
   const text = value.trim();
   return !text || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text) ? null : "Enter a valid email address.";
-}
-
-export async function getVendor(id: string): Promise<Vendor | null> {
-  return store.find((vendor) => vendor.id === id) ?? null;
 }

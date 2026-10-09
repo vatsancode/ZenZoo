@@ -998,6 +998,11 @@ CREATE TABLE suppliers (
                             CHECK (status IN ('active', 'archived')),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- a Google Maps link to the supplier's location - nullable, no format
+    -- CHECK (the admin UI's own mapUrlProblem() already validates the
+    -- Google-Maps-link shape before this is written). Added by the
+    -- 20261009030000_supplier_map_url migration, after this phase's tables.
+    map_url             VARCHAR(500),
 
     CONSTRAINT suppliers_tenant_id_id_unique UNIQUE (tenant_id, id)
 );
@@ -1010,6 +1015,7 @@ CREATE TRIGGER trg_suppliers_set_updated_at
 
 - `tax_id` holds the supplier's GSTIN (or local equivalent) for input-tax records. Name is not unique, since two real suppliers can share a name.
 - Supplier payables (what we owe them) are a separate credit-ledger concern (F-26), not columns here.
+- **`status`: `active` / `archived`, the standard terminal-ish soft-delete pattern** (no `deleted_at`, same shape as `customers`). The admin UI shows this as a badge but, as of this table's own capability layer landing, had never exposed a control that sets it — `setSupplierStatus` exists so a tenant can retire a supplier without losing its purchase history, even before a button calls it.
 
 ---
 
