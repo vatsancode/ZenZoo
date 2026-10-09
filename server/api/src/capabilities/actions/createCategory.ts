@@ -14,7 +14,7 @@ export interface CreateCategoryInput {
 export const createCategory = defineCapability<CreateCategoryInput, CategoryDto>({
   name: "createCategory",
   kind: "action",
-  requiredPermission: "catalogue:edit",
+  requiredPermission: "stocks:edit",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);
 

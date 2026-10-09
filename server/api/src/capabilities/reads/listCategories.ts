@@ -10,7 +10,7 @@ export interface ListCategoriesInput {
 export const listCategories = defineCapability<ListCategoriesInput, CategoryDto[]>({
   name: "listCategories",
   kind: "read",
-  requiredPermission: "catalogue:view",
+  requiredPermission: "stocks:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);
 

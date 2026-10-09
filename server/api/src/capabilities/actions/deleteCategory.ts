@@ -9,7 +9,7 @@ export interface DeleteCategoryInput {
 export const deleteCategory = defineCapability<DeleteCategoryInput, { id: string }>({
   name: "deleteCategory",
   kind: "action",
-  requiredPermission: "catalogue:delete",
+  requiredPermission: "stocks:delete",
   async handler(actor, input) {
     return runInTenantContext(actor, async (tx) => {
       const existing = await tx.categories.findFirst({

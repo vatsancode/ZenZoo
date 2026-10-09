@@ -12,7 +12,7 @@ export interface RenameCategoryInput {
 export const renameCategory = defineCapability<RenameCategoryInput, CategoryDto>({
   name: "renameCategory",
   kind: "action",
-  requiredPermission: "catalogue:edit",
+  requiredPermission: "stocks:edit",
   async handler(actor, input) {
     const name = input.name.trim();
     if (!name) throw new Error("Give the category a name.");
