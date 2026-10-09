@@ -1193,6 +1193,11 @@ CREATE TABLE variants (
                             CHECK (status IN ('active', 'deactivated')),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- what variants.quantity (once that's real, via inventory_batches) is
+    -- counted in - "pcs", "kg", ... Free text, no CHECK: a tenant can add
+    -- custom units beyond the handful of built-in ones. Added by the
+    -- 20261009020000_variant_unit migration, after this phase's own tables.
+    unit                VARCHAR(20) NOT NULL DEFAULT 'pcs',
 
     CONSTRAINT variants_tenant_id_id_unique UNIQUE (tenant_id, id),
     -- target for inventory_batches: keeps a batch in the same tenant AND store as its variant
