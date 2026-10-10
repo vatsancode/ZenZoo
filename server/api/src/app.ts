@@ -34,6 +34,11 @@ import { listSuppliers } from "./capabilities/reads/listSuppliers";
 import { createSupplier } from "./capabilities/actions/createSupplier";
 import { updateSupplier } from "./capabilities/actions/updateSupplier";
 import { setSupplierStatus } from "./capabilities/actions/setSupplierStatus";
+import { listPurchases } from "./capabilities/reads/listPurchases";
+import { createPurchase } from "./capabilities/actions/createPurchase";
+import { updatePurchase } from "./capabilities/actions/updatePurchase";
+import { setPurchaseStatus } from "./capabilities/actions/setPurchaseStatus";
+import { receivePurchase } from "./capabilities/actions/receivePurchase";
 
 const CAPABILITY_FAILURE_STATUS: Record<string, number> = {
   NOT_FOUND: 404,
@@ -277,6 +282,39 @@ export function createApp(): Express {
   app.put("/suppliers/:id/status", requireTenantUser, async (req, res) => {
     const id = req.params.id as string;
     const result = await setSupplierStatus.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/purchases", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await listPurchases.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/purchases", requireTenantUser, async (req, res) => {
+    const result = await createPurchase.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.put("/purchases/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await updatePurchase.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.put("/purchases/:id/status", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await setPurchaseStatus.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/purchases/:id/receive", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await receivePurchase.execute(getActor(req), { ...req.body, id });
     sendCapabilityResult(res, result);
   });
 
