@@ -17,7 +17,7 @@ export default async function CurrentStockPage({
   const { variant } = await searchParams;
   return (
     <main style={{ padding: spacing[10] }}>
-      <CurrentStockView productId={decodeURIComponent(id)} variantSku={variant} />
+      <CurrentStockView productId={decodeURIComponent(id)} variantId={variant} />
     </main>
   );
 }

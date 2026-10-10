@@ -14,34 +14,35 @@ import {
 } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import {
-  addStock,
-  editProduct,
-  listProducts,
-  saveProducts,
-  type AddStockInput,
-  type Product,
-} from "./stocks";
+import { addStock, editProduct, listProducts, saveProducts, type AddStockInput, type Product } from "./stocks";
+import { listRealProducts, type RealProduct } from "../../lib/realProducts";
+import { listCurrentStock } from "../../lib/realStock";
 import { formatPrice, stockStatus } from "../../lib/stock-display";
 import AddStockSheet from "../../components/AddStockSheet";
 
 // A single price, or "low - high" when a product's variants are priced differently.
-function priceLabel(product: Product): string {
-  const prices = (product.variants ?? []).map((variant) => variant.price);
-  const low = prices.length > 0 ? Math.min(...prices) : product.price;
-  const high = prices.length > 0 ? Math.max(...prices) : product.price;
+function priceLabel(product: RealProduct): string {
+  const prices = product.variants.map((variant) => Number(variant.basePrice));
+  if (prices.length === 0) return formatPrice(0);
+  const low = Math.min(...prices);
+  const high = Math.max(...prices);
   return low === high ? formatPrice(low) : `${formatPrice(low)} - ${formatPrice(high)}`;
 }
 
-// Products with variants open their variant list; others open their current stock.
-function productHref(product: Product): string {
-  const page = product.variants ? "variants" : "current-stock";
-  return `/stocks/${encodeURIComponent(product.id)}/${page}`;
+// A product with exactly one variant goes straight to its stock; more than
+// one opens the variant list first - mirrors the old "simple vs variant
+// product" split, except every real product always has >=1 variant.
+function productHref(product: RealProduct): string {
+  if (product.variants.length === 1) {
+    return `/stocks/${encodeURIComponent(product.id)}/current-stock?variant=${encodeURIComponent(product.variants[0]!.id)}`;
+  }
+  return `/stocks/${encodeURIComponent(product.id)}/variants`;
 }
 
 export default function StocksTable() {
   const { colors, spacing } = useTheme();
-  const [products, setProducts] = useState<Product[] | null>(null);
+  const [products, setProducts] = useState<RealProduct[] | null>(null);
+  const [stock, setStock] = useState<Record<string, number>>({});
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -49,9 +50,14 @@ export default function StocksTable() {
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The mock catalogue, kept only to feed AddStockSheet - see this file's
+  // own note on why Add/Edit still targets it while the list above is real.
+  const [mockProducts, setMockProducts] = useState<Product[]>([]);
 
   useEffect(() => {
-    listProducts().then(setProducts);
+    listRealProducts().then(setProducts);
+    listCurrentStock().then(setStock);
+    listProducts().then(setMockProducts);
   }, []);
 
   useEffect(() => {
@@ -66,26 +72,25 @@ export default function StocksTable() {
   }
 
   // One sheet serves both: adding a new product, or editing the clicked row.
+  // Both still only ever touch the mock catalogue (see this file's own
+  // note) - they never affect what the real table above is showing.
   function handleSubmit(input: AddStockInput): { sku: string; error: string } | null {
-    if (!products) return null;
-    const result = editing ? editProduct(products, editing.id, input) : addStock(products, input);
+    const result = editing
+      ? editProduct(mockProducts, editing.id, input)
+      : addStock(mockProducts, input);
     if (!result.ok) return { sku: result.sku, error: result.error };
-    setProducts(result.products);
+    setMockProducts(result.products);
     saveProducts(result.products);
-    // A new product lands at the top of the list, so go there to show it.
-    if (!editing) setPage(1);
     closeSheet();
     const { product } = result;
-    const variantCount = product.variants?.length ?? 0;
     setNotice(
-      editing
-        ? `${product.name} updated.`
-        : variantCount > 0
-          ? `${product.name} added with ${variantCount} variants - ${product.quantity} in stock.`
-          : `${product.name} added - ${product.quantity} in stock.`,
+      `${product.name} ${editing ? "updated" : "added"} in the sample catalogue (not the list below yet).`,
     );
     return null;
   }
+
+  const onHandFor = (product: RealProduct) =>
+    product.variants.reduce((sum, variant) => sum + (stock[variant.id] ?? 0), 0);
 
   const filtered = useMemo(() => {
     if (!products) return [];
@@ -94,11 +99,9 @@ export default function StocksTable() {
     return products.filter(
       (product) =>
         product.name.toLowerCase().includes(q) ||
-        product.sku.toLowerCase().includes(q) ||
-        product.category.toLowerCase().includes(q) ||
-        (product.variants ?? []).some(
+        product.variants.some(
           (variant) =>
-            variant.name.toLowerCase().includes(q) || variant.sku.toLowerCase().includes(q),
+            variant.name.toLowerCase().includes(q) || (variant.sku ?? "").toLowerCase().includes(q),
         ),
     );
   }, [products, query]);
@@ -108,18 +111,19 @@ export default function StocksTable() {
   const currentPage = Math.min(page, pageCount);
   const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
-  const columns: TableColumn<Product>[] = [
+  const columns: TableColumn<RealProduct>[] = [
     { key: "name", header: "Product", width: "28%", render: (product) => product.name },
     {
       key: "sku",
       header: "SKU",
       render: (product) => (
         <span style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>
-          {product.variants ? `${product.variants.length} variants` : product.sku}
+          {product.variants.length === 1
+            ? product.variants[0]!.sku ?? "-"
+            : `${product.variants.length} variants`}
         </span>
       ),
     },
-    { key: "category", header: "Category", render: (product) => product.category },
     {
       key: "price",
       header: "Price",
@@ -128,18 +132,13 @@ export default function StocksTable() {
     {
       key: "quantity",
       header: "Stock",
-      render: (product) => (
-        <span style={textStyle("data")}>
-          {product.quantity}
-          {product.unit ? ` ${product.unit}` : ""}
-        </span>
-      ),
+      render: (product) => <span style={textStyle("data")}>{onHandFor(product)}</span>,
     },
     {
       key: "status",
       header: "Status",
       render: (product) => {
-        const status = stockStatus(product.quantity);
+        const status = stockStatus(onHandFor(product));
         return <Badge tone={status.tone}>{status.label}</Badge>;
       },
     },
@@ -154,7 +153,13 @@ export default function StocksTable() {
           label={`Edit ${product.name}`}
           onClick={(event) => {
             event.stopPropagation();
-            setEditing(product);
+            // There's no real id->mock id mapping, so this is a best-effort
+            // name match into the sample catalogue, same "wired to the mock
+            // anyway" tradeoff as the rest of this file - matches nothing
+            // and opens as Add when no mock product shares this name.
+            const match = mockProducts.find((row) => row.name === product.name) ?? null;
+            setEditing(match);
+            if (!match) setAddOpen(true);
           }}
         />
       ),
@@ -175,7 +180,7 @@ export default function StocksTable() {
         <div style={{ maxWidth: 360, width: "100%" }}>
           <Input
             type="search"
-            placeholder="Search products, SKUs, categories..."
+            placeholder="Search products, SKUs..."
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -218,7 +223,7 @@ export default function StocksTable() {
       )}
       <AddStockSheet
         open={addOpen || editing !== null}
-        products={products ?? []}
+        products={mockProducts}
         product={editing}
         onClose={closeSheet}
         onSubmit={handleSubmit}

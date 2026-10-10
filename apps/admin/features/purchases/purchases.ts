@@ -422,3 +422,32 @@ export function unitCredit(item: PurchaseItem): number {
 export function returnableOf(item: PurchaseItem): number {
   return Math.max(item.received - item.returned, 0);
 }
+
+export interface VariantPurchaseLine {
+  id: string;
+  date: string;
+  reference: string | null;
+  supplierId: string;
+  quantity: number;
+  unitCost: number;
+  total: number;
+}
+
+/** Every line, across every purchase, that ordered this variant - the real PurchaseHistoryTab's data source. */
+export function purchaseLinesForVariant(purchases: Purchase[], variantId: string): VariantPurchaseLine[] {
+  return purchases
+    .flatMap((purchase) =>
+      purchase.items
+        .filter((item) => item.variantId === variantId)
+        .map((item) => ({
+          id: item.id,
+          date: purchase.date,
+          reference: purchase.reference,
+          supplierId: purchase.supplierId,
+          quantity: item.quantity,
+          unitCost: item.unitCost,
+          total: item.lineTotal,
+        })),
+    )
+    .sort((a, b) => b.date.localeCompare(a.date));
+}

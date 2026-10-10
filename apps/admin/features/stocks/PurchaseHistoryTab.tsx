@@ -2,30 +2,40 @@
 
 import { useTheme } from "@zenzoo/design-tokens";
 import { Table, textStyle, type TableColumn } from "@zenzoo/ui-web";
-import { useMemo } from "react";
 import { formatPrice } from "../../lib/stock-display";
-import { formatDate, purchaseHistory, type Purchase, type StockItem } from "./stock-history";
+import { formatDate, type StockItem } from "./stock-history";
+import type { VariantPurchaseLine } from "../purchases/purchases";
 import StatTile, { StatRow } from "../../components/StatTile";
 
-export default function PurchaseHistoryTab({ item }: { item: StockItem }) {
+/** The real purchase history for this variant - every line, across every purchase, that ordered it. Empty for a variant nothing has been bought for yet. */
+export default function PurchaseHistoryTab({
+  item,
+  purchases,
+  supplierName,
+}: {
+  item: StockItem;
+  purchases: VariantPurchaseLine[];
+  supplierName: (supplierId: string) => string;
+}) {
   const { colors, spacing } = useTheme();
-  const purchases = useMemo(() => purchaseHistory(item), [item]);
 
   const totalQuantity = purchases.reduce((sum, row) => sum + row.quantity, 0);
   const totalSpent = purchases.reduce((sum, row) => sum + row.total, 0);
   const averageCost = totalQuantity > 0 ? Math.round(totalSpent / totalQuantity) : 0;
   const latest = purchases[0];
 
-  const columns: TableColumn<Purchase>[] = [
+  const columns: TableColumn<VariantPurchaseLine>[] = [
     { key: "date", header: "Date", render: (row) => formatDate(row.date) },
     {
       key: "reference",
       header: "Purchase no.",
       render: (row) => (
-        <span style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>{row.reference}</span>
+        <span style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>
+          {row.reference ?? "-"}
+        </span>
       ),
     },
-    { key: "vendor", header: "Vendor", width: "24%", render: (row) => row.vendor },
+    { key: "vendor", header: "Vendor", width: "24%", render: (row) => supplierName(row.supplierId) },
     {
       key: "quantity",
       header: "Quantity",
@@ -60,10 +70,16 @@ export default function PurchaseHistoryTab({ item }: { item: StockItem }) {
         <StatTile
           label="Last purchase"
           value={latest ? formatDate(latest.date) : "-"}
-          hint={latest?.vendor}
+          hint={latest ? supplierName(latest.supplierId) : undefined}
         />
       </StatRow>
-      <Table columns={columns} rows={purchases} getRowKey={(row) => row.id} />
+      {purchases.length === 0 ? (
+        <div style={{ ...textStyle("callout"), color: colors.inkMuted, padding: spacing[6] }}>
+          Nothing has been purchased for this variant yet.
+        </div>
+      ) : (
+        <Table columns={columns} rows={purchases} getRowKey={(row) => row.id} />
+      )}
     </div>
   );
 }

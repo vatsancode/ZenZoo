@@ -2,9 +2,9 @@
 
 import { useTheme } from "@zenzoo/design-tokens";
 import { Badge, Card, textStyle } from "@zenzoo/ui-web";
-import { useMemo, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { formatPrice, stockStatus } from "../../lib/stock-display";
-import { consumptionHistory, formatDate, purchaseHistory, type StockItem } from "./stock-history";
+import { formatDate, type StockItem } from "./stock-history";
 import StatTile, { StatRow } from "../../components/StatTile";
 
 interface Fact {
@@ -49,16 +49,21 @@ function FactGrid({ facts }: { facts: Fact[] }) {
   );
 }
 
-export default function StockOverviewTab({ item }: { item: StockItem }) {
+export default function StockOverviewTab({
+  item,
+  lastPurchaseDate,
+  lastSaleDate,
+}: {
+  item: StockItem;
+  /** The most recent real PURCHASED movement's date, or null if nothing has ever arrived. */
+  lastPurchaseDate: string | null;
+  /** Always null for now - there's no real sales capability yet to report a last sale from. */
+  lastSaleDate: string | null;
+}) {
   const { colors, spacing } = useTheme();
   const status = stockStatus(item.quantity);
   const margin =
     item.price > 0 ? Math.round(((item.price - item.purchasePrice) / item.price) * 100) : 0;
-  const lastPurchase = useMemo(() => purchaseHistory(item)[0], [item]);
-  const lastSale = useMemo(
-    () => consumptionHistory(item).find((movement) => movement.type === "Sale"),
-    [item],
-  );
 
   const itemFacts: Fact[] = [
     { label: "SKU", value: <span style={textStyle("dataSmall")}>{item.sku}</span> },
@@ -71,8 +76,8 @@ export default function StockOverviewTab({ item }: { item: StockItem }) {
       label: "Profit if all sold",
       value: formatPrice(item.quantity * (item.price - item.purchasePrice)),
     },
-    { label: "Last purchased", value: lastPurchase ? formatDate(lastPurchase.date) : "-" },
-    { label: "Last sold", value: lastSale ? formatDate(lastSale.date) : "-" },
+    { label: "Last purchased", value: lastPurchaseDate ? formatDate(lastPurchaseDate) : "-" },
+    { label: "Last sold", value: lastSaleDate ? formatDate(lastSaleDate) : "-" },
   ];
 
   return (

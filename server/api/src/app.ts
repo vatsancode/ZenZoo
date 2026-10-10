@@ -39,6 +39,9 @@ import { createPurchase } from "./capabilities/actions/createPurchase";
 import { updatePurchase } from "./capabilities/actions/updatePurchase";
 import { setPurchaseStatus } from "./capabilities/actions/setPurchaseStatus";
 import { receivePurchase } from "./capabilities/actions/receivePurchase";
+import { listCurrentStock } from "./capabilities/reads/listCurrentStock";
+import { listInventoryBatches } from "./capabilities/reads/listInventoryBatches";
+import { listStockMovements } from "./capabilities/reads/listStockMovements";
 
 const CAPABILITY_FAILURE_STATUS: Record<string, number> = {
   NOT_FOUND: 404,
@@ -315,6 +318,28 @@ export function createApp(): Express {
   app.post("/purchases/:id/receive", requireTenantUser, async (req, res) => {
     const id = req.params.id as string;
     const result = await receivePurchase.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/stock/current", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await listCurrentStock.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/variants/:id/batches", requireTenantUser, async (req, res) => {
+    const variantId = req.params.id as string;
+    const result = await listInventoryBatches.execute(getActor(req), { variantId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/variants/:id/movements", requireTenantUser, async (req, res) => {
+    const variantId = req.params.id as string;
+    const result = await listStockMovements.execute(getActor(req), { variantId });
     sendCapabilityResult(res, result);
   });
 

@@ -41,7 +41,7 @@ export interface Batch {
   unitCost: number;
 }
 
-export type MovementType = "Sale" | "Return" | "Removed" | "Added" | "Counted";
+export type MovementType = "Sale" | "Return" | "Removed" | "Added" | "Counted" | "Purchased";
 
 /** A movement the user recorded against one batch. */
 export interface RecordedMovement extends Movement {
