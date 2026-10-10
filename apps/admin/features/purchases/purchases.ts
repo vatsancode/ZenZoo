@@ -3,11 +3,21 @@ import { ensureStoreId } from "../../lib/storeContext";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
-export type PurchaseStatus = "draft" | "ordered" | "received" | "cancelled";
+/**
+ * "partially_received" is not a real status - the real `purchases.status`
+ * column only ever holds draft/ordered/received/cancelled (see
+ * displayStatusLabel/displayStatusTone below, which is what the real
+ * screens use). It's kept here only because PurchaseStatusPicker.tsx
+ * (restored, currently unused by any real screen) still lists it as a
+ * choice - this type exists so that file keeps compiling, not because the
+ * backend can produce this value.
+ */
+export type PurchaseStatus = "draft" | "ordered" | "partially_received" | "received" | "cancelled";
 
 export const PURCHASE_STATUS_LABEL: Record<PurchaseStatus, string> = {
   draft: "Draft",
   ordered: "Ordered",
+  partially_received: "Partially received",
   received: "Received",
   cancelled: "Cancelled",
 };
@@ -18,6 +28,7 @@ export const PURCHASE_STATUS_TONE: Record<
 > = {
   draft: "neutral",
   ordered: "warning",
+  partially_received: "warning",
   received: "success",
   cancelled: "danger",
 };
@@ -37,6 +48,19 @@ export interface PurchaseItem {
   pending: number;
   /** One per delivery that touched this line, oldest first - see deliveriesOf. */
   batches: { quantity: number; receivedAt: string }[];
+  /**
+   * Always "pcs" for now - the real schema has no per-line unit (purchase
+   * quantities are plain integers in Phase 1). Kept only for ReturnSheet.tsx
+   * (restored, currently unused), which displays it.
+   */
+  unit: string;
+  /**
+   * Always 0 - there is no real purchase_returns capability yet, so
+   * nothing ever sets this. Kept only so ReturnSheet.tsx/returnableOf keep
+   * compiling; a real return capability would replace this with an actual
+   * sum, the same way `received` is summed from inventory_batches.
+   */
+  returned: number;
 }
 
 export interface Purchase {
@@ -139,6 +163,8 @@ function toPurchase(response: PurchaseResponse): Purchase {
       received: item.receivedQuantity,
       pending: item.pendingQuantity,
       batches: item.batches.map((batch) => ({ ...batch, receivedAt: dateOnly(batch.receivedAt) })),
+      unit: "pcs",
+      returned: 0,
     })),
   };
 }
@@ -342,4 +368,57 @@ export function deliveriesOf(purchase: Purchase): Delivery[] {
   return [...byDate.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, items]) => ({ date, items: [...items.values()] }));
+}
+
+// ---------------------------------------------------------------------
+// Purchase returns (sending goods back to a vendor). There is no
+// purchase_returns capability on the backend yet - restored here only so
+// ReturnSheet.tsx (components/ReturnSheet.tsx) keeps compiling while it
+// waits for one. PurchaseItem.returned is always 0 (see its own note),
+// so returnableOf is just "received" until that capability exists.
+// ---------------------------------------------------------------------
+
+export const RETURN_REASONS = [
+  "Damaged",
+  "Wrong item",
+  "Quality issue",
+  "Excess quantity",
+  "Other",
+] as const;
+
+/**
+ * How the money for returned goods is handled.
+ * - refunded: the vendor paid it back
+ * - pending: the vendor still owes the refund
+ * - adjusted: taken off what is owed to the vendor instead
+ */
+export type RefundMode = "refunded" | "pending" | "adjusted";
+
+export interface PurchaseReturn {
+  id: string;
+  /** ISO date, YYYY-MM-DD. */
+  date: string;
+  reason: string;
+  note?: string;
+  items: { sku: string | null; name: string; unit: string; quantity: number; unitCredit: number }[];
+  /** What the returned goods are worth: quantity times the cost actually paid per unit. */
+  credit: number;
+  refund: {
+    mode: RefundMode;
+    amount: number;
+    method?: string;
+    accountId?: string;
+    /** When the money came back; only for a refund that has been received. */
+    date?: string;
+  };
+}
+
+/** What each unit actually cost: the line total (after its discount) over the quantity. */
+export function unitCredit(item: PurchaseItem): number {
+  return item.quantity > 0 ? Math.round((item.lineTotal / item.quantity) * 100) / 100 : 0;
+}
+
+/** Units that arrived and have not gone back. */
+export function returnableOf(item: PurchaseItem): number {
+  return Math.max(item.received - item.returned, 0);
 }
