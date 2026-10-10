@@ -12,12 +12,7 @@ import {
 } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import {
-  listPurchases,
-  PURCHASE_STATUS_LABEL,
-  PURCHASE_STATUS_TONE,
-  type Purchase,
-} from "./purchases";
+import { displayStatusLabel, displayStatusTone, listPurchases, type Purchase } from "./purchases";
 import { formatDate, formatPrice } from "../../lib/stock-display";
 import { listVendors, type Vendor } from "../vendors/vendors";
 
@@ -47,8 +42,8 @@ export default function PurchasesTable() {
     return purchases.filter(
       (purchase) =>
         (purchase.reference ?? "").toLowerCase().includes(q) ||
-        vendorName(purchase.vendorId).toLowerCase().includes(q) ||
-        purchase.status.includes(q),
+        vendorName(purchase.supplierId).toLowerCase().includes(q) ||
+        displayStatusLabel(purchase).toLowerCase().includes(q),
     );
   }, [purchases, query, vendorName]);
 
@@ -71,16 +66,14 @@ export default function PurchasesTable() {
       key: "vendor",
       header: "Vendor",
       width: "28%",
-      render: (purchase) => vendorName(purchase.vendorId),
+      render: (purchase) => vendorName(purchase.supplierId),
     },
     { key: "date", header: "Date", render: (purchase) => formatDate(purchase.date) },
     {
       key: "status",
       header: "Status",
       render: (purchase) => (
-        <Badge tone={PURCHASE_STATUS_TONE[purchase.status]}>
-          {PURCHASE_STATUS_LABEL[purchase.status]}
-        </Badge>
+        <Badge tone={displayStatusTone(purchase)}>{displayStatusLabel(purchase)}</Badge>
       ),
     },
     {

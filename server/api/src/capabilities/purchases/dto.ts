@@ -1,6 +1,14 @@
+export interface PurchaseBatchDto {
+  quantity: number;
+  receivedAt: string;
+}
+
 export interface PurchaseItemDto {
   id: string;
   variantId: string;
+  /** "<product name> - <variant name>", so the frontend needs no second lookup per line. */
+  name: string;
+  sku: string | null;
   quantity: number;
   unitCost: string;
   discountAmount: string;
@@ -9,6 +17,8 @@ export interface PurchaseItemDto {
   /** Summed from inventory_batches, not stored - see receivePurchase. */
   receivedQuantity: number;
   pendingQuantity: number;
+  /** One entry per delivery that touched this line - how the "Deliveries" log is reconstructed, grouped by receivedAt. */
+  batches: PurchaseBatchDto[];
 }
 
 export interface PurchaseDto {
@@ -41,7 +51,8 @@ interface PurchaseItemRow {
   discount_amount: { toString(): string };
   tax_amount: { toString(): string };
   line_total: { toString(): string };
-  inventory_batches: { received_quantity: number }[];
+  variants: { name: string; sku: string | null; sellables: { name: string } };
+  inventory_batches: { received_quantity: number; received_at: Date }[];
 }
 
 interface PurchaseRow {
@@ -68,6 +79,8 @@ function toPurchaseItemDto(row: PurchaseItemRow): PurchaseItemDto {
   return {
     id: row.id,
     variantId: row.variant_id,
+    name: `${row.variants.sellables.name} - ${row.variants.name}`,
+    sku: row.variants.sku,
     quantity: row.quantity,
     unitCost: row.unit_cost.toString(),
     discountAmount: row.discount_amount.toString(),
@@ -75,6 +88,10 @@ function toPurchaseItemDto(row: PurchaseItemRow): PurchaseItemDto {
     lineTotal: row.line_total.toString(),
     receivedQuantity,
     pendingQuantity: Math.max(row.quantity - receivedQuantity, 0),
+    batches: row.inventory_batches.map((batch) => ({
+      quantity: batch.received_quantity,
+      receivedAt: batch.received_at.toISOString(),
+    })),
   };
 }
 
@@ -108,7 +125,8 @@ export const PURCHASE_ITEM_SELECT = {
   discount_amount: true,
   tax_amount: true,
   line_total: true,
-  inventory_batches: { select: { received_quantity: true } },
+  variants: { select: { name: true, sku: true, sellables: { select: { name: true } } } },
+  inventory_batches: { select: { received_quantity: true, received_at: true } },
 } as const;
 
 export const PURCHASE_SELECT = {

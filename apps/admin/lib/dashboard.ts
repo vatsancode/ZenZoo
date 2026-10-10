@@ -1,5 +1,5 @@
 import type { Expense } from "../features/expenses/expenses";
-import { purchaseBalance, type Purchase } from "../features/purchases/purchases";
+import type { Purchase } from "../features/purchases/purchases";
 import { saleLineNet, saleProfitOf, saleRefundTotal, type Sale } from "../features/sales/sales";
 import type { Product } from "../features/stocks/stocks";
 
@@ -178,12 +178,17 @@ export function lowStock(products: Product[], limit = 6): LowStockItem[] {
     .slice(0, limit);
 }
 
-/** What is still owed to vendors across every open purchase. */
+/**
+ * The value of every open purchase - "owed" in the sense of committed to a
+ * vendor, not net of payments: payments have no backend yet (purchases.ts
+ * no longer tracks them at all), so this can't net anything off like the
+ * old mock did.
+ */
 export function owedToVendors(purchases: Purchase[]): number {
   return round(
     purchases
       .filter((purchase) => purchase.status !== "cancelled")
-      .reduce((sum, purchase) => sum + Math.max(purchaseBalance(purchase), 0), 0),
+      .reduce((sum, purchase) => sum + purchase.total, 0),
   );
 }
 

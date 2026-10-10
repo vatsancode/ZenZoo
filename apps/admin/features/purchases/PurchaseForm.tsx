@@ -1,119 +1,42 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import {
-  Button,
-  Card,
-  DatePicker,
-  IconButton,
-  Input,
-  Notice,
-  Select,
-  textStyle,
-} from "@zenzoo/ui-web";
+import { Button, Card, DatePicker, IconButton, Input, Notice, Select, textStyle } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  addPurchase,
-  lineTotal,
+  createPurchase,
   getPurchase,
   listPurchases,
-  purchaseTotals,
   referenceClash,
-  savePurchases,
   updatePurchase,
   type Purchase,
-  type PurchaseItem,
-  type PurchaseStatus,
+  type PurchaseInput,
 } from "./purchases";
 import { today } from "../../lib/date-ranges";
 import { formatPrice } from "../../lib/stock-display";
-import {
-  addStock,
-  addVariant,
-  listProducts,
-  saveProducts,
-  type AddStockInput,
-  type Product,
-  type Unit,
-  type VariantInput,
-} from "../stocks/stocks";
+import { listRealProducts, type RealProduct } from "../../lib/realProducts";
 import { listVendors, type Vendor } from "../vendors/vendors";
-import AddStockSheet from "../../components/AddStockSheet";
-import ProductPicker from "./ProductPicker";
-import VariantSheet from "../../components/VariantSheet";
+import ProductPicker, { type PickedItem } from "./ProductPicker";
 import FormField from "../../components/FormField";
 import PageHeader from "../../components/PageHeader";
-import PaymentsModal, {
-  countedRows,
-  newPayRow,
-  payRowProblems,
-  rowsTotal,
-  type PayRow,
-} from "./PaymentsModal";
-import PurchaseStatusPicker from "./PurchaseStatusPicker";
 
-/** A line as typed: quantity and cost stay strings until the form is saved. */
+/** A line as typed: quantity/cost/discount stay strings until the form is saved. */
 interface Row {
-  sku: string;
-  productId: string;
+  variantId: string;
   name: string;
-  unit: Unit;
+  sku: string | null;
+  unit: string;
   quantity: string;
   unitCost: string;
-  /** Rupees off this line. */
-  discount?: string;
-  /** How much has arrived; only asked for while the purchase is partially received. */
-  received?: string;
+  discount: string;
 }
-
-interface PickOption {
-  value: string;
-  label: string;
-  row: Omit<Row, "quantity">;
-}
-
-// The main button says what saving will do, so it follows the chosen status.
-const SAVE_LABEL: Record<PurchaseStatus, string> = {
-  draft: "Save as draft",
-  ordered: "Place order",
-  partially_received: "Save as partially received",
-  received: "Save as received",
-  cancelled: "Save as cancelled",
-};
 
 const number = (value: string) => (value.trim() === "" ? 0 : Number(value));
 const money = (value: number) => Math.round(value * 100) / 100;
 
-/** Every product, or every variant of a product, that can be bought. */
-function pickOptions(products: Product[]): PickOption[] {
-  return products.flatMap((product) =>
-    product.variants
-      ? product.variants.map((variant) => ({
-          value: variant.sku,
-          label: `${product.name} - ${variant.name}  (${variant.sku})`,
-          row: {
-            sku: variant.sku,
-            productId: product.id,
-            name: `${product.name} - ${variant.name}`,
-            unit: variant.unit,
-            unitCost: String(variant.purchasePrice || ""),
-          },
-        }))
-      : [
-          {
-            value: product.sku,
-            label: `${product.name}  (${product.sku})`,
-            row: {
-              sku: product.sku,
-              productId: product.id,
-              name: product.name,
-              unit: product.unit ?? "pcs",
-              unitCost: String(product.purchasePrice || ""),
-            },
-          },
-        ],
-  );
+function lineTotal(row: Row): number {
+  return money(number(row.quantity) * number(row.unitCost) - number(row.discount));
 }
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
@@ -131,23 +54,12 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
   );
 }
 
-function SummaryLine({
-  label,
-  value,
-  strong,
-}: {
-  label: string;
-  value: ReactNode;
-  strong?: boolean;
-}) {
+function SummaryLine({ label, value, strong }: { label: string; value: ReactNode; strong?: boolean }) {
   const { colors } = useTheme();
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
       <span
-        style={{
-          ...textStyle(strong ? "bodyMedium" : "body"),
-          color: strong ? colors.ink : colors.inkMuted,
-        }}
+        style={{ ...textStyle(strong ? "bodyMedium" : "body"), color: strong ? colors.ink : colors.inkMuted }}
       >
         {label}
       </span>
@@ -156,42 +68,48 @@ function SummaryLine({
   );
 }
 
-/** Records a purchase. With `purchaseId` it edits that draft instead of starting a new one. */
+/**
+ * Always creates or edits a draft - nothing else. Placing the order,
+ * cancelling and receiving are separate actions on PurchaseDetail, matching
+ * the real status machine (draft -> ordered, the only door out of here).
+ * Payments have no backend at all yet, so this form never asks for them.
+ */
 export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
   const { colors, radius, spacing } = useTheme();
   const router = useRouter();
 
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<RealProduct[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
 
-  const [vendorId, setVendorId] = useState("");
+  const [supplierId, setSupplierId] = useState("");
   const [reference, setReference] = useState("");
   const [date, setDate] = useState(today());
   const [rows, setRows] = useState<Row[]>([]);
   const [discount, setDiscount] = useState("");
   const [tax, setTax] = useState("");
   const [adjustment, setAdjustment] = useState("");
-  const [paymentTouched, setPaymentTouched] = useState(false);
-  const [payRows, setPayRows] = useState<PayRow[]>([newPayRow()]);
   const [touched, setTouched] = useState(false);
-  const [newProductOpen, setNewProductOpen] = useState(false);
-  const [paymentOpen, setPaymentOpen] = useState(false);
-  const [status, setStatus] = useState<PurchaseStatus>("draft");
-  // The product row the pointer is over, so it can be highlighted.
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
-  // The existing product a new variant is being added to.
-  const [variantFor, setVariantFor] = useState<Product | null>(null);
   const [referenceError, setReferenceError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // undefined while the draft being edited loads; null when it can't be edited.
-  const [editing, setEditing] = useState<Purchase | null | undefined>(
-    purchaseId ? undefined : null,
-  );
+  const [editing, setEditing] = useState<Purchase | null | undefined>(purchaseId ? undefined : null);
 
   useEffect(() => {
-    listProducts().then(setProducts);
+    listRealProducts().then(setProducts);
     listVendors().then(setVendors);
   }, []);
+
+  const byVariantId = useMemo(() => {
+    const map = new Map<string, { name: string; sku: string | null; unit: string }>();
+    for (const product of products) {
+      for (const variant of product.variants) {
+        map.set(variant.id, { name: `${product.name} - ${variant.name}`, sku: variant.sku, unit: variant.unit });
+      }
+    }
+    return map;
+  }, [products]);
 
   useEffect(() => {
     if (!purchaseId) return;
@@ -201,101 +119,48 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
         return;
       }
       setEditing(found);
-      setVendorId(found.vendorId);
+      setSupplierId(found.supplierId);
       setReference(found.reference ?? "");
-      setDate(found.date);
-      setStatus(found.status);
+      setDate(found.date.slice(0, 10));
       setDiscount(found.discount ? String(found.discount) : "");
       setTax(found.tax ? String(found.tax) : "");
       setAdjustment(found.adjustment ? String(found.adjustment) : "");
       setRows(
-        (found.items ?? []).map((item) => ({
-          sku: item.sku,
-          productId: item.productId,
+        found.items.map((item) => ({
+          variantId: item.variantId,
           name: item.name,
-          unit: item.unit,
+          sku: item.sku,
+          unit: "pcs",
           quantity: String(item.quantity),
           unitCost: String(item.unitCost),
-          discount: item.discount ? String(item.discount) : undefined,
+          discount: item.discount ? String(item.discount) : "",
         })),
       );
-      if (found.payments && found.payments.length > 0) {
-        setPayRows(
-          found.payments.map((payment) => ({
-            amount: String(payment.amount),
-            method: payment.method,
-            accountId: payment.accountId,
-            date: payment.date,
-          })),
-        );
-      }
     });
   }, [purchaseId]);
 
-  const options = useMemo(() => pickOptions(products), [products]);
   const vendorOptions = vendors
     .filter((vendor) => vendor.status === "active")
     .map((vendor) => ({ value: vendor.id, label: vendor.name }));
 
-  const items: PurchaseItem[] = rows.map((row) => ({
-    sku: row.sku,
-    productId: row.productId,
-    name: row.name,
-    unit: row.unit,
-    quantity: number(row.quantity),
-    unitCost: number(row.unitCost),
-    discount: number(row.discount ?? ""),
-    // A fully received purchase has everything; a partial one has what was typed in.
-    received:
-      status === "received"
-        ? number(row.quantity)
-        : status === "partially_received"
-          ? number(row.received ?? "")
-          : undefined,
-  }));
-  const { subtotal, total } = purchaseTotals(
-    items,
-    number(discount),
-    number(tax),
-    number(adjustment),
-  );
-  const paid = rowsTotal(payRows);
-  const balance = money(total - paid);
+  const subtotal = rows.reduce((sum, row) => sum + money(number(row.quantity) * number(row.unitCost)), 0);
+  const total = money(subtotal - number(discount) + number(tax) + number(adjustment));
 
-  // A product created here is saved to the catalogue, then added to this purchase.
-  function handleNewProduct(input: AddStockInput): { sku: string; error: string } | null {
-    const result = addStock(products, input);
-    if (!result.ok) return { sku: result.sku, error: result.error };
-    setProducts(result.products);
-    saveProducts(result.products);
-    const added = pickOptions([result.product]).map((option) => ({ ...option.row, quantity: "" }));
+  function addPicked(items: PickedItem[]) {
+    const added = items.flatMap(({ variantId, quantity }) => {
+      const info = byVariantId.get(variantId);
+      if (!info) return [];
+      return [{ variantId, name: info.name, sku: info.sku, unit: info.unit, quantity: String(quantity), unitCost: "", discount: "" }];
+    });
     setRows((current) => [...current, ...added]);
-    setNewProductOpen(false);
-    return null;
   }
 
-  // The variant is saved to the product, then added to this purchase.
-  function handleNewVariant(input: VariantInput): { sku: string; error: string } | null {
-    if (!variantFor) return null;
-    const result = addVariant(products, variantFor.id, input);
-    if (!result.ok) return { sku: result.sku, error: result.error };
-    setProducts(result.products);
-    saveProducts(result.products);
-    // The product's newest variant is the one just added.
-    const created = result.product.variants?.at(-1);
-    const option = pickOptions([result.product]).find((item) => item.value === created?.sku);
-    if (option) setRows((current) => [...current, { ...option.row, quantity: "" }]);
-    setVariantFor(null);
-    return null;
+  function updateRow(variantId: string, patch: Partial<Row>) {
+    setRows((current) => current.map((row) => (row.variantId === variantId ? { ...row, ...patch } : row)));
   }
 
-  function updateRow(sku: string, patch: Partial<Row>) {
-    setRows((current) => current.map((row) => (row.sku === sku ? { ...row, ...patch } : row)));
-  }
-
-  // What stops the form being saved, in the order the sections appear.
   const problems: string[] = [];
-  if (vendorId === "") problems.push("Choose a vendor.");
+  if (supplierId === "") problems.push("Choose a vendor.");
   if (date === "") problems.push("Choose the purchase date.");
   if (rows.length === 0) problems.push("Add at least one product.");
   rows.forEach((row) => {
@@ -306,63 +171,46 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
     if (row.unitCost.trim() === "" || !(number(row.unitCost) >= 0)) {
       problems.push(`Enter the purchase cost for ${row.name}.`);
     }
-  });
-  rows.forEach((row) => {
     const gross = number(row.quantity) * number(row.unitCost);
-    const off = number(row.discount ?? "");
+    const off = number(row.discount);
     if (off < 0 || off > gross) {
       problems.push(`The discount on ${row.name} can't be more than its value.`);
     }
   });
-  if (status === "partially_received" && rows.length > 0) {
-    const receivedAll = rows.every((row) => number(row.received ?? "") === number(row.quantity));
-    const receivedAny = rows.some((row) => number(row.received ?? "") > 0);
-    if (rows.some((row) => number(row.received ?? "") > number(row.quantity))) {
-      problems.push("Received can't be more than the quantity ordered.");
-    } else if (!receivedAny) {
-      problems.push("Enter how much of at least one product has arrived.");
-    } else if (receivedAll) {
-      problems.push("Everything has arrived - set the status to Received instead.");
-    }
-  }
   if (total < 0) problems.push("Discount is more than the purchase value.");
-  if (paid < 0 || paid > total) problems.push("Amount paid can't be more than the total.");
-  const paymentProblems = payRowProblems(payRows);
-  problems.push(...paymentProblems);
 
-  function save() {
+  async function save() {
     setTouched(true);
+    setSaveError(null);
     if (problems.length > 0) return;
-    void listPurchases().then((purchases) => {
-      if (referenceClash(purchases, vendorId, reference, status, purchaseId)) {
-        setReferenceError("This vendor already has a purchase with that invoice number.");
-        document.getElementById("purchase-reference")?.focus();
-        return;
-      }
-      const input = {
-        vendorId,
-        reference,
-        date,
-        status,
-        items,
-        discount: number(discount),
-        tax: number(tax),
-        adjustment: number(adjustment),
-        payments: countedRows(payRows).map((row) => ({
-          amount: number(row.amount),
-          method: row.method,
-          accountId: row.accountId,
-          date: row.date,
-        })),
-      };
-      savePurchases(
-        purchaseId ? updatePurchase(purchases, purchaseId, input) : addPurchase(purchases, input),
-      );
-      router.push(purchaseId ? `/purchases/${encodeURIComponent(purchaseId)}` : "/purchases");
-    });
+
+    const purchases = await listPurchases();
+    if (referenceClash(purchases, supplierId, reference, purchaseId)) {
+      setReferenceError("This vendor already has a purchase with that invoice number.");
+      document.getElementById("purchase-reference")?.focus();
+      return;
+    }
+
+    const input: PurchaseInput = {
+      supplierId,
+      reference,
+      date,
+      adjustment: number(adjustment),
+      items: rows.map((row) => ({
+        variantId: row.variantId,
+        quantity: number(row.quantity),
+        unitCost: number(row.unitCost),
+        discount: number(row.discount),
+      })),
+    };
+    const result = purchaseId ? await updatePurchase(purchaseId, input) : await createPurchase(input);
+    if (typeof result === "string") {
+      setSaveError(result);
+      return;
+    }
+    router.push(`/purchases/${encodeURIComponent(result.id)}`);
   }
 
-  // A visible outline for fields inside the product rows, so they stay findable on the hovered row.
   const rowInput = (invalid: boolean): React.CSSProperties => ({
     borderColor: invalid ? colors.danger : colors.border,
   });
@@ -375,25 +223,15 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
     alignItems: "start",
   };
 
-  // Columns of the item rows: product, quantity, cost, line total, remove.
-  const itemColumns =
-    status === "partially_received"
-      ? "minmax(0, 1fr) 100px 100px 120px 120px 120px 36px"
-      : "minmax(0, 1fr) 110px 130px 130px 120px 36px";
+  const itemColumns = "minmax(0, 1fr) 110px 130px 130px 120px 36px";
 
   if (purchaseId && editing === undefined) {
-    return (
-      <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>Loading purchase...</div>
-    );
+    return <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>Loading purchase...</div>;
   }
   if (purchaseId && editing === null) {
     return (
       <>
-        <PageHeader
-          title="Can't edit this purchase"
-          backHref="/purchases"
-          backLabel="Back to purchases"
-        />
+        <PageHeader title="Can't edit this purchase" backHref="/purchases" backLabel="Back to purchases" />
         <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>
           Only a draft purchase can be edited. Once an order is placed it is locked.
         </div>
@@ -405,47 +243,20 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
     <div style={{ display: "flex", flexDirection: "column" }}>
       <PageHeader
         title={purchaseId ? "Edit purchase" : "New purchase"}
-        subtitle={
-          purchaseId
-            ? "Change this draft before placing the order"
-            : "Record what you're buying from a vendor"
-        }
+        subtitle={purchaseId ? "Change this draft before placing the order" : "Record what you're buying from a vendor"}
         backHref={purchaseId ? `/purchases/${encodeURIComponent(purchaseId)}` : "/purchases"}
         backLabel={purchaseId ? "Back to purchase" : "Back to purchases"}
-        action={<PurchaseStatusPicker value={status} onChange={setStatus} />}
       />
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) 340px",
-          gap: spacing[6],
-          alignItems: "start",
-        }}
-      >
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 340px", gap: spacing[6], alignItems: "start" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: spacing[6] }}>
-          <Section
-            title="Products"
-            hint="Pick products or variants, then set the quantity and what you're paying for each."
-          >
+          <Section title="Products" hint="Pick products or variants, then set the quantity and what you're paying for each.">
             <div style={{ display: "flex", flexDirection: "column", gap: spacing[4] }}>
-              <div style={{ display: "flex", gap: spacing[3] }}>
-                <ProductPicker
-                  products={products}
-                  addedSkus={rows.map((row) => row.sku)}
-                  onPickMany={(items) => {
-                    const added = items.flatMap(({ sku, quantity }) => {
-                      const option = options.find((item) => item.value === sku);
-                      return option ? [{ ...option.row, quantity: String(quantity) }] : [];
-                    });
-                    setRows((current) => [...current, ...added]);
-                  }}
-                  onAddVariant={setVariantFor}
-                />
-                <Button type="button" variant="secondary" onClick={() => setNewProductOpen(true)}>
-                  Add new product
-                </Button>
-              </div>
+              <ProductPicker
+                products={products}
+                addedVariantIds={rows.map((row) => row.variantId)}
+                onPickMany={addPicked}
+              />
 
               {rows.length === 0 ? (
                 <div
@@ -474,30 +285,22 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
                   >
                     <span>PRODUCT</span>
                     <span>QUANTITY</span>
-                    {status === "partially_received" ? <span>RECEIVED</span> : null}
                     <span>COST / UNIT (₹)</span>
                     <span>DISCOUNT (₹)</span>
                     <span style={{ textAlign: "right" }}>LINE TOTAL</span>
                     <span />
                   </div>
-                  {rows.map((row, index) => {
+                  {rows.map((row) => {
                     const quantity = number(row.quantity);
-                    const quantityBad =
-                      touched &&
-                      (!(quantity > 0) || (row.unit === "pcs" && !Number.isInteger(quantity)));
+                    const quantityBad = touched && (!(quantity > 0) || (row.unit === "pcs" && !Number.isInteger(quantity)));
                     const discountBad =
-                      touched &&
-                      (number(row.discount ?? "") < 0 ||
-                        number(row.discount ?? "") > number(row.quantity) * number(row.unitCost));
-                    const costBad =
-                      touched && (row.unitCost.trim() === "" || !(number(row.unitCost) >= 0));
+                      touched && (number(row.discount) < 0 || number(row.discount) > number(row.quantity) * number(row.unitCost));
+                    const costBad = touched && (row.unitCost.trim() === "" || !(number(row.unitCost) >= 0));
                     return (
                       <div
-                        key={row.sku}
-                        onMouseEnter={() => setHoveredRow(row.sku)}
-                        onMouseLeave={() =>
-                          setHoveredRow((current) => (current === row.sku ? null : current))
-                        }
+                        key={row.variantId}
+                        onMouseEnter={() => setHoveredRow(row.variantId)}
+                        onMouseLeave={() => setHoveredRow((current) => (current === row.variantId ? null : current))}
                         style={{
                           display: "grid",
                           gridTemplateColumns: itemColumns,
@@ -507,17 +310,15 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
                           padding: `${spacing[3]}px ${spacing[4]}px`,
                           borderRadius: radius.lg,
                           backgroundColor:
-                            hoveredRow === row.sku
-                              ? `color-mix(in srgb, ${colors.ink} 5%, transparent)`
-                              : "transparent",
+                            hoveredRow === row.variantId ? `color-mix(in srgb, ${colors.ink} 5%, transparent)` : "transparent",
                           transition: "background-color 120ms ease",
                         }}
                       >
                         <div style={{ minWidth: 0 }}>
                           <div style={{ ...textStyle("body"), color: colors.ink }}>{row.name}</div>
-                          <div style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>
-                            {row.sku}
-                          </div>
+                          {row.sku ? (
+                            <div style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>{row.sku}</div>
+                          ) : null}
                         </div>
                         <Input
                           inputMode="decimal"
@@ -527,21 +328,8 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
                           value={row.quantity}
                           style={rowInput(quantityBad)}
                           aria-invalid={quantityBad ? true : undefined}
-                          onChange={(event) => updateRow(row.sku, { quantity: event.target.value })}
+                          onChange={(event) => updateRow(row.variantId, { quantity: event.target.value })}
                         />
-                        {status === "partially_received" ? (
-                          <Input
-                            inputMode="decimal"
-                            autoComplete="off"
-                            placeholder={`0 ${row.unit}`}
-                            aria-label={`Received quantity of ${row.name}`}
-                            value={row.received ?? ""}
-                            style={rowInput(false)}
-                            onChange={(event) =>
-                              updateRow(row.sku, { received: event.target.value })
-                            }
-                          />
-                        ) : null}
                         <Input
                           inputMode="decimal"
                           autoComplete="off"
@@ -550,29 +338,25 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
                           value={row.unitCost}
                           style={rowInput(costBad)}
                           aria-invalid={costBad ? true : undefined}
-                          onChange={(event) => updateRow(row.sku, { unitCost: event.target.value })}
+                          onChange={(event) => updateRow(row.variantId, { unitCost: event.target.value })}
                         />
                         <Input
                           inputMode="decimal"
                           autoComplete="off"
                           placeholder="0.00"
                           aria-label={`Discount on ${row.name}`}
-                          value={row.discount ?? ""}
+                          value={row.discount}
                           style={rowInput(discountBad)}
                           aria-invalid={discountBad ? true : undefined}
-                          onChange={(event) => updateRow(row.sku, { discount: event.target.value })}
+                          onChange={(event) => updateRow(row.variantId, { discount: event.target.value })}
                         />
-                        <span
-                          style={{ ...textStyle("data"), color: colors.ink, textAlign: "right" }}
-                        >
-                          {formatPrice(lineTotal(items[index]!))}
+                        <span style={{ ...textStyle("data"), color: colors.ink, textAlign: "right" }}>
+                          {formatPrice(lineTotal(row))}
                         </span>
                         <IconButton
                           icon="close"
                           label={`Remove ${row.name}`}
-                          onClick={() =>
-                            setRows((current) => current.filter((item) => item.sku !== row.sku))
-                          }
+                          onClick={() => setRows((current) => current.filter((item) => item.variantId !== row.variantId))}
                         />
                       </div>
                     );
@@ -586,29 +370,19 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
         <div style={{ display: "flex", flexDirection: "column", gap: spacing[6] }}>
           <Section title="Purchase details">
             <div style={grid12}>
-              <FormField
-                id="purchase-vendor"
-                label="VENDOR"
-                span={12}
-                error={touched && vendorId === "" ? "Choose a vendor." : null}
-              >
+              <FormField id="purchase-vendor" label="VENDOR" span={12} error={touched && supplierId === "" ? "Choose a vendor." : null}>
                 <Select
                   id="purchase-vendor"
                   options={vendorOptions}
-                  value={vendorId}
+                  value={supplierId}
                   placeholder="Choose a vendor"
                   onChange={(next) => {
-                    setVendorId(next);
+                    setSupplierId(next);
                     setReferenceError(null);
                   }}
                 />
               </FormField>
-              <FormField
-                id="purchase-reference"
-                label="INVOICE NUMBER (OPTIONAL)"
-                span={12}
-                error={referenceError}
-              >
+              <FormField id="purchase-reference" label="INVOICE NUMBER (OPTIONAL)" span={12} error={referenceError}>
                 <Input
                   id="purchase-reference"
                   autoComplete="off"
@@ -627,68 +401,29 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
             </div>
           </Section>
           <Card>
-            <div style={{ ...textStyle("headline"), color: colors.ink, marginBottom: spacing[5] }}>
-              Summary
-            </div>
+            <div style={{ ...textStyle("headline"), color: colors.ink, marginBottom: spacing[5] }}>Summary</div>
             <div style={{ display: "flex", flexDirection: "column", gap: spacing[4] }}>
               <SummaryLine label="Subtotal" value={formatPrice(subtotal)} />
               {[
-                {
-                  id: "purchase-discount",
-                  label: "Extra discount (₹)",
-                  value: discount,
-                  set: setDiscount,
-                },
+                { id: "purchase-discount", label: "Extra discount (₹)", value: discount, set: setDiscount },
                 { id: "purchase-tax", label: "Tax (₹)", value: tax, set: setTax },
-                {
-                  id: "purchase-adjustment",
-                  label: "Adjustment (₹)",
-                  value: adjustment,
-                  set: setAdjustment,
-                },
+                { id: "purchase-adjustment", label: "Adjustment (₹)", value: adjustment, set: setAdjustment },
               ].map((field) => (
-                <div
-                  key={field.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: spacing[3],
-                  }}
-                >
-                  <label
-                    htmlFor={field.id}
-                    style={{ ...textStyle("body"), color: colors.inkMuted }}
-                  >
+                <div key={field.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: spacing[3] }}>
+                  <label htmlFor={field.id} style={{ ...textStyle("body"), color: colors.inkMuted }}>
                     {field.label}
                   </label>
                   <div style={{ width: 120 }}>
-                    <Input
-                      id={field.id}
-                      inputMode="decimal"
-                      autoComplete="off"
-                      placeholder="0.00"
-                      value={field.value}
-                      onChange={(event) => field.set(event.target.value)}
-                    />
+                    <Input id={field.id} inputMode="decimal" autoComplete="off" placeholder="0.00" value={field.value} onChange={(event) => field.set(event.target.value)} />
                   </div>
                 </div>
               ))}
-              <hr
-                style={{
-                  width: "100%",
-                  height: 0,
-                  margin: 0,
-                  border: "none",
-                  borderTop: `1px solid ${colors.border}`,
-                }}
-              />
+              <hr style={{ width: "100%", height: 0, margin: 0, border: "none", borderTop: `1px solid ${colors.border}` }} />
               <SummaryLine label="Total" value={formatPrice(total)} strong />
-              <SummaryLine label="Paid now" value={formatPrice(paid)} />
-              <SummaryLine label="Balance" value={formatPrice(Math.max(balance, 0))} />
             </div>
           </Card>
 
+          {saveError ? <Notice>{saveError}</Notice> : null}
           {touched && problems.length > 0 ? (
             <Notice>
               <ul style={{ margin: 0, paddingLeft: spacing[5] }}>
@@ -700,7 +435,7 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
           ) : null}
         </div>
       </div>
-      {/* Stays in view at the bottom of the screen while the long form scrolls. */}
+
       <div
         style={{
           position: "sticky",
@@ -717,89 +452,22 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
           borderRadius: radius.lg,
         }}
       >
-        <div style={{ display: "flex", alignItems: "baseline", gap: spacing[6] }}>
-          <span style={{ ...textStyle("body"), color: colors.inkMuted }}>
-            Total{" "}
-            <span style={{ ...textStyle("title2"), color: colors.ink }}>{formatPrice(total)}</span>
-          </span>
-          <span style={{ ...textStyle("body"), color: colors.inkMuted }}>
-            Balance{" "}
-            <span style={{ ...textStyle("data"), color: colors.ink }}>
-              {formatPrice(Math.max(balance, 0))}
-            </span>
-          </span>
-          <span
-            aria-hidden="true"
-            style={{
-              alignSelf: "center",
-              width: 1,
-              height: 20,
-              backgroundColor: colors.border,
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => setPaymentOpen(true)}
-            style={{
-              ...textStyle("bodyMedium"),
-              padding: 0,
-              border: "none",
-              background: "transparent",
-              color: colors.ink,
-              cursor: "pointer",
-            }}
-          >
-            Payments
-          </button>
-        </div>
+        <span style={{ ...textStyle("body"), color: colors.inkMuted }}>
+          Total <span style={{ ...textStyle("title2"), color: colors.ink }}>{formatPrice(total)}</span>
+        </span>
         <div style={{ display: "flex", gap: spacing[3] }}>
           <Button
             type="button"
             variant="secondary"
-            onClick={() =>
-              router.push(
-                purchaseId ? `/purchases/${encodeURIComponent(purchaseId)}` : "/purchases",
-              )
-            }
+            onClick={() => router.push(purchaseId ? `/purchases/${encodeURIComponent(purchaseId)}` : "/purchases")}
           >
             Cancel
           </Button>
-          <Button type="button" variant="primary" onClick={save}>
-            {SAVE_LABEL[status]}
+          <Button type="button" variant="primary" onClick={() => void save()}>
+            {purchaseId ? "Save changes" : "Save as draft"}
           </Button>
         </div>
       </div>
-
-      <VariantSheet
-        open={variantFor !== null}
-        variant={null}
-        existingNames={(variantFor?.variants ?? []).map((variant) => variant.name)}
-        defaultUnit={variantFor?.unit}
-        allowZeroStock
-        onClose={() => setVariantFor(null)}
-        onSubmit={handleNewVariant}
-      />
-      <PaymentsModal
-        open={paymentOpen}
-        onClose={() => setPaymentOpen(false)}
-        subtitle="Add a row for each payment."
-        rows={payRows}
-        onRowsChange={setPayRows}
-        showErrors={paymentTouched}
-        footerNote={`Total ${formatPrice(total)} · Balance ${formatPrice(Math.max(balance, 0))}`}
-        doneLabel="Done"
-        onDone={() => {
-          setPaymentTouched(true);
-          if (paymentProblems.length === 0) setPaymentOpen(false);
-        }}
-      />
-      <AddStockSheet
-        open={newProductOpen}
-        products={products}
-        allowZeroStock
-        onClose={() => setNewProductOpen(false)}
-        onSubmit={handleNewProduct}
-      />
     </div>
   );
 }

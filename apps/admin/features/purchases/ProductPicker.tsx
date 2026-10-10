@@ -3,40 +3,35 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Input, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { Product } from "../stocks/stocks";
+import type { RealProduct } from "../../lib/realProducts";
 
 export interface PickedItem {
-  sku: string;
+  variantId: string;
   quantity: number;
 }
 
 interface ProductPickerProps {
-  products: Product[];
-  /** SKUs already on the purchase; shown as added and not pickable again. */
-  addedSkus: string[];
-  /** Called with every product or variant given a quantity, when the user confirms. */
+  products: RealProduct[];
+  /** Variant ids already on the purchase; shown as added and not pickable again. */
+  addedVariantIds: string[];
+  /** Called with every variant given a quantity, when the user confirms. */
   onPickMany: (items: PickedItem[]) => void;
-  /** Called when the user wants a new variant under an existing product. */
-  onAddVariant: (product: Product) => void;
 }
 
 /**
- * A searchable list grouped by product. Each product or variant takes a
- * quantity right in the list, so several can be added to the purchase at once.
+ * A searchable list grouped by product. Every real product always has at
+ * least one variant - there's no "simple product with its own SKU" branch
+ * here the way the mock had, since that distinction never existed below
+ * the variant level (see createProduct's own note: the toggle is UI
+ * presentation, not a second schema shape).
  */
-export default function ProductPicker({
-  products,
-  addedSkus,
-  onPickMany,
-  onAddVariant,
-}: ProductPickerProps) {
+export default function ProductPicker({ products, addedVariantIds, onPickMany }: ProductPickerProps) {
   const { colors, radius, spacing, elevation } = useTheme();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [openIds, setOpenIds] = useState<string[]>([]);
-  // Quantity typed for each SKU, not yet added to the purchase - the "cart".
+  // Quantity typed for each variant id, not yet added to the purchase - the "cart".
   const [quantities, setQuantities] = useState<Record<string, string>>({});
-  // The row the pointer is over, so it can lift slightly.
   const [hovered, setHovered] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -56,22 +51,19 @@ export default function ProductPicker({
     };
   }, [open]);
 
-  // A product whose own name matches shows all its variants; otherwise only the matching ones.
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
     return products
+      .filter((product) => product.status === "active")
       .map((product) => {
-        const variants = product.variants ?? [];
-        const productMatches =
-          !q ||
-          product.name.toLowerCase().includes(q) ||
-          product.category.toLowerCase().includes(q) ||
-          product.sku.toLowerCase().includes(q);
+        const variants = product.variants.filter((variant) => variant.status === "active");
+        const productMatches = !q || product.name.toLowerCase().includes(q);
         const shown = productMatches
           ? variants
           : variants.filter(
               (variant) =>
-                variant.name.toLowerCase().includes(q) || variant.sku.toLowerCase().includes(q),
+                variant.name.toLowerCase().includes(q) ||
+                (variant.sku ?? "").toLowerCase().includes(q),
             );
         return { product, variants: shown, visible: productMatches || shown.length > 0 };
       })
@@ -79,10 +71,10 @@ export default function ProductPicker({
   }, [products, query]);
 
   const searching = query.trim() !== "";
-  const quantityOf = (sku: string) => Number(quantities[sku] ?? 0) || 0;
+  const quantityOf = (variantId: string) => Number(quantities[variantId] ?? 0) || 0;
   const picked: PickedItem[] = Object.keys(quantities)
-    .filter((sku) => quantityOf(sku) > 0)
-    .map((sku) => ({ sku, quantity: quantityOf(sku) }));
+    .filter((variantId) => quantityOf(variantId) > 0)
+    .map((variantId) => ({ variantId, quantity: quantityOf(variantId) }));
   const totalUnits = picked.reduce((sum, item) => sum + item.quantity, 0);
 
   function toggle(id: string) {
@@ -91,15 +83,14 @@ export default function ProductPicker({
     );
   }
 
-  function setQuantity(sku: string, value: string) {
-    // Digits and one decimal point only; an empty box means "not picked".
+  function setQuantity(variantId: string, value: string) {
     if (!/^\d*\.?\d*$/.test(value)) return;
-    setQuantities((current) => ({ ...current, [sku]: value }));
+    setQuantities((current) => ({ ...current, [variantId]: value }));
   }
 
-  function step(sku: string, by: number) {
-    const next = Math.max(0, Math.round((quantityOf(sku) + by) * 100) / 100);
-    setQuantities((current) => ({ ...current, [sku]: next === 0 ? "" : String(next) }));
+  function step(variantId: string, by: number) {
+    const next = Math.max(0, Math.round((quantityOf(variantId) + by) * 100) / 100);
+    setQuantities((current) => ({ ...current, [variantId]: next === 0 ? "" : String(next) }));
   }
 
   function confirm() {
@@ -109,11 +100,6 @@ export default function ProductPicker({
     setQuery("");
   }
 
-  /**
-   * One row shape for everything in the list. A picked row gets a soft fill and
-   * a short accent tick beside it (see pickMark); the fill is lighter inside the variants
-   * panel because the panel itself is already recessed.
-   */
   const rowStyle = (
     key: string,
     state: { picked?: boolean; disabled?: boolean; inPanel?: boolean } = {},
@@ -140,7 +126,6 @@ export default function ProductPicker({
     };
   };
 
-  // A short straight tick, inset from the row's edge, so it doesn't follow the row's rounded corners.
   const pickMark = (isPicked: boolean) =>
     isPicked ? (
       <span
@@ -183,19 +168,20 @@ export default function ProductPicker({
     </button>
   );
 
-  // The one control on each row: a pill counter for how many to buy.
-  const counter = (sku: string, name: string, inPanel: boolean) => (
-    <span onClick={(event) => event.stopPropagation()}>{counterControl(sku, name, inPanel)}</span>
+  const counter = (variantId: string, name: string, inPanel: boolean) => (
+    <span onClick={(event) => event.stopPropagation()}>
+      {counterControl(variantId, name, inPanel)}
+    </span>
   );
 
-  const counterControl = (sku: string, name: string, inPanel: boolean) => {
+  const counterControl = (variantId: string, name: string, inPanel: boolean) => {
     const pill = inPanel ? colors.surfaceSunken : colors.surfaceRaised;
-    if (quantities[sku] === undefined || quantities[sku] === "") {
+    if (quantities[variantId] === undefined || quantities[variantId] === "") {
       return (
         <button
           type="button"
           aria-label={`Add ${name}`}
-          onClick={() => step(sku, 1)}
+          onClick={() => step(variantId, 1)}
           style={{
             ...textStyle("bodyMedium"),
             height: 32,
@@ -222,13 +208,13 @@ export default function ProductPicker({
           border: `1px solid ${colors.border}`,
         }}
       >
-        {stepButton("−", `Decrease ${name}`, () => step(sku, -1))}
+        {stepButton("−", `Decrease ${name}`, () => step(variantId, -1))}
         <input
           inputMode="decimal"
           autoComplete="off"
           aria-label={`Quantity of ${name}`}
-          value={quantities[sku] ?? ""}
-          onChange={(event) => setQuantity(sku, event.target.value)}
+          value={quantities[variantId] ?? ""}
+          onChange={(event) => setQuantity(variantId, event.target.value)}
           style={{
             ...textStyle("data"),
             width: 44,
@@ -240,17 +226,10 @@ export default function ProductPicker({
             textAlign: "center",
           }}
         />
-        {stepButton("+", `Increase ${name}`, () => step(sku, 1))}
+        {stepButton("+", `Increase ${name}`, () => step(variantId, 1))}
       </div>
     );
   };
-
-  const nameBlock = (name: string, detail: string) => (
-    <span style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 2 }}>
-      <span style={textStyle("bodyMedium")}>{name}</span>
-      <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>{detail}</span>
-    </span>
-  );
 
   return (
     <div ref={rootRef} style={{ position: "relative", flex: 1, minWidth: 0 }}>
@@ -303,7 +282,6 @@ export default function ProductPicker({
             style={{
               maxHeight: 440,
               overflowY: "auto",
-              // A slim, theme-coloured scrollbar instead of the browser's bright default.
               scrollbarWidth: "thin",
               scrollbarColor: `${colors.border} transparent`,
               scrollbarGutter: "stable",
@@ -321,89 +299,61 @@ export default function ProductPicker({
             ) : null}
 
             {groups.map(({ product, variants }) => {
-              const count = product.variants?.length ?? 0;
-              // Searching opens every matching product so its variants are visible.
+              const count = product.variants.filter((v) => v.status === "active").length;
               const expanded = searching || openIds.includes(product.id);
-              const chosen = (product.variants ?? []).filter(
-                (variant) => quantityOf(variant.sku) > 0,
-              ).length;
-              const simpleAdded = count === 0 && addedSkus.includes(product.sku);
+              const chosen = variants.filter((variant) => quantityOf(variant.id) > 0).length;
               return (
                 <div key={product.id}>
-                  {count > 0 ? (
-                    <button
-                      type="button"
-                      aria-expanded={expanded}
-                      onClick={() => toggle(product.id)}
-                      {...hoverProps(product.id)}
-                      style={{ ...rowStyle(product.id, { picked: chosen > 0 }), cursor: "pointer" }}
-                    >
-                      {pickMark(chosen > 0)}
-                      {nameBlock(
-                        product.name,
-                        `${product.category} · ${count} ${count === 1 ? "variant" : "variants"}`,
-                      )}
-                      <span style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
-                        {chosen > 0 ? (
-                          <span
-                            title={`${chosen} selected`}
-                            style={{
-                              ...textStyle("caption"),
-                              minWidth: 22,
-                              height: 22,
-                              padding: `0 ${spacing[2]}px`,
-                              boxSizing: "border-box",
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              borderRadius: radius.full,
-                              backgroundColor: colors.accent,
-                              color: colors.onAccent,
-                            }}
-                          >
-                            {chosen}
-                          </span>
-                        ) : null}
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    onClick={() => toggle(product.id)}
+                    {...hoverProps(product.id)}
+                    style={{ ...rowStyle(product.id, { picked: chosen > 0 }), cursor: "pointer" }}
+                  >
+                    {pickMark(chosen > 0)}
+                    <span style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 2 }}>
+                      <span style={textStyle("bodyMedium")}>{product.name}</span>
+                      <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
+                        {count} {count === 1 ? "variant" : "variants"}
+                      </span>
+                    </span>
+                    <span style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
+                      {chosen > 0 ? (
                         <span
-                          aria-hidden="true"
+                          title={`${chosen} selected`}
                           style={{
-                            ...textStyle("body"),
-                            color: colors.inkMuted,
-                            transform: expanded ? "rotate(90deg)" : "none",
-                            transition: "transform 120ms ease",
+                            ...textStyle("caption"),
+                            minWidth: 22,
+                            height: 22,
+                            padding: `0 ${spacing[2]}px`,
+                            boxSizing: "border-box",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            borderRadius: radius.full,
+                            backgroundColor: colors.accent,
+                            color: colors.onAccent,
                           }}
                         >
-                          ›
+                          {chosen}
                         </span>
+                      ) : null}
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          ...textStyle("body"),
+                          color: colors.inkMuted,
+                          transform: expanded ? "rotate(90deg)" : "none",
+                          transition: "transform 120ms ease",
+                        }}
+                      >
+                        ›
                       </span>
-                    </button>
-                  ) : (
-                    <div
-                      {...hoverProps(product.id)}
-                      onClick={() => {
-                        if (!simpleAdded && quantityOf(product.sku) === 0) step(product.sku, 1);
-                      }}
-                      style={{
-                        ...rowStyle(product.id, {
-                          picked: quantityOf(product.sku) > 0,
-                          disabled: simpleAdded,
-                        }),
-                        cursor: simpleAdded ? "default" : "pointer",
-                      }}
-                    >
-                      {pickMark(quantityOf(product.sku) > 0)}
-                      {nameBlock(product.name, `${product.category} · ${product.sku}`)}
-                      {simpleAdded ? (
-                        <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
-                          Added
-                        </span>
-                      ) : (
-                        counter(product.sku, product.name, false)
-                      )}
-                    </div>
-                  )}
+                    </span>
+                  </button>
 
-                  {count > 0 && expanded ? (
+                  {expanded ? (
                     <div
                       style={{
                         margin: `${spacing[2]}px ${spacing[4]}px ${spacing[3]}px`,
@@ -415,60 +365,42 @@ export default function ProductPicker({
                         gap: spacing[1],
                       }}
                     >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setOpen(false);
-                          setQuery("");
-                          onAddVariant(product);
-                        }}
-                        style={{
-                          ...textStyle("bodyMedium"),
-                          height: 44,
-                          marginBottom: spacing[2],
-                          border: `1px dashed ${colors.border}`,
-                          borderRadius: radius.md,
-                          background: "transparent",
-                          color: colors.inkMuted,
-                          cursor: "pointer",
-                        }}
-                      >
-                        + Add new variant
-                      </button>
                       {variants.map((variant) => {
-                        const added = addedSkus.includes(variant.sku);
+                        const added = addedVariantIds.includes(variant.id);
                         return (
                           <div
-                            key={variant.sku}
-                            {...hoverProps(variant.sku)}
+                            key={variant.id}
+                            {...hoverProps(variant.id)}
                             onClick={() => {
-                              if (!added && quantityOf(variant.sku) === 0) step(variant.sku, 1);
+                              if (!added && quantityOf(variant.id) === 0) step(variant.id, 1);
                             }}
                             style={{
                               cursor: added ? "default" : "pointer",
-                              ...rowStyle(variant.sku, {
-                                picked: quantityOf(variant.sku) > 0,
+                              ...rowStyle(variant.id, {
+                                picked: quantityOf(variant.id) > 0,
                                 disabled: added,
                                 inPanel: true,
                               }),
                               minHeight: 60,
                             }}
                           >
-                            {pickMark(quantityOf(variant.sku) > 0)}
+                            {pickMark(quantityOf(variant.id) > 0)}
                             <span
                               style={{ display: "flex", alignItems: "baseline", gap: spacing[3] }}
                             >
                               <span style={textStyle("bodyMedium")}>{variant.name}</span>
-                              <span style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>
-                                {variant.sku}
-                              </span>
+                              {variant.sku ? (
+                                <span style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>
+                                  {variant.sku}
+                                </span>
+                              ) : null}
                             </span>
                             {added ? (
                               <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
                                 Added
                               </span>
                             ) : (
-                              counter(variant.sku, `${product.name} ${variant.name}`, true)
+                              counter(variant.id, `${product.name} ${variant.name}`, true)
                             )}
                           </div>
                         );

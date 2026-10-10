@@ -227,27 +227,11 @@ export async function accountMovements(): Promise<Movement[]> {
     }
   }
 
-  for (const purchase of purchases) {
-    const invoice = purchase.reference ? `invoice ${purchase.reference}` : "purchase";
-    for (const payment of purchase.payments ?? []) {
-      movements.push({
-        date: payment.date,
-        accountId: payment.accountId,
-        amount: -payment.amount,
-        label: `Paid to vendor · ${invoice}`,
-      });
-    }
-    for (const ret of purchase.returns ?? []) {
-      if (ret.refund.mode === "refunded" && ret.refund.accountId && ret.refund.date) {
-        movements.push({
-          date: ret.refund.date,
-          accountId: ret.refund.accountId,
-          amount: ret.refund.amount,
-          label: `Refund from vendor · ${invoice}`,
-        });
-      }
-    }
-  }
+  // Purchases no longer carry payments/returns at all (purchases.ts was
+  // rewired to the real API, which has no backend for either yet) - so
+  // there's nothing to add here until that capability exists. Previously
+  // this looped purchase.payments/.returns, both now gone.
+  void purchases;
 
   for (const expense of expenses) {
     movements.push({
