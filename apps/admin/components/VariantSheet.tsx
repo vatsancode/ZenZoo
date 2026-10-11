@@ -23,8 +23,10 @@ interface VariantSheetProps {
   /** Lets a new variant start with no stock, e.g. when it's added from a purchase. */
   allowZeroStock?: boolean;
   onClose: () => void;
-  /** Returns the SKU that clashed and why, or null on success. */
-  onSubmit: (input: VariantInput) => { sku: string; error: string } | null;
+  /** Returns the SKU that clashed and why, or null on success. May be async. */
+  onSubmit: (
+    input: VariantInput,
+  ) => { sku: string; error: string } | null | Promise<{ sku: string; error: string } | null>;
 }
 
 // Enter moves to the next field, or saves from the last one.
@@ -61,6 +63,7 @@ export default function VariantSheet({
   const [purchasePrice, setPurchasePrice] = useState("");
   const [skuError, setSkuError] = useState<{ sku: string; message: string } | null>(null);
   const [touched, setTouched] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -72,6 +75,7 @@ export default function VariantSheet({
       setPurchasePrice("");
       setSkuError(null);
       setTouched(false);
+      setSubmitting(false);
     } else if (variant) {
       setName(variant.name);
       setSku(variant.sku);
@@ -99,10 +103,11 @@ export default function VariantSheet({
 
   const valid = !nameError && !quantityError && !priceError && !purchasePriceError;
 
-  function submit() {
+  async function submit() {
     setTouched(true);
-    if (!valid) return;
-    const clash = onSubmit({
+    if (!valid || submitting) return;
+    setSubmitting(true);
+    const clash = await onSubmit({
       name,
       sku,
       quantity: Number(quantity),
@@ -110,6 +115,7 @@ export default function VariantSheet({
       price: toPrice(price),
       purchasePrice: variant ? variant.purchasePrice : toPrice(purchasePrice),
     });
+    setSubmitting(false);
     if (clash) {
       setSkuError({ sku: clash.sku, message: clash.error });
       focusField("variant-sku");
@@ -135,11 +141,11 @@ export default function VariantSheet({
       width={560}
       footer={
         <div style={{ display: "flex", gap: spacing[3] }}>
-          <Button type="button" variant="secondary" onClick={onClose} style={{ flex: 1 }}>
+          <Button type="button" variant="secondary" onClick={onClose} disabled={submitting} style={{ flex: 1 }}>
             Cancel
           </Button>
-          <Button type="submit" form="variant-form" variant="primary" style={{ flex: 2 }}>
-            {isEditing ? "Save changes" : "Add variant"}
+          <Button type="submit" form="variant-form" variant="primary" disabled={submitting} style={{ flex: 2 }}>
+            {submitting ? "Saving..." : isEditing ? "Save changes" : "Add variant"}
           </Button>
         </div>
       }

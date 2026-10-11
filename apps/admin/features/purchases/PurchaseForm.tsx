@@ -15,11 +15,13 @@ import {
 } from "./purchases";
 import { today } from "../../lib/date-ranges";
 import { formatPrice } from "../../lib/stock-display";
-import { listRealProducts, type RealProduct } from "../../lib/realProducts";
+import { createVariant, listRealProducts, type RealProduct } from "../../lib/realProducts";
 import { listVendors, type Vendor } from "../vendors/vendors";
 import ProductPicker, { type PickedItem } from "./ProductPicker";
 import FormField from "../../components/FormField";
 import PageHeader from "../../components/PageHeader";
+import VariantSheet from "../../components/VariantSheet";
+import type { VariantInput } from "../stocks/stocks";
 
 /** A line as typed: quantity/cost/discount stay strings until the form is saved. */
 interface Row {
@@ -92,6 +94,7 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const [referenceError, setReferenceError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [addingVariantFor, setAddingVariantFor] = useState<RealProduct | null>(null);
 
   // undefined while the draft being edited loads; null when it can't be edited.
   const [editing, setEditing] = useState<Purchase | null | undefined>(purchaseId ? undefined : null);
@@ -153,6 +156,22 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
       return [{ variantId, name: info.name, sku: info.sku, unit: info.unit, quantity: String(quantity), unitCost: "", discount: "" }];
     });
     setRows((current) => [...current, ...added]);
+  }
+
+  async function handleAddVariant(input: VariantInput): Promise<{ sku: string; error: string } | null> {
+    if (!addingVariantFor) return null;
+    const result = await createVariant(addingVariantFor.id, {
+      name: input.name,
+      sku: input.sku.trim() === "" ? undefined : input.sku,
+      basePrice: input.price,
+      unit: input.unit,
+    });
+    if (typeof result === "string") {
+      return { sku: input.sku, error: result };
+    }
+    setProducts((current) => current.map((product) => (product.id === result.id ? result : product)));
+    setAddingVariantFor(null);
+    return null;
   }
 
   function updateRow(variantId: string, patch: Partial<Row>) {
@@ -256,6 +275,16 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
                 products={products}
                 addedVariantIds={rows.map((row) => row.variantId)}
                 onPickMany={addPicked}
+                onAddVariant={setAddingVariantFor}
+              />
+
+              <VariantSheet
+                open={addingVariantFor !== null}
+                variant={null}
+                existingNames={addingVariantFor?.variants.map((variant) => variant.name) ?? []}
+                allowZeroStock
+                onClose={() => setAddingVariantFor(null)}
+                onSubmit={handleAddVariant}
               />
 
               {rows.length === 0 ? (

@@ -40,3 +40,37 @@ export async function listRealProducts(): Promise<RealProduct[]> {
   }
   return (await response.json()) as RealProduct[];
 }
+
+export interface CreateVariantInput {
+  name: string;
+  sku?: string;
+  basePrice: number;
+  unit?: string;
+}
+
+async function parseError(response: Response): Promise<string> {
+  try {
+    const data = (await response.json()) as { error?: string };
+    return data.error ?? "Something went wrong.";
+  } catch {
+    return "Something went wrong.";
+  }
+}
+
+/** Adds a variant to an existing product - requires "stocks:edit". Returns the updated product, or an error message. */
+export async function createVariant(
+  sellableId: string,
+  input: CreateVariantInput,
+): Promise<RealProduct | string> {
+  const response = await fetch(`${API_URL}/products/${sellableId}/variants`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  return (await response.json()) as RealProduct;
+}

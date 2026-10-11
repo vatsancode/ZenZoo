@@ -16,6 +16,8 @@ interface ProductPickerProps {
   addedVariantIds: string[];
   /** Called with every variant given a quantity, when the user confirms. */
   onPickMany: (items: PickedItem[]) => void;
+  /** Called when the user wants a new variant under an existing product. */
+  onAddVariant: (product: RealProduct) => void;
 }
 
 /**
@@ -25,7 +27,12 @@ interface ProductPickerProps {
  * the variant level (see createProduct's own note: the toggle is UI
  * presentation, not a second schema shape).
  */
-export default function ProductPicker({ products, addedVariantIds, onPickMany }: ProductPickerProps) {
+export default function ProductPicker({
+  products,
+  addedVariantIds,
+  onPickMany,
+  onAddVariant,
+}: ProductPickerProps) {
   const { colors, radius, spacing, elevation } = useTheme();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -365,6 +372,26 @@ export default function ProductPicker({ products, addedVariantIds, onPickMany }:
                         gap: spacing[1],
                       }}
                     >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpen(false);
+                          setQuery("");
+                          onAddVariant(product);
+                        }}
+                        style={{
+                          ...textStyle("bodyMedium"),
+                          height: 44,
+                          marginBottom: spacing[2],
+                          border: `1px dashed ${colors.border}`,
+                          borderRadius: radius.md,
+                          background: "transparent",
+                          color: colors.inkMuted,
+                          cursor: "pointer",
+                        }}
+                      >
+                        + Add new variant
+                      </button>
                       {variants.map((variant) => {
                         const added = addedVariantIds.includes(variant.id);
                         return (
