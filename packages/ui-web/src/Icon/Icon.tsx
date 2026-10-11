@@ -19,7 +19,9 @@ export type IconName =
   | "card"
   | "users"
   | "lock"
-  | "user";
+  | "user"
+  | "eye"
+  | "eyeOff";
 
 // Outline icons on a 24px grid, drawn in the current text colour.
 const SHAPES: Record<IconName, ReactNode> = {
@@ -112,6 +114,19 @@ const SHAPES: Record<IconName, ReactNode> = {
     <>
       <rect x="4" y="5" width="16" height="15" rx="2" />
       <path d="M4 10h16M8 3v4M16 3v4" />
+    </>
+  ),
+  eye: (
+    <>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+  eyeOff: (
+    <>
+      <path d="M3 3l18 18" />
+      <path d="M10.6 5.2A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a15.7 15.7 0 0 1-3.2 4.1M6.6 6.6C3.6 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 4.1-.9" />
+      <path d="M9.5 9.8a3 3 0 0 0 4.2 4.2" />
     </>
   ),
 };

@@ -1,7 +1,7 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Button, Card, Input, textStyle } from "@zenzoo/ui-web";
+import { Button, Card, IconButton, Input, textStyle } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { signIn } from "../lib/auth";
@@ -11,6 +11,7 @@ export default function SignInForm() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,16 +68,27 @@ export default function SignInForm() {
             >
               PASSWORD
             </label>
-            <Input
-              id="sign-in-password"
-              type="password"
-              autoComplete="current-password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              disabled={loading}
-              aria-invalid={error ? true : undefined}
-            />
+            <div style={{ position: "relative" }}>
+              <Input
+                id="sign-in-password"
+                type={passwordVisible ? "text" : "password"}
+                autoComplete="current-password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                disabled={loading}
+                aria-invalid={error ? true : undefined}
+                style={{ paddingRight: spacing[10] }}
+              />
+              <div style={{ position: "absolute", right: spacing[2], top: "50%", transform: "translateY(-50%)" }}>
+                <IconButton
+                  icon={passwordVisible ? "eyeOff" : "eye"}
+                  label={passwordVisible ? "Hide password" : "Show password"}
+                  onClick={() => setPasswordVisible((visible) => !visible)}
+                  disabled={loading}
+                />
+              </div>
+            </div>
           </div>
 
           {error ? (
