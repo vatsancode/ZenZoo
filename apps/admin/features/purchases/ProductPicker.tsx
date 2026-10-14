@@ -18,6 +18,8 @@ interface ProductPickerProps {
   onPickMany: (items: PickedItem[]) => void;
   /** Called when the user wants a new variant under an existing product. */
   onAddVariant: (product: RealProduct) => void;
+  /** Called when the user wants to create a brand-new product, not just a variant. */
+  onAddProduct: () => void;
 }
 
 /**
@@ -32,6 +34,7 @@ export default function ProductPicker({
   addedVariantIds,
   onPickMany,
   onAddVariant,
+  onAddProduct,
 }: ProductPickerProps) {
   const { colors, radius, spacing, elevation } = useTheme();
   const [open, setOpen] = useState(false);
@@ -239,7 +242,8 @@ export default function ProductPicker({
   };
 
   return (
-    <div ref={rootRef} style={{ position: "relative", flex: 1, minWidth: 0 }}>
+    <div style={{ display: "flex", gap: spacing[3], alignItems: "flex-start" }}>
+      <div ref={rootRef} style={{ position: "relative", flex: 1, minWidth: 0 }}>
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
@@ -306,7 +310,47 @@ export default function ProductPicker({
             ) : null}
 
             {groups.map(({ product, variants }) => {
-              const count = product.variants.filter((v) => v.status === "active").length;
+              const activeVariants = product.variants.filter((v) => v.status === "active");
+
+              // A product with "has variants" off is still just one variant
+              // underneath (createProduct's own shape: a sellable plus a
+              // single variant named to match it) - no reason to make
+              // someone open a panel to buy the only thing it has. Add it
+              // right on its own row instead.
+              if (activeVariants.length === 1) {
+                const variant = activeVariants[0]!;
+                const added = addedVariantIds.includes(variant.id);
+                return (
+                  <div
+                    key={product.id}
+                    {...hoverProps(variant.id)}
+                    onClick={() => {
+                      if (!added && quantityOf(variant.id) === 0) step(variant.id, 1);
+                    }}
+                    style={{
+                      cursor: added ? "default" : "pointer",
+                      ...rowStyle(variant.id, { picked: quantityOf(variant.id) > 0, disabled: added }),
+                    }}
+                  >
+                    {pickMark(quantityOf(variant.id) > 0)}
+                    <span style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 2 }}>
+                      <span style={textStyle("bodyMedium")}>{product.name}</span>
+                      {variant.sku ? (
+                        <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
+                          {variant.sku}
+                        </span>
+                      ) : null}
+                    </span>
+                    {added ? (
+                      <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>Added</span>
+                    ) : (
+                      counter(variant.id, product.name, false)
+                    )}
+                  </div>
+                );
+              }
+
+              const count = activeVariants.length;
               const expanded = searching || openIds.includes(product.id);
               const chosen = variants.filter((variant) => quantityOf(variant.id) > 0).length;
               return (
@@ -491,6 +535,10 @@ export default function ProductPicker({
           </div>
         </div>
       ) : null}
+      </div>
+      <Button type="button" variant="secondary" onClick={onAddProduct} style={{ whiteSpace: "nowrap" }}>
+        Add new product
+      </Button>
     </div>
   );
 }

@@ -127,7 +127,7 @@ export default function TenantsTable() {
         </>
       )}
 
-      <TenantDetailSheet tenant={selected} onClose={() => setSelected(null)} />
+      <TenantDetailSheet tenant={selected} onClose={() => setSelected(null)} onUpdated={refresh} />
       <CreateTenantSheet
         open={createOpen}
         onClose={() => setCreateOpen(false)}

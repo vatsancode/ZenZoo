@@ -22,6 +22,7 @@ import {
   Select,
   Sheet,
   Switch,
+  Checkbox,
   Table,
   Tabs,
   textStyle,
@@ -71,6 +72,7 @@ export default function StyleGuidePage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [switchOn, setSwitchOn] = useState(true);
+  const [ticked, setTicked] = useState<boolean | "mixed">("mixed");
   const [date, setDate] = useState("2026-10-04");
   const [tab, setTab] = useState("current");
   const [chip, setChip] = useState("damaged");
@@ -248,7 +250,7 @@ export default function StyleGuidePage() {
         <div style={{ display: "flex", gap: spacing[3], flexWrap: "wrap" }}>
           <Badge>Draft</Badge>
           <Badge tone="success">In stock</Badge>
-          <Badge tone="warning">Low stock</Badge>
+          <Badge tone="warning">Pending</Badge>
           <Badge tone="danger">Out of stock</Badge>
         </div>
       </Section>
@@ -361,6 +363,14 @@ export default function StyleGuidePage() {
           <span style={{ ...textStyle("body"), color: colors.ink }}>
             Has variants: {switchOn ? "on" : "off"}
           </span>
+        </div>
+      </Section>
+
+      <Section title="Checkbox">
+        <div style={{ display: "flex", flexDirection: "column", gap: spacing[3] }}>
+          <Checkbox checked={ticked} onChange={setTicked} label="Select all" />
+          <Checkbox checked={true} onChange={() => {}} label="Ticked" />
+          <Checkbox checked={false} onChange={() => {}} label="Not ticked" />
         </div>
       </Section>
 

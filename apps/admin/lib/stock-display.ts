@@ -1,9 +1,8 @@
 export function stockStatus(quantity: number): {
-  tone: "success" | "warning" | "danger";
+  tone: "success" | "danger";
   label: string;
 } {
   if (quantity === 0) return { tone: "danger", label: "Out of stock" };
-  if (quantity <= 10) return { tone: "warning", label: "Low stock" };
   return { tone: "success", label: "In stock" };
 }
 

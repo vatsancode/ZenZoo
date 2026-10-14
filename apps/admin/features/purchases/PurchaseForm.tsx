@@ -1,13 +1,14 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Button, Card, DatePicker, IconButton, Input, Notice, Select, textStyle } from "@zenzoo/ui-web";
+import { Button, Card, DatePicker, IconButton, Input, Notice, Select, Switch, textStyle } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   createPurchase,
   getPurchase,
   listPurchases,
+  recordReceivedPurchase,
   referenceClash,
   updatePurchase,
   type Purchase,
@@ -15,9 +16,18 @@ import {
 } from "./purchases";
 import { today } from "../../lib/date-ranges";
 import { formatPrice } from "../../lib/stock-display";
-import { createVariant, listRealProducts, type RealProduct } from "../../lib/realProducts";
+import {
+  createProduct,
+  createVariant,
+  listRealProducts,
+  type CreateProductInput,
+  type RealProduct,
+} from "../../lib/realProducts";
 import { listVendors, type Vendor } from "../vendors/vendors";
+import { listUnits, unitOptions, type Unit as RealUnit } from "../settings/units";
+import { listCategoriesFlat, type CategoryResponse } from "../../lib/catalogue";
 import ProductPicker, { type PickedItem } from "./ProductPicker";
+import AddProductSheet from "../../components/AddProductSheet";
 import FormField from "../../components/FormField";
 import PageHeader from "../../components/PageHeader";
 import VariantSheet from "../../components/VariantSheet";
@@ -72,9 +82,11 @@ function SummaryLine({ label, value, strong }: { label: string; value: ReactNode
 
 /**
  * Always creates or edits a draft - nothing else. Placing the order,
- * cancelling and receiving are separate actions on PurchaseDetail, matching
- * the real status machine (draft -> ordered, the only door out of here).
- * Payments have no backend at all yet, so this form never asks for them.
+ * cancelling, receiving, and recording a payment are all separate actions
+ * on PurchaseDetail, matching the real status machine (draft -> ordered,
+ * the only door out of here) - a payment specifically needs a real
+ * purchase_id to attach to, so it can never happen before this form's
+ * first save, "already received" or not.
  */
 export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
   const { colors, radius, spacing } = useTheme();
@@ -82,6 +94,8 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
 
   const [products, setProducts] = useState<RealProduct[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [units, setUnits] = useState<RealUnit[]>([]);
+  const [categories, setCategories] = useState<CategoryResponse[]>([]);
 
   const [supplierId, setSupplierId] = useState("");
   const [reference, setReference] = useState("");
@@ -89,12 +103,15 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [discount, setDiscount] = useState("");
   const [tax, setTax] = useState("");
-  const [adjustment, setAdjustment] = useState("");
+  // Only meaningful when creating (purchaseId is undefined) - editing is
+  // always a draft edit regardless, so this never applies there.
+  const [alreadyReceived, setAlreadyReceived] = useState(false);
   const [touched, setTouched] = useState(false);
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const [referenceError, setReferenceError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [addingVariantFor, setAddingVariantFor] = useState<RealProduct | null>(null);
+  const [addingProduct, setAddingProduct] = useState(false);
 
   // undefined while the draft being edited loads; null when it can't be edited.
   const [editing, setEditing] = useState<Purchase | null | undefined>(purchaseId ? undefined : null);
@@ -102,6 +119,8 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
   useEffect(() => {
     listRealProducts().then(setProducts);
     listVendors().then(setVendors);
+    listUnits().then(setUnits);
+    listCategoriesFlat().then(setCategories);
   }, []);
 
   const byVariantId = useMemo(() => {
@@ -127,7 +146,6 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
       setDate(found.date.slice(0, 10));
       setDiscount(found.discount ? String(found.discount) : "");
       setTax(found.tax ? String(found.tax) : "");
-      setAdjustment(found.adjustment ? String(found.adjustment) : "");
       setRows(
         found.items.map((item) => ({
           variantId: item.variantId,
@@ -147,7 +165,7 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
     .map((vendor) => ({ value: vendor.id, label: vendor.name }));
 
   const subtotal = rows.reduce((sum, row) => sum + money(number(row.quantity) * number(row.unitCost)), 0);
-  const total = money(subtotal - number(discount) + number(tax) + number(adjustment));
+  const total = money(subtotal - number(discount) + number(tax));
 
   function addPicked(items: PickedItem[]) {
     const added = items.flatMap(({ variantId, quantity }) => {
@@ -164,13 +182,43 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
       name: input.name,
       sku: input.sku.trim() === "" ? undefined : input.sku,
       basePrice: input.price,
-      unit: input.unit,
     });
     if (typeof result === "string") {
       return { sku: input.sku, error: result };
     }
     setProducts((current) => current.map((product) => (product.id === result.id ? result : product)));
     setAddingVariantFor(null);
+    return null;
+  }
+
+  async function handleAddProduct(
+    input: CreateProductInput,
+  ): Promise<{ sku: string; error: string } | null> {
+    const result = await createProduct(input);
+    if (typeof result === "string") {
+      return { sku: input.sku ?? "", error: result };
+    }
+    setProducts((current) => [...current, result]);
+    setAddingProduct(false);
+
+    // The whole point of creating it here is to buy it on this purchase -
+    // add it to the line items straight away, same shape addPicked uses,
+    // just with a sensible quantity of 1 instead of nothing typed yet.
+    const variant = result.variants[0];
+    if (variant) {
+      setRows((current) => [
+        ...current,
+        {
+          variantId: variant.id,
+          name: `${result.name} - ${variant.name}`,
+          sku: variant.sku,
+          unit: variant.unit,
+          quantity: "1",
+          unitCost: "",
+          discount: "",
+        },
+      ]);
+    }
     return null;
   }
 
@@ -214,7 +262,7 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
       supplierId,
       reference,
       date,
-      adjustment: number(adjustment),
+      adjustment: 0,
       items: rows.map((row) => ({
         variantId: row.variantId,
         quantity: number(row.quantity),
@@ -222,7 +270,11 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
         discount: number(row.discount),
       })),
     };
-    const result = purchaseId ? await updatePurchase(purchaseId, input) : await createPurchase(input);
+    const result = purchaseId
+      ? await updatePurchase(purchaseId, input)
+      : alreadyReceived
+        ? await recordReceivedPurchase(input)
+        : await createPurchase(input);
     if (typeof result === "string") {
       setSaveError(result);
       return;
@@ -276,6 +328,7 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
                 addedVariantIds={rows.map((row) => row.variantId)}
                 onPickMany={addPicked}
                 onAddVariant={setAddingVariantFor}
+                onAddProduct={() => setAddingProduct(true)}
               />
 
               <VariantSheet
@@ -285,6 +338,15 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
                 allowZeroStock
                 onClose={() => setAddingVariantFor(null)}
                 onSubmit={handleAddVariant}
+              />
+
+              <AddProductSheet
+                open={addingProduct}
+                existingNames={products.map((product) => product.name)}
+                unitOptions={unitOptions(units)}
+                categories={categories}
+                onClose={() => setAddingProduct(false)}
+                onSubmit={handleAddProduct}
               />
 
               {rows.length === 0 ? (
@@ -428,6 +490,29 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
                 <DatePicker id="purchase-date" value={date} clearable={false} onChange={setDate} />
               </FormField>
             </div>
+
+            {!purchaseId ? (
+              <div
+                style={{
+                  marginTop: spacing[6],
+                  paddingTop: spacing[5],
+                  borderTop: `1px solid ${colors.border}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: spacing[4],
+                }}
+              >
+                <label htmlFor="purchase-already-received" style={{ ...textStyle("body"), color: colors.ink }}>
+                  Already received this purchase
+                </label>
+                <Switch
+                  id="purchase-already-received"
+                  checked={alreadyReceived}
+                  onChange={setAlreadyReceived}
+                />
+              </div>
+            ) : null}
           </Section>
           <Card>
             <div style={{ ...textStyle("headline"), color: colors.ink, marginBottom: spacing[5] }}>Summary</div>
@@ -436,7 +521,6 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
               {[
                 { id: "purchase-discount", label: "Extra discount (₹)", value: discount, set: setDiscount },
                 { id: "purchase-tax", label: "Tax (₹)", value: tax, set: setTax },
-                { id: "purchase-adjustment", label: "Adjustment (₹)", value: adjustment, set: setAdjustment },
               ].map((field) => (
                 <div key={field.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: spacing[3] }}>
                   <label htmlFor={field.id} style={{ ...textStyle("body"), color: colors.inkMuted }}>
@@ -493,7 +577,7 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
             Cancel
           </Button>
           <Button type="button" variant="primary" onClick={() => void save()}>
-            {purchaseId ? "Save changes" : "Save as draft"}
+            {purchaseId ? "Save changes" : alreadyReceived ? "Save as received" : "Save as draft"}
           </Button>
         </div>
       </div>

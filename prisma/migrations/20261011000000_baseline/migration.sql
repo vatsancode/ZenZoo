@@ -17,14 +17,18 @@
 -- schema change rather than squashing - this approach only works safely
 -- before there's data a `migrate reset` would destroy.
 
-CREATE ROLE app_owner NOLOGIN;
-CREATE ROLE app_role LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE INHERIT;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_owner') THEN
+    CREATE ROLE app_owner NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_role') THEN
+    CREATE ROLE app_role LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE INHERIT;
+  END IF;
+END $$;
 
 --
 -- PostgreSQL database dump
 --
-
-\restrict lrROXkXEJd1dncRNEFwDpA7C3Cf422Sf1QeaE4fJpeCpSJiY4LJS3sRESH8r7aS
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -4780,9 +4784,14 @@ GRANT SELECT,UPDATE ON TABLE public.users TO app_role;
 GRANT SELECT,INSERT,UPDATE ON TABLE public.variants TO app_role;
 
 
+-- pg_dump set search_path to '' above (line 42) so its own output stays
+-- fully schema-qualified. Restore it here so Prisma's own bookkeeping
+-- (writing to _prisma_migrations, unqualified) can still find its table
+-- on this same connection.
+SET search_path TO public;
+
+
 --
 -- PostgreSQL database dump complete
 --
-
-\unrestrict lrROXkXEJd1dncRNEFwDpA7C3Cf422Sf1QeaE4fJpeCpSJiY4LJS3sRESH8r7aS
 

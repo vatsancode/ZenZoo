@@ -1,7 +1,7 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Badge, Button, Chips, Input, Select, Sheet, textStyle } from "@zenzoo/ui-web";
+import { Badge, Button, Chips, Input, Modal, Select, Sheet, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { formatPrice } from "../../lib/stock-display";
 import { MOVEMENT_ACTIONS, NEW_BATCH_ID, type Batch, type MovementAction } from "./stock-history";
@@ -27,7 +27,8 @@ interface RecordMovementSheetProps {
   unit: Unit;
   /** Cost per unit assumed for a brand-new batch. */
   newBatchUnitCost: number;
-  onSubmit: (input: MovementInput) => void;
+  /** Returns an error message to show inline, or null/void on success. */
+  onSubmit: (input: MovementInput) => string | null | void | Promise<string | null | void>;
 }
 
 // A change this big gets a second "are you sure" press before it's recorded.
@@ -74,6 +75,8 @@ export default function RecordMovementSheet({
   const [note, setNote] = useState("");
   const [touched, setTouched] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -84,12 +87,15 @@ export default function RecordMovementSheet({
       setNote("");
       setTouched(false);
       setConfirming(false);
+      setSubmitting(false);
+      setSubmitError(null);
     }
   }, [open]);
 
-  // Any change to what's being recorded cancels a pending "are you sure".
+  // Any change to what's being recorded cancels a pending "are you sure" and clears a stale error.
   useEffect(() => {
     setConfirming(false);
+    setSubmitError(null);
   }, [batchId, action, quantity]);
 
   const newBatchChosen = batchId === NEW_BATCH_ID;
@@ -159,18 +165,29 @@ export default function RecordMovementSheet({
 
   function submit() {
     setTouched(true);
-    if (!valid || !action) return;
-    if (isLarge && !confirming) {
+    if (!valid || !action || submitting) return;
+    if (isLarge) {
       setConfirming(true);
       return;
     }
-    onSubmit({
+    void record();
+  }
+
+  // Runs the actual write - called directly for an ordinary change, or from
+  // the confirmation popup once a large one has been double-checked.
+  async function record() {
+    if (!action || submitting) return;
+    setSubmitting(true);
+    const error = await onSubmit({
       batchId,
       action,
       quantity: quantityNumber,
       unitCost: newBatchChosen ? unitCost : undefined,
       note,
     });
+    setSubmitting(false);
+    setConfirming(false);
+    if (error) setSubmitError(error);
   }
 
   // The result of what's about to be recorded, shown above the buttons once it can be worked out.
@@ -221,6 +238,7 @@ export default function RecordMovementSheet({
     ) : null;
 
   return (
+    <>
     <Sheet
       open={open}
       onClose={onClose}
@@ -228,13 +246,31 @@ export default function RecordMovementSheet({
       width={560}
       footer={
         <div>
+          {submitError ? (
+            <div
+              role="alert"
+              style={{
+                ...textStyle("footnote"),
+                color: colors.danger,
+                marginBottom: spacing[3],
+              }}
+            >
+              {submitError}
+            </div>
+          ) : null}
           {summary}
           <div style={{ display: "flex", gap: spacing[3] }}>
-            <Button type="button" variant="secondary" onClick={onClose} style={{ flex: 1 }}>
+            <Button type="button" variant="secondary" onClick={onClose} disabled={submitting} style={{ flex: 1 }}>
               Cancel
             </Button>
-            <Button type="submit" form="record-movement-form" variant="primary" style={{ flex: 2 }}>
-              {confirming ? "Yes, record it" : "Record movement"}
+            <Button
+              type="submit"
+              form="record-movement-form"
+              variant="primary"
+              disabled={submitting}
+              style={{ flex: 2 }}
+            >
+              {submitting ? "Recording..." : "Record movement"}
             </Button>
           </div>
         </div>
@@ -350,22 +386,6 @@ export default function RecordMovementSheet({
             </div>
           ) : null}
 
-          {confirming && value !== null ? (
-            <div
-              role="alert"
-              style={{
-                ...textStyle("callout"),
-                color: colors.ink,
-                padding: `${spacing[3]}px ${spacing[4]}px`,
-                borderRadius: radius.md,
-                border: `1px solid ${colors.warning}`,
-              }}
-            >
-              This changes your stock by {formatPrice(Math.abs(value))}. Check it is right, then
-              press &ldquo;Yes, record it&rdquo;.
-            </div>
-          ) : null}
-
           {action ? (
             <FormField id="movement-note" label="NOTE" span={12} error={touched ? noteError : null}>
               <Input
@@ -381,5 +401,25 @@ export default function RecordMovementSheet({
         </div>
       </form>
     </Sheet>
+
+    <Modal open={confirming} onClose={() => setConfirming(false)}>
+      <div style={{ width: 420, maxWidth: "100%" }}>
+        <div style={{ ...textStyle("title3"), color: colors.ink }}>Record this stock change?</div>
+        <p style={{ ...textStyle("body"), color: colors.inkMuted, margin: `${spacing[3]}px 0 0` }}>
+          {value !== null
+            ? `This changes your stock by ${formatPrice(Math.abs(value))}. Check it's right before you continue.`
+            : "Check this is right before you continue."}
+        </p>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: spacing[3], marginTop: spacing[6] }}>
+          <Button type="button" variant="secondary" onClick={() => setConfirming(false)} disabled={submitting}>
+            Go back
+          </Button>
+          <Button type="button" variant="primary" onClick={() => void record()} disabled={submitting}>
+            {submitting ? "Recording..." : "Yes, record it"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+    </>
   );
 }

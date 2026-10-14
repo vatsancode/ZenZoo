@@ -3,6 +3,8 @@ export interface VariantDto {
   name: string;
   sku: string | null;
   basePrice: string;
+  unitId: string;
+  /** The unit's code, resolved via the real join - for display, never typed freely. */
   unit: string;
   status: "active" | "deactivated";
 }
@@ -24,7 +26,8 @@ interface VariantRow {
   name: string;
   sku: string | null;
   base_price: { toString(): string };
-  unit: string;
+  unit_id: string;
+  units: { code: string };
   status: string;
 }
 
@@ -43,7 +46,8 @@ export function toVariantDto(row: VariantRow): VariantDto {
     name: row.name,
     sku: row.sku,
     basePrice: row.base_price.toString(),
-    unit: row.unit,
+    unitId: row.unit_id,
+    unit: row.units.code,
     status: row.status === "active" ? "active" : "deactivated",
   };
 }
@@ -70,7 +74,8 @@ export const VARIANT_SELECT = {
   name: true,
   sku: true,
   base_price: true,
-  unit: true,
+  unit_id: true,
+  units: { select: { code: true } },
   status: true,
 } as const;
 

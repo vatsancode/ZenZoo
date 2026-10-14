@@ -10,7 +10,7 @@ export interface Category {
   subcategories: string[];
 }
 
-interface CategoryResponse {
+export interface CategoryResponse {
   id: string;
   storeId: string;
   name: string;
@@ -52,6 +52,26 @@ export async function listCategories(): Promise<Category[]> {
   }
   rawSnapshot = (await response.json()) as CategoryResponse[];
   return toCategories(rawSnapshot);
+}
+
+/**
+ * The same categories as listCategories(), but flat and with real ids -
+ * for a picker (like Add product's Category/Subcategory fields) that needs
+ * to submit an actual category id, not just display a name. listCategories()
+ * loses subcategory ids by design (it only names its own UI's purpose -
+ * see Category's own shape), so this is a separate call rather than a
+ * reshape of that one's result.
+ */
+export async function listCategoriesFlat(): Promise<CategoryResponse[]> {
+  const storeId = await ensureStoreId();
+  const response = await fetch(`${API_URL}/categories?storeId=${storeId}`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as CategoryResponse[];
 }
 
 /** The categories as of the last listCategories() call, for a form that builds its list synchronously. */
@@ -112,6 +132,29 @@ export async function addSubcategory(id: string, name: string): Promise<boolean>
   });
   if (!response.ok) redirectToSignInIfUnauthorized(response);
   return response.ok;
+}
+
+/**
+ * Creates a category, or a subcategory when parentId is given, and hands back
+ * the real row - for a form that has to submit the new id straight away.
+ * Requires "catalogue:edit". Returns null on error.
+ */
+export async function createCategoryRow(
+  name: string,
+  parentId?: string,
+): Promise<CategoryResponse | null> {
+  const storeId = await ensureStoreId();
+  const response = await fetch(`${API_URL}/categories`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ storeId, name, parentId }),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return null;
+  }
+  return (await response.json()) as CategoryResponse;
 }
 
 /** Removes a subcategory by name, resolved against the last listCategories() snapshot. */

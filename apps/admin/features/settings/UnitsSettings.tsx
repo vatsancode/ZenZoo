@@ -1,47 +1,37 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import {
-  Badge,
-  Button,
-  Input,
-  Modal,
-  Switch,
-  Table,
-  textStyle,
-  type TableColumn,
-} from "@zenzoo/ui-web";
+import { Badge, Button, Input, Modal, Switch, Table, textStyle, type TableColumn } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
-import {
-  addUnit,
-  listUnits,
-  productsUsingUnit,
-  removeUnit,
-  type UnitDef,
-} from "../../lib/catalogue";
-import { listProducts, type Product } from "../stocks/stocks";
+import { addUnit, listUnits, setUnitEnabled, type Unit } from "./units";
 import FormField from "../../components/FormField";
 import PageHeader from "../../components/PageHeader";
 
-/** The units quantities are counted in. The built-in ones stay; you can add your own. */
+/** The units quantities are counted in. Switching one off keeps its history but stops offering it on new products. */
 export default function UnitsSettings() {
   const { colors, spacing } = useTheme();
-  const [units, setUnits] = useState<UnitDef[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
   const [open, setOpen] = useState(false);
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [decimals, setDecimals] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   async function reload() {
-    setUnits([...(await listUnits())]);
-    setProducts([...(await listProducts())]);
+    setUnits(await listUnits());
   }
 
   useEffect(() => {
     void reload();
   }, []);
+
+  useEffect(() => {
+    if (!message) return;
+    const timer = setTimeout(() => setMessage(null), 4000);
+    return () => clearTimeout(timer);
+  }, [message]);
 
   function close() {
     setOpen(false);
@@ -51,17 +41,34 @@ export default function UnitsSettings() {
     setError(null);
   }
 
-  function submit() {
-    const message = addUnit(code, name, decimals);
-    if (message) {
-      setError(message);
+  async function submit() {
+    setSaving(true);
+    const result = await addUnit(code, name, decimals);
+    setSaving(false);
+    if (typeof result === "string") {
+      setError(result);
       return;
     }
+    setMessage(`${result.name} added.`);
     close();
     void reload();
   }
 
-  const columns: TableColumn<UnitDef>[] = [
+  async function toggle(unit: Unit, enabled: boolean) {
+    const result = await setUnitEnabled(unit.id, enabled);
+    if (result) {
+      setMessage(result);
+      return;
+    }
+    setMessage(
+      enabled
+        ? `${unit.name} is on again.`
+        : `${unit.name} is off. It no longer shows when adding a product; existing products keep it.`,
+    );
+    void reload();
+  }
+
+  const columns: TableColumn<Unit>[] = [
     {
       key: "code",
       header: "Unit",
@@ -72,11 +79,11 @@ export default function UnitsSettings() {
       key: "name",
       header: "Name",
       render: (unit) => (
-        <span>
+        <span style={{ color: unit.status === "active" ? colors.ink : colors.inkMuted }}>
           {unit.name}
-          {unit.builtin ? (
+          {unit.status === "disabled" ? (
             <span style={{ marginLeft: spacing[3] }}>
-              <Badge tone="neutral">Built in</Badge>
+              <Badge tone="neutral">Disabled</Badge>
             </span>
           ) : null}
         </span>
@@ -85,45 +92,20 @@ export default function UnitsSettings() {
     {
       key: "decimals",
       header: "Quantities",
-      render: (unit) => (unit.decimals ? "Can have decimals" : "Whole numbers only"),
+      render: (unit) => (unit.allowDecimals ? "Can have decimals" : "Whole numbers only"),
     },
     {
-      key: "used",
-      header: "Used by",
-      render: (unit) => {
-        const used = productsUsingUnit(products, unit.code);
-        return (
-          <span style={{ color: used > 0 ? colors.ink : colors.inkMuted }}>
-            {used} {used === 1 ? "item" : "items"}
-          </span>
-        );
-      },
-    },
-    {
-      key: "actions",
+      key: "status",
       header: "",
       align: "right",
-      width: "120px",
-      render: (unit) =>
-        !unit.builtin && productsUsingUnit(products, unit.code) === 0 ? (
-          <button
-            type="button"
-            onClick={() => {
-              removeUnit(unit.code);
-              void reload();
-            }}
-            style={{
-              ...textStyle("bodyMedium"),
-              padding: 0,
-              border: "none",
-              background: "transparent",
-              color: colors.inkMuted,
-              cursor: "pointer",
-            }}
-          >
-            Remove
-          </button>
-        ) : null,
+      width: "80px",
+      render: (unit) => (
+        <Switch
+          checked={unit.status === "active"}
+          aria-label={unit.status === "active" ? `Turn ${unit.name} off` : `Turn ${unit.name} on`}
+          onChange={(next) => void toggle(unit, next)}
+        />
+      ),
     },
   ];
 
@@ -141,7 +123,11 @@ export default function UnitsSettings() {
         }
       />
 
-      <Table columns={columns} rows={units} getRowKey={(unit) => unit.code} />
+      {message ? (
+        <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>{message}</div>
+      ) : null}
+
+      <Table columns={columns} rows={units} getRowKey={(unit) => unit.id} />
 
       <Modal open={open} onClose={close}>
         <div style={{ width: 460, maxWidth: "100%" }}>
@@ -152,7 +138,7 @@ export default function UnitsSettings() {
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              submit();
+              void submit();
             }}
             style={{
               display: "flex",
@@ -176,6 +162,7 @@ export default function UnitsSettings() {
                   autoComplete="off"
                   placeholder="doz"
                   value={code}
+                  disabled={saving}
                   onChange={(event) => {
                     setCode(event.target.value);
                     setError(null);
@@ -188,6 +175,7 @@ export default function UnitsSettings() {
                   autoComplete="off"
                   placeholder="Dozen"
                   value={name}
+                  disabled={saving}
                   onChange={(event) => {
                     setName(event.target.value);
                     setError(null);
@@ -219,11 +207,11 @@ export default function UnitsSettings() {
               </div>
             ) : null}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: spacing[3] }}>
-              <Button type="button" variant="secondary" onClick={close}>
+              <Button type="button" variant="secondary" onClick={close} disabled={saving}>
                 Cancel
               </Button>
-              <Button type="submit" variant="primary">
-                Add unit
+              <Button type="submit" variant="primary" disabled={saving}>
+                {saving ? "Adding..." : "Add unit"}
               </Button>
             </div>
           </form>

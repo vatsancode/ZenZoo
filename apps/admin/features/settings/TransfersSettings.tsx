@@ -1,25 +1,15 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import {
-  Button,
-  Card,
-  DatePicker,
-  Icon,
-  Input,
-  Modal,
-  Notice,
-  Select,
-  textStyle,
-} from "@zenzoo/ui-web";
+import { Button, Card, DatePicker, Icon, Input, Modal, Notice, Select, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
 import {
-  accountMovements,
   addTransfer,
-  balanceOf,
   listAccounts,
+  listTransfers,
+  transferMovements,
   type Account,
-  type Movement,
+  type Transfer,
 } from "./accounts";
 import { today } from "../../lib/date-ranges";
 import { formatDate, formatPrice } from "../../lib/stock-display";
@@ -32,7 +22,7 @@ const ACTIVITY_SHOWN = 12;
 export default function TransfersSettings() {
   const { colors, radius, spacing, elevation } = useTheme();
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [movements, setMovements] = useState<Movement[]>([]);
+  const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [fromId, setFromId] = useState("");
@@ -41,12 +31,13 @@ export default function TransfersSettings() {
   const [date, setDate] = useState(today());
   const [note, setNote] = useState("");
   const [touched, setTouched] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   async function reload() {
-    const list = [...(await listAccounts())];
+    const list = await listAccounts();
     setAccounts(list);
-    setMovements(await accountMovements());
+    setTransfers(await listTransfers());
     setSelectedId((current) => current ?? list[0]?.id ?? null);
   }
 
@@ -60,9 +51,9 @@ export default function TransfersSettings() {
     return () => clearTimeout(timer);
   }, [notice]);
 
-  const balances = new Map(accounts.map((account) => [account.id, balanceOf(account, movements)]));
-  const total =
-    Math.round([...balances.values()].reduce((sum, value) => sum + value, 0) * 100) / 100;
+  const movements = transferMovements(accounts, transfers);
+  const balances = new Map(accounts.map((account) => [account.id, account.balance]));
+  const total = Math.round([...balances.values()].reduce((sum, value) => sum + value, 0) * 100) / 100;
   const selected = accounts.find((account) => account.id === selectedId);
   const activity = movements.filter((movement) => movement.accountId === selectedId);
 
@@ -98,16 +89,22 @@ export default function TransfersSettings() {
     setOpen(true);
   }
 
-  function submit() {
+  async function submit() {
     setTouched(true);
     if (!valid || !from || !to) return;
-    addTransfer({
-      date,
-      fromId,
-      toId,
+    setSaving(true);
+    const result = await addTransfer({
+      fromAccountId: fromId,
+      toAccountId: toId,
       amount: Math.round(value * 100) / 100,
+      date,
       note: note.trim() || undefined,
     });
+    setSaving(false);
+    if (typeof result === "string") {
+      setNotice(result);
+      return;
+    }
     setOpen(false);
     setSelectedId(from.id);
     setNotice(`${formatPrice(value)} moved from ${from.name} to ${to.name}.`);
@@ -116,7 +113,7 @@ export default function TransfersSettings() {
 
   // A disabled account can't send or receive a transfer, but still shows its balance above.
   const options = accounts
-    .filter((account) => !account.disabled)
+    .filter((account) => account.status === "active")
     .map((account) => ({
       value: account.id,
       label: `${account.name} · ${formatPrice(balances.get(account.id) ?? 0)}`,
@@ -180,18 +177,11 @@ export default function TransfersSettings() {
                 cursor: "pointer",
               }}
             >
-              <span
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: spacing[3],
-                  color: colors.inkMuted,
-                }}
-              >
+              <span style={{ display: "flex", alignItems: "center", gap: spacing[3], color: colors.inkMuted }}>
                 <Icon name="bank" size={18} />
                 <span style={{ ...textStyle("callout") }}>
                   {account.name}
-                  {account.disabled ? " · disabled" : ""}
+                  {account.status === "disabled" ? " · disabled" : ""}
                 </span>
               </span>
               <span style={{ ...textStyle("title1"), color: colors.ink }}>
@@ -266,9 +256,7 @@ export default function TransfersSettings() {
               </div>
             ))}
             {activity.length > ACTIVITY_SHOWN ? (
-              <div
-                style={{ ...textStyle("footnote"), color: colors.inkMuted, paddingTop: spacing[3] }}
-              >
+              <div style={{ ...textStyle("footnote"), color: colors.inkMuted, paddingTop: spacing[3] }}>
                 Showing the latest {ACTIVITY_SHOWN} of {activity.length}.
               </div>
             ) : null}
@@ -281,7 +269,7 @@ export default function TransfersSettings() {
           style={{ width: 520, maxWidth: "100%" }}
           onSubmit={(event) => {
             event.preventDefault();
-            submit();
+            void submit();
           }}
         >
           <div style={{ ...textStyle("title3"), color: colors.ink }}>Transfer money</div>
@@ -299,12 +287,7 @@ export default function TransfersSettings() {
               marginTop: spacing[6],
             }}
           >
-            <FormField
-              id="transfer-from"
-              label="FROM"
-              span={1}
-              error={touched ? problems.from : null}
-            >
+            <FormField id="transfer-from" label="FROM" span={1} error={touched ? problems.from : null}>
               <Select
                 id="transfer-from"
                 options={options}
@@ -326,12 +309,7 @@ export default function TransfersSettings() {
                 onChange={setToId}
               />
             </FormField>
-            <FormField
-              id="transfer-amount"
-              label="AMOUNT (₹)"
-              span={1}
-              error={touched ? problems.amount : null}
-            >
+            <FormField id="transfer-amount" label="AMOUNT (₹)" span={1} error={touched ? problems.amount : null}>
               <Input
                 id="transfer-amount"
                 inputMode="decimal"
@@ -359,19 +337,8 @@ export default function TransfersSettings() {
                 </button>
               ) : null}
             </FormField>
-            <FormField
-              id="transfer-date"
-              label="DATE"
-              span={1}
-              error={touched ? problems.date : null}
-            >
-              <DatePicker
-                id="transfer-date"
-                value={date}
-                clearable={false}
-                align="right"
-                onChange={setDate}
-              />
+            <FormField id="transfer-date" label="DATE" span={1} error={touched ? problems.date : null}>
+              <DatePicker id="transfer-date" value={date} clearable={false} align="right" onChange={setDate} />
             </FormField>
             <FormField id="transfer-note" label="NOTE (OPTIONAL)" span={2}>
               <Input
@@ -400,19 +367,12 @@ export default function TransfersSettings() {
             </div>
           ) : null}
 
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              gap: spacing[3],
-              marginTop: spacing[6],
-            }}
-          >
-            <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: spacing[3], marginTop: spacing[6] }}>
+            <Button type="button" variant="secondary" onClick={() => setOpen(false)} disabled={saving}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary">
-              Transfer
+            <Button type="submit" variant="primary" disabled={saving}>
+              {saving ? "Transferring..." : "Transfer"}
             </Button>
           </div>
         </form>

@@ -587,20 +587,24 @@ export function sellableUnits(
           },
         ],
   );
-  const services: SellableUnit[] = catalogue.map((item) => ({
-    sku: item.id,
-    productId: item.id,
-    name: item.name,
-    category: item.category,
-    price: item.pricing === "fixed" ? (item.price ?? 0) : 0,
-    // No stock to run out of.
-    stock: Number.POSITIVE_INFINITY,
-    unit: "pcs",
-    // No goods were bought, so the whole price is profit.
-    unitCost: 0,
-    service: true,
-    customPrice: item.pricing === "custom",
-  }));
+  // Imported products are already in `stock` above - only made-to-order items are added here.
+  // (Until the till reads the real catalogue, which will make this split the server's job.)
+  const services: SellableUnit[] = catalogue
+    .filter((item) => item.kind === "made_to_order")
+    .map((item) => ({
+      sku: item.id,
+      productId: item.id,
+      name: item.name,
+      category: item.category,
+      price: item.pricing === "fixed" ? (item.price ?? 0) : 0,
+      // No stock to run out of.
+      stock: Number.POSITIVE_INFINITY,
+      unit: "pcs",
+      // No goods were bought, so the whole price is profit.
+      unitCost: 0,
+      service: true,
+      customPrice: item.pricing === "custom",
+    }));
   return [...stock, ...services];
 }
 

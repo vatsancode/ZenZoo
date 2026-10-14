@@ -1,16 +1,3 @@
-// This file is generated from docs/db-design.md via `prisma db pull`
-// against a database the full DDL in that document has been applied to -
-// it is not hand-authored, and should not be hand-edited beyond cosmetic
-// model/field renames (`@map`/`@@map`) or the generator/datasource blocks.
-//
-// docs/db-design.md remains the actual source of truth for the schema
-// (tables, constraints, triggers, RLS, functions, the privilege/role
-// model). This file only mirrors what Prisma Client needs to generate a
-// type-safe client: tables, columns, indexes, and foreign keys. The
-// `///` comments Prisma attaches below call out exactly what it can't
-// represent (CHECK constraints, RLS) - see prisma/README.md for what that
-// means in practice and how to regenerate this file after a schema change.
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -144,17 +131,22 @@ model membership_store_access {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model payment_accounts {
-  id            String          @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  tenant_id     String          @db.Uuid
-  store_id      String          @db.Uuid
-  name          String          @db.VarChar(200)
-  code          String          @db.VarChar(50)
-  status        String          @default("active") @db.VarChar(20)
-  created_at    DateTime        @default(now()) @db.Timestamptz(6)
-  updated_at    DateTime        @default(now()) @db.Timestamptz(6)
-  stores        stores          @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "payment_accounts_store_fk")
-  tenants       tenants         @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  sale_payments sale_payments[]
+  id                                                                                       String              @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id                                                                                String              @db.Uuid
+  store_id                                                                                 String              @db.Uuid
+  name                                                                                     String              @db.VarChar(200)
+  code                                                                                     String              @db.VarChar(50)
+  status                                                                                   String              @default("active") @db.VarChar(20)
+  created_at                                                                               DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at                                                                               DateTime            @default(now()) @db.Timestamptz(6)
+  opening_balance                                                                          Decimal             @default(0) @db.Decimal(14, 2)
+  balance                                                                                  Decimal             @default(0) @db.Decimal(14, 2)
+  account_transfers_account_transfers_tenant_id_store_id_from_account_idTopayment_accounts account_transfers[] @relation("account_transfers_tenant_id_store_id_from_account_idTopayment_accounts")
+  account_transfers_account_transfers_tenant_id_store_id_to_account_idTopayment_accounts   account_transfers[] @relation("account_transfers_tenant_id_store_id_to_account_idTopayment_accounts")
+  stores                                                                                   stores              @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "payment_accounts_store_fk")
+  tenants                                                                                  tenants             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchase_payments                                                                        purchase_payments[]
+  sale_payments                                                                            sale_payments[]
 
   @@unique([tenant_id, store_id, code], map: "payment_accounts_tenant_store_code_unique")
   @@unique([tenant_id, store_id, id], map: "payment_accounts_tenant_store_id_unique")
@@ -164,15 +156,16 @@ model payment_accounts {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model payment_methods {
-  id                 String          @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  tenant_id          String          @db.Uuid
-  name               String          @db.VarChar(100)
-  code               String          @db.VarChar(30)
-  is_customer_credit Boolean         @default(false)
-  status             String          @default("active") @db.VarChar(20)
-  created_at         DateTime        @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime        @default(now()) @db.Timestamptz(6)
-  tenants            tenants         @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                 String              @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id          String              @db.Uuid
+  name               String              @db.VarChar(100)
+  code               String              @db.VarChar(30)
+  is_customer_credit Boolean             @default(false)
+  status             String              @default("active") @db.VarChar(20)
+  created_at         DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime            @default(now()) @db.Timestamptz(6)
+  tenants            tenants             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchase_payments  purchase_payments[]
   sale_payments      sale_payments[]
 
   @@unique([tenant_id, code], map: "payment_methods_tenant_code_unique")
@@ -267,26 +260,27 @@ model purchase_returns {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model purchases {
-  id                String             @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  tenant_id         String             @db.Uuid
-  store_id          String             @db.Uuid
-  supplier_id       String             @db.Uuid
-  reference_number  String?            @db.VarChar(100)
-  purchase_date     DateTime           @default(dbgenerated("CURRENT_DATE")) @db.Date
-  status            String             @default("draft") @db.VarChar(20)
-  subtotal_amount   Decimal            @default(0) @db.Decimal(14, 2)
-  discount_amount   Decimal            @default(0) @db.Decimal(14, 2)
-  tax_amount        Decimal            @default(0) @db.Decimal(14, 2)
-  adjustment_amount Decimal            @default(0) @db.Decimal(14, 2)
-  total_amount      Decimal            @default(0) @db.Decimal(14, 2)
-  received_at       DateTime?          @db.Timestamptz(6)
-  created_at        DateTime           @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime           @default(now()) @db.Timestamptz(6)
+  id                String              @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id         String              @db.Uuid
+  store_id          String              @db.Uuid
+  supplier_id       String              @db.Uuid
+  reference_number  String?             @db.VarChar(100)
+  purchase_date     DateTime            @default(dbgenerated("CURRENT_DATE")) @db.Date
+  status            String              @default("draft") @db.VarChar(20)
+  subtotal_amount   Decimal             @default(0) @db.Decimal(14, 2)
+  discount_amount   Decimal             @default(0) @db.Decimal(14, 2)
+  tax_amount        Decimal             @default(0) @db.Decimal(14, 2)
+  adjustment_amount Decimal             @default(0) @db.Decimal(14, 2)
+  total_amount      Decimal             @default(0) @db.Decimal(14, 2)
+  received_at       DateTime?           @db.Timestamptz(6)
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
   purchase_items    purchase_items[]
+  purchase_payments purchase_payments[]
   purchase_returns  purchase_returns[]
-  stores            stores             @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "purchases_store_fk")
-  suppliers         suppliers          @relation(fields: [tenant_id, supplier_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "purchases_supplier_fk")
-  tenants           tenants            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  stores            stores              @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "purchases_store_fk")
+  suppliers         suppliers           @relation(fields: [tenant_id, supplier_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "purchases_supplier_fk")
+  tenants           tenants             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([tenant_id, store_id, id], map: "purchases_tenant_store_id_unique")
   @@index([tenant_id, store_id, purchase_date(sort: Desc)], map: "idx_purchases_store_date")
@@ -486,25 +480,28 @@ model sales {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model sellables {
-  id          String      @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  tenant_id   String      @db.Uuid
-  store_id    String      @db.Uuid
-  name        String      @db.VarChar(200)
-  kind        String      @db.VarChar(20)
-  status      String      @default("active") @db.VarChar(20)
-  created_at  DateTime    @default(now()) @db.Timestamptz(6)
-  updated_at  DateTime    @default(now()) @db.Timestamptz(6)
-  category_id String?     @db.Uuid
-  categories  categories? @relation(fields: [tenant_id, store_id, category_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sellables_category_fk")
-  stores      stores      @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sellables_store_fk")
-  tenants     tenants     @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  variants    variants[]
+  id           String     @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id    String     @db.Uuid
+  store_id     String     @db.Uuid
+  name         String     @db.VarChar(200)
+  kind         String     @db.VarChar(20)
+  status       String     @default("active") @db.VarChar(20)
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime   @default(now()) @db.Timestamptz(6)
+  category_id  String     @db.Uuid
+  is_sellable  Boolean    @default(false)
+  pricing_mode String     @default("fixed") @db.VarChar(10)
+  categories   categories @relation(fields: [tenant_id, store_id, category_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sellables_category_fk")
+  stores       stores     @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sellables_store_fk")
+  tenants      tenants    @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variants     variants[]
 
   @@unique([tenant_id, id], map: "sellables_tenant_id_id_unique")
   @@unique([tenant_id, store_id, id], map: "sellables_tenant_store_id_unique")
   @@index([tenant_id, store_id], map: "idx_sellables_store")
   @@index([tenant_id, store_id, status], map: "idx_sellables_store_status")
   @@index([tenant_id, store_id, category_id], map: "idx_sellables_category")
+  @@index([tenant_id, store_id, is_sellable], map: "idx_sellables_store_sellable")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -542,12 +539,15 @@ model stores {
   status                  String                    @default("active") @db.VarChar(20)
   timezone                String?                   @db.VarChar(64)
   currency                String?                   @db.Char(3)
+  catalogue_auto_import   Boolean                   @default(false)
   created_at              DateTime                  @default(now()) @db.Timestamptz(6)
   updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  account_transfers       account_transfers[]
   categories              categories[]
   customer_credit_ledger  customer_credit_ledger[]
   membership_store_access membership_store_access[]
   payment_accounts        payment_accounts[]
+  purchase_payments       purchase_payments[]
   purchases               purchases[]
   sales                   sales[]
   sellables               sellables[]
@@ -611,6 +611,7 @@ model tenants {
   country_code            String                    @default("IN") @db.Char(2)
   created_at              DateTime                  @default(now()) @db.Timestamptz(6)
   updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  account_transfers       account_transfers[]
   categories              categories[]
   customer_credit_ledger  customer_credit_ledger[]
   customers               customers[]
@@ -619,6 +620,7 @@ model tenants {
   payment_accounts        payment_accounts[]
   payment_methods         payment_methods[]
   purchase_items          purchase_items[]
+  purchase_payments       purchase_payments[]
   purchase_return_items   purchase_return_items[]
   purchase_returns        purchase_returns[]
   purchases               purchases[]
@@ -634,6 +636,7 @@ model tenants {
   stores                  stores[]
   suppliers               suppliers[]
   tenant_memberships      tenant_memberships[]
+  units                   units[]
   variants                variants[]
 
   @@index([status], map: "idx_tenants_status")
@@ -651,7 +654,9 @@ model users {
   created_at             DateTime                 @default(now()) @db.Timestamptz(6)
   updated_at             DateTime                 @default(now()) @db.Timestamptz(6)
   password_hash          String                   @db.VarChar(255)
+  account_transfers      account_transfers[]
   customer_credit_ledger customer_credit_ledger[]
+  purchase_payments      purchase_payments[]
   purchase_returns       purchase_returns[]
   sale_payments          sale_payments[]
   sale_returns           sale_returns[]
@@ -675,16 +680,85 @@ model variants {
   status            String              @default("active") @db.VarChar(20)
   created_at        DateTime            @default(now()) @db.Timestamptz(6)
   updated_at        DateTime            @default(now()) @db.Timestamptz(6)
-  unit              String              @default("pcs") @db.VarChar(20)
+  unit_id           String              @db.Uuid
   inventory_batches inventory_batches[]
   purchase_items    purchase_items[]
   sale_items        sale_items[]
   sellables         sellables           @relation(fields: [tenant_id, store_id, sellable_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "variants_sellable_fk")
   tenants           tenants             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  units             units               @relation(fields: [tenant_id, unit_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "variants_unit_fk")
 
   @@unique([tenant_id, id], map: "variants_tenant_id_id_unique")
   @@unique([tenant_id, store_id, id], map: "variants_tenant_store_id_unique")
   @@index([tenant_id, sellable_id], map: "idx_variants_sellable")
   @@index([tenant_id, store_id], map: "idx_variants_store")
   @@index([tenant_id, store_id, status], map: "idx_variants_store_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model account_transfers {
+  id                                                                                      String           @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id                                                                               String           @db.Uuid
+  store_id                                                                                String           @db.Uuid
+  from_account_id                                                                         String           @db.Uuid
+  to_account_id                                                                           String           @db.Uuid
+  amount                                                                                  Decimal          @db.Decimal(14, 2)
+  transfer_date                                                                           DateTime         @default(dbgenerated("CURRENT_DATE")) @db.Date
+  note                                                                                    String?          @db.VarChar(500)
+  created_by                                                                              String           @db.Uuid
+  created_at                                                                              DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at                                                                              DateTime         @default(now()) @db.Timestamptz(6)
+  users                                                                                   users            @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  payment_accounts_account_transfers_tenant_id_store_id_from_account_idTopayment_accounts payment_accounts @relation("account_transfers_tenant_id_store_id_from_account_idTopayment_accounts", fields: [tenant_id, store_id, from_account_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "account_transfers_from_account_fk")
+  stores                                                                                  stores           @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "account_transfers_store_fk")
+  tenants                                                                                 tenants          @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  payment_accounts_account_transfers_tenant_id_store_id_to_account_idTopayment_accounts   payment_accounts @relation("account_transfers_tenant_id_store_id_to_account_idTopayment_accounts", fields: [tenant_id, store_id, to_account_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "account_transfers_to_account_fk")
+
+  @@index([tenant_id, from_account_id], map: "idx_account_transfers_from_account")
+  @@index([tenant_id, to_account_id], map: "idx_account_transfers_to_account")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model purchase_payments {
+  id                 String           @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id          String           @db.Uuid
+  store_id           String           @db.Uuid
+  purchase_id        String           @db.Uuid
+  payment_method_id  String           @db.Uuid
+  payment_account_id String           @db.Uuid
+  amount             Decimal          @db.Decimal(14, 2)
+  paid_at            DateTime         @default(dbgenerated("CURRENT_DATE")) @db.Date
+  reference          String?          @db.VarChar(100)
+  notes              String?
+  created_by         String           @db.Uuid
+  created_at         DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime         @default(now()) @db.Timestamptz(6)
+  payment_accounts   payment_accounts @relation(fields: [tenant_id, store_id, payment_account_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "purchase_payments_account_fk")
+  users              users            @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  payment_methods    payment_methods  @relation(fields: [tenant_id, payment_method_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "purchase_payments_method_fk")
+  purchases          purchases        @relation(fields: [tenant_id, store_id, purchase_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "purchase_payments_purchase_fk")
+  stores             stores           @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "purchase_payments_store_fk")
+  tenants            tenants          @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([tenant_id, purchase_id], map: "idx_purchase_payments_purchase")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model units {
+  id             String     @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id      String     @db.Uuid
+  code           String     @db.VarChar(10)
+  name           String     @db.VarChar(100)
+  allow_decimals Boolean    @default(false)
+  status         String     @default("active") @db.VarChar(20)
+  created_at     DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime   @default(now()) @db.Timestamptz(6)
+  tenants        tenants    @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variants       variants[]
+
+  @@unique([tenant_id, code], map: "units_tenant_code_unique")
+  @@unique([tenant_id, id], map: "units_tenant_id_id_unique")
 }

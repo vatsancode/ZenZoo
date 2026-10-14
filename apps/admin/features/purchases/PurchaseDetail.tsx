@@ -8,27 +8,39 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import {
   cancelPurchase,
   canCancel,
+  canPay,
   canReceive,
+  canReturn,
+  createPurchasePayment,
   deliveriesOf,
   displayStatusLabel,
   displayStatusTone,
   getPurchase,
+  listPurchasePayments,
   orderedUnits,
   pendingUnits,
   placeOrder,
   receiveDelivery,
   receivedUnits,
   type Purchase,
+  type PurchaseItem,
+  type PurchasePayment,
+  type PurchaseReturn,
 } from "./purchases";
 import { formatDate, formatPrice } from "../../lib/stock-display";
 import { listVendors, type Vendor } from "../vendors/vendors";
+import { accountOptions, listAccounts, type Account } from "../settings/accounts";
+import { listPaymentMethods, methodOptions, type PaymentMethod } from "../settings/paymentMethods";
 import PageHeader from "../../components/PageHeader";
+import PaymentsModal, { countedRows, newPayRow, payRowProblems, rowsTotal, type PayRow } from "./PaymentsModal";
 import ReceiveSheet, { type DeliveryInput } from "./ReceiveSheet";
+import ReturnSheet from "../../components/ReturnSheet";
 import StatTile, { StatRow } from "../../components/StatTile";
 
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "items", label: "Items" },
+  { id: "payments", label: "Payments" },
 ];
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
@@ -59,31 +71,45 @@ function Line({ label, value, strong }: { label: string; value: ReactNode; stron
 }
 
 /**
- * Payments and returns have no backing tables at all yet (purchase_returns/
- * purchase_return_items and the payment tables exist in the schema but
- * nothing writes to them from here), so this screen doesn't show them -
- * showing a UI for data that can never actually be saved would be worse
- * than not showing it. Receiving (draft/order/cancel/receive) is the real,
- * fully wired part.
+ * Payments and receiving stock are both real, fully wired here. Returns
+ * have a real table (purchase_returns/purchase_return_items) but no
+ * backend capability wired to it yet - the UI is back (ReturnSheet) so
+ * the flow can be reviewed, but confirming a return only shows a notice
+ * right now, it doesn't persist anything or touch stock.
  */
 export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
   const { colors, radius, spacing } = useTheme();
   const router = useRouter();
   const [purchase, setPurchase] = useState<Purchase | null | undefined>(undefined);
   const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [payments, setPayments] = useState<PurchasePayment[]>([]);
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
+  const [returnOpen, setReturnOpen] = useState(false);
+  const [paymentsOpen, setPaymentsOpen] = useState(false);
+  const [paymentRows, setPaymentRows] = useState<PayRow[]>([newPayRow()]);
+  const [savingPayments, setSavingPayments] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
   const [tab, setTab] = useState("overview");
 
   function refresh() {
     getPurchase(purchaseId).then(setPurchase);
   }
 
+  function refreshPayments() {
+    listPurchasePayments(purchaseId).then(setPayments);
+  }
+
   useEffect(() => {
     refresh();
+    refreshPayments();
     listVendors().then(setVendors);
+    listAccounts().then(setAccounts);
+    listPaymentMethods().then(setMethods);
   }, [purchaseId]);
 
   useEffect(() => {
@@ -144,6 +170,44 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
     setPurchase(result);
   }
 
+  // UI only for now - no purchase_returns capability exists yet (see the
+  // top-of-file note), so this doesn't persist the return or touch stock.
+  function handleReturn(ret: PurchaseReturn, picks: { item: PurchaseItem; quantity: number }[]) {
+    const units = picks.reduce((sum, entry) => sum + entry.quantity, 0);
+    setReturnOpen(false);
+    setNotice(
+      `Return captured: ${units} ${units === 1 ? "unit" : "units"} worth ${formatPrice(ret.credit)}. Not saved yet - the backend for returns isn't wired up.`,
+    );
+  }
+
+  async function handleRecordPayments() {
+    const counted = countedRows(paymentRows);
+    if (payRowProblems(paymentRows).length > 0 || counted.length === 0) return;
+    setSavingPayments(true);
+    setPaymentError(null);
+    for (const row of counted) {
+      const result = await createPurchasePayment(purchase!.id, {
+        paymentMethodId: row.method,
+        paymentAccountId: row.accountId,
+        amount: Number(row.amount),
+        date: row.date,
+      });
+      if (typeof result === "string") {
+        setSavingPayments(false);
+        setPaymentError(result);
+        return;
+      }
+    }
+    setSavingPayments(false);
+    const total = rowsTotal(counted);
+    setPaymentsOpen(false);
+    setPaymentRows([newPayRow()]);
+    setTab("payments");
+    setNotice(`${formatPrice(total)} recorded. Your account balance has been updated.`);
+    refreshPayments();
+    listAccounts().then(setAccounts);
+  }
+
   async function handleCancel() {
     const result = await cancelPurchase(purchase!.id);
     setCancelOpen(false);
@@ -168,6 +232,16 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
         action={
           <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
             <Badge tone={displayStatusTone(purchase)}>{displayStatusLabel(purchase)}</Badge>
+            {canReturn(purchase) ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setReturnOpen(true)}
+                style={{ backgroundColor: "transparent", border: `1px solid ${colors.border}` }}
+              >
+                Return items
+              </Button>
+            ) : null}
             {canCancel(purchase) ? (
               <Button
                 type="button"
@@ -196,6 +270,16 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
             {receiving ? (
               <Button type="button" variant="primary" onClick={() => setReceiveOpen(true)}>
                 Receive stock
+              </Button>
+            ) : null}
+            {canPay(purchase) ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setPaymentsOpen(true)}
+                style={{ backgroundColor: "transparent", border: `1px solid ${colors.border}` }}
+              >
+                Record payment
               </Button>
             ) : null}
           </div>
@@ -382,9 +466,101 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
             </Card>
           </>
         ) : null}
+
+        {tab === "payments" ? (
+          <Card>
+            <CardTitle>Payments</CardTitle>
+            {payments.length === 0 ? (
+              <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>
+                No payments recorded yet.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "110px minmax(0, 1fr) minmax(0, 1fr) auto",
+                    columnGap: spacing[4],
+                    padding: `0 ${spacing[4]}px ${spacing[2]}px`,
+                    ...textStyle("caption"),
+                    color: colors.inkMuted,
+                  }}
+                >
+                  <span>DATE</span>
+                  <span>METHOD</span>
+                  <span>ACCOUNT</span>
+                  <span style={{ textAlign: "right" }}>AMOUNT</span>
+                </div>
+                {payments.map((payment, index) => (
+                  <div
+                    key={payment.id}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "110px minmax(0, 1fr) minmax(0, 1fr) auto",
+                      columnGap: spacing[4],
+                      alignItems: "center",
+                      minHeight: 56,
+                      padding: `0 ${spacing[4]}px`,
+                      borderTop: index === 0 ? `1px solid ${colors.border}` : "none",
+                      borderBottom: `1px solid ${colors.border}`,
+                    }}
+                  >
+                    <span style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>
+                      {formatDate(payment.date)}
+                    </span>
+                    <span style={{ ...textStyle("body"), color: colors.ink }}>
+                      {methods.find((method) => method.id === payment.paymentMethodId)?.name ?? "-"}
+                    </span>
+                    <span style={{ ...textStyle("body"), color: colors.ink }}>
+                      {accounts.find((account) => account.id === payment.paymentAccountId)?.name ?? "-"}
+                    </span>
+                    <span style={{ ...textStyle("data"), color: colors.ink, textAlign: "right" }}>
+                      {formatPrice(payment.amount)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        ) : null}
       </div>
 
       <ReceiveSheet open={receiveOpen} purchase={purchase} onClose={() => setReceiveOpen(false)} onConfirm={(delivery) => void confirmDelivery(delivery)} />
+
+      <ReturnSheet
+        open={returnOpen}
+        purchase={purchase}
+        onClose={() => setReturnOpen(false)}
+        onConfirm={handleReturn}
+        methodOptions={methodOptions(methods)}
+        accountOptions={accountOptions(accounts)}
+      />
+
+      <PaymentsModal
+        open={paymentsOpen}
+        onClose={() => {
+          setPaymentsOpen(false);
+          setPaymentRows([newPayRow()]);
+          setPaymentError(null);
+        }}
+        subtitle="How is this purchase being paid?"
+        rows={paymentRows}
+        onRowsChange={setPaymentRows}
+        showErrors
+        footerNote={
+          paymentError ? (
+            <span style={{ color: colors.danger }} role="alert">
+              {paymentError}
+            </span>
+          ) : (
+            `${formatPrice(rowsTotal(paymentRows))} recorded`
+          )
+        }
+        doneLabel={savingPayments ? "Saving..." : "Done"}
+        methodOptions={methodOptions(methods)}
+        accountOptions={accountOptions(accounts)}
+        onDone={() => void handleRecordPayments()}
+      />
 
       <Modal open={cancelOpen} onClose={() => setCancelOpen(false)}>
         <div style={{ width: 420, maxWidth: "100%" }}>

@@ -6,8 +6,7 @@ import { PRODUCT_SELECT, toProductDto, type ProductDto } from "../products/dto";
 export interface UpdateProductInput {
   id: string;
   name: string;
-  /** null clears the category; omit to leave it unchanged is not supported - always send the full intended value. */
-  categoryId: string | null;
+  categoryId: string;
 }
 
 /**
@@ -33,7 +32,7 @@ export const updateProduct = defineCapability<UpdateProductInput, ProductDto>({
       if (!existing) throw new Error("That product doesn't exist.");
       await assertStoreAccess(actor, existing.store_id);
 
-      if (input.categoryId) {
+      {
         const category = await tx.categories.findFirst({
           where: { id: input.categoryId, tenant_id: actor.tenantId, store_id: existing.store_id },
           select: { id: true },

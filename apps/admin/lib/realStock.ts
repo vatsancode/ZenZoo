@@ -18,6 +18,7 @@ export interface RealStockMovement {
   quantity: number;
   batchId: string;
   referenceType: string | null;
+  reason: string | null;
   occurredAt: string;
 }
 
@@ -28,6 +29,26 @@ async function get<T>(path: string): Promise<T> {
     throw new Error("Couldn't load stock data.");
   }
   return (await response.json()) as T;
+}
+
+async function parseError(response: Response): Promise<string> {
+  try {
+    const data = (await response.json()) as { error?: string };
+    return data.error ?? "Something went wrong.";
+  } catch {
+    return "Something went wrong.";
+  }
+}
+
+export interface RecordMovementInput {
+  /** An existing batch, or null to start a brand-new one - only valid for "add". */
+  batchId: string | null;
+  action: "add" | "remove" | "count";
+  /** How many to add/remove, or - for "count" - how many there actually are right now. */
+  quantity: number;
+  /** Cost per unit for a brand-new batch. Required when batchId is null. */
+  unitCost?: number;
+  note?: string;
 }
 
 /** On-hand quantity per variant for this store - SUM(available_quantity), the real number, never a cache of it. */
@@ -45,4 +66,22 @@ export async function listInventoryBatches(variantId: string): Promise<RealBatch
 /** The real stock_movements ledger for one variant, newest first. Append-only - nothing here can be edited or undone. */
 export async function listStockMovements(variantId: string): Promise<RealStockMovement[]> {
   return get<RealStockMovement[]>(`/variants/${variantId}/movements`);
+}
+
+/** Records a real, by-hand stock change for one variant - requires "stocks:edit". Returns null on success, or an error message. */
+export async function recordMovement(
+  variantId: string,
+  input: RecordMovementInput,
+): Promise<string | null> {
+  const response = await fetch(`${API_URL}/variants/${variantId}/movements`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  return null;
 }

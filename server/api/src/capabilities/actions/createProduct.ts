@@ -3,18 +3,25 @@ import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
 import { PRODUCT_SELECT, toProductDto, type ProductDto } from "../products/dto";
+import { recordOpeningStock } from "../stocks/openingStock";
 
 export interface CreateProductVariantInput {
   name: string;
   sku?: string;
   basePrice: number;
-  unit?: string;
+  unitId: string;
+  /** Starting stock, recorded as a real opening-stock batch - omit or 0 for no starting stock. */
+  openingQuantity?: number;
+  /** Required alongside openingQuantity - what that starting stock cost. */
+  openingUnitCost?: number;
 }
 
 export interface CreateProductInput {
   storeId: string;
   name: string;
-  categoryId?: string;
+  categoryId: string;
+  /** When any variant carries opening stock - defaults to today if omitted. */
+  openingStockDate?: string;
   /**
    * Always >= 1 - "every sellable needs at least one variant" is an
    * application rule, not DB-enforced (docs/db-design.md). A product with
@@ -39,17 +46,35 @@ export const createProduct = defineCapability<CreateProductInput, ProductDto>({
     for (const variant of input.variants) {
       if (!variant.name.trim()) throw new Error("Give every variant a name.");
       if (variant.basePrice < 0) throw new Error("Price can't be negative.");
+      if (variant.openingQuantity) {
+        if (variant.openingQuantity < 0) throw new Error("Opening stock can't be negative.");
+        if (variant.openingUnitCost == null || variant.openingUnitCost < 0) {
+          throw new Error("Give the opening stock a cost per unit.");
+        }
+      }
     }
+    const openingStockDate = input.openingStockDate ?? new Date().toISOString().slice(0, 10);
 
     try {
       return await runInTenantContext(actor, async (tx) => {
-        if (input.categoryId) {
-          const category = await tx.categories.findFirst({
-            where: { id: input.categoryId, tenant_id: actor.tenantId, store_id: input.storeId },
-            select: { id: true },
-          });
-          if (!category) throw new Error("That category doesn't exist.");
-        }
+        const category = await tx.categories.findFirst({
+          where: { id: input.categoryId, tenant_id: actor.tenantId, store_id: input.storeId },
+          select: { id: true },
+        });
+        if (!category) throw new Error("That category doesn't exist.");
+
+        const unitIds = [...new Set(input.variants.map((variant) => variant.unitId))];
+        const units = await tx.units.findMany({
+          where: { id: { in: unitIds }, tenant_id: actor.tenantId, status: "active" },
+          select: { id: true },
+        });
+        if (units.length !== unitIds.length) throw new Error("Choose a unit for every variant.");
+
+        // "Keep importing all new inventory items" - see setCatalogueAutoImport.
+        const store = await tx.stores.findFirstOrThrow({
+          where: { id: input.storeId, tenant_id: actor.tenantId },
+          select: { catalogue_auto_import: true },
+        });
 
         // Two steps, not a nested create - same reasoning as createRole:
         // variants' composite FK needs tenant_id/store_id populated
@@ -61,21 +86,39 @@ export const createProduct = defineCapability<CreateProductInput, ProductDto>({
             store_id: input.storeId,
             name,
             kind: "product",
-            category_id: input.categoryId ?? null,
+            category_id: input.categoryId,
+            is_sellable: store.catalogue_auto_import,
           },
           select: { id: true },
         });
-        await tx.variants.createMany({
-          data: input.variants.map((variant) => ({
-            tenant_id: actor.tenantId,
-            store_id: input.storeId,
-            sellable_id: sellable.id,
-            name: variant.name.trim(),
-            sku: variant.sku?.trim() || null,
-            base_price: variant.basePrice,
-            unit: variant.unit?.trim() || "pcs",
-          })),
-        });
+
+        // One create per line, not createMany - a variant carrying opening
+        // stock needs its own real id straight away, to record that stock
+        // against, and createMany doesn't hand back the rows it just made.
+        for (const variant of input.variants) {
+          const created = await tx.variants.create({
+            data: {
+              tenant_id: actor.tenantId,
+              store_id: input.storeId,
+              sellable_id: sellable.id,
+              name: variant.name.trim(),
+              sku: variant.sku?.trim() || null,
+              base_price: variant.basePrice,
+              unit_id: variant.unitId,
+            },
+            select: { id: true },
+          });
+
+          if (variant.openingQuantity) {
+            await recordOpeningStock(tx, actor, {
+              storeId: input.storeId,
+              variantId: created.id,
+              quantity: variant.openingQuantity,
+              unitCost: variant.openingUnitCost!,
+              date: openingStockDate,
+            });
+          }
+        }
 
         const row = await tx.sellables.findUniqueOrThrow({
           where: { id: sellable.id },

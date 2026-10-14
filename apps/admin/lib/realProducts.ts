@@ -8,6 +8,8 @@ export interface RealVariant {
   name: string;
   sku: string | null;
   basePrice: string;
+  unitId: string;
+  /** The unit's code, resolved server-side - for display, never typed freely. */
   unit: string;
   status: "active" | "deactivated";
 }
@@ -45,7 +47,10 @@ export interface CreateVariantInput {
   name: string;
   sku?: string;
   basePrice: number;
-  unit?: string;
+  /** Starting stock, recorded as a real opening-stock batch - omit for none. */
+  openingQuantity?: number;
+  /** Required alongside openingQuantity. */
+  openingUnitCost?: number;
 }
 
 async function parseError(response: Response): Promise<string> {
@@ -67,6 +72,111 @@ export async function createVariant(
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  return (await response.json()) as RealProduct;
+}
+
+export interface CreateProductInput {
+  name: string;
+  /** Names the product's first variant, when it differs from the product's own name ("Has variants" on). Defaults to name. */
+  variantName?: string;
+  sku?: string;
+  basePrice: number;
+  unitId: string;
+  categoryId: string;
+  /** Starting stock, recorded as a real opening-stock batch - omit for none. */
+  openingQuantity?: number;
+  /** Required alongside openingQuantity. */
+  openingUnitCost?: number;
+}
+
+/**
+ * Creates a brand-new product with a single variant named to match it (or
+ * variantName, when given) - the "simple product" shape createProduct's
+ * own notes describe. Requires "stocks:edit". Returns the new product, or
+ * an error message.
+ */
+export async function createProduct(input: CreateProductInput): Promise<RealProduct | string> {
+  const storeId = await ensureStoreId();
+  const response = await fetch(`${API_URL}/products`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({
+      storeId,
+      name: input.name,
+      categoryId: input.categoryId,
+      variants: [
+        {
+          name: input.variantName?.trim() || input.name,
+          sku: input.sku,
+          basePrice: input.basePrice,
+          unitId: input.unitId,
+          openingQuantity: input.openingQuantity,
+          openingUnitCost: input.openingUnitCost,
+        },
+      ],
+    }),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  return (await response.json()) as RealProduct;
+}
+
+export interface UpdateProductInput {
+  name: string;
+  categoryId: string;
+}
+
+/** Renames/recategorizes a product - requires "stocks:edit". Returns the updated product, or an error message. */
+export async function updateProduct(id: string, input: UpdateProductInput): Promise<RealProduct | string> {
+  const response = await fetch(`${API_URL}/products/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  return (await response.json()) as RealProduct;
+}
+
+export interface UpdateVariantInput {
+  name: string;
+  sku?: string;
+  basePrice: number;
+}
+
+/** Edits one variant's name/SKU/price - requires "stocks:edit". Unit isn't editable here - see updateProductUnit. Returns the updated product, or an error message. */
+export async function updateVariant(id: string, input: UpdateVariantInput): Promise<RealProduct | string> {
+  const response = await fetch(`${API_URL}/variants/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  return (await response.json()) as RealProduct;
+}
+
+/** Sets every variant of a product to the same unit in one go - requires "stocks:edit". Returns the updated product, or an error message. */
+export async function updateProductUnit(id: string, unitId: string): Promise<RealProduct | string> {
+  const response = await fetch(`${API_URL}/products/${id}/unit`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ unitId }),
   });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);

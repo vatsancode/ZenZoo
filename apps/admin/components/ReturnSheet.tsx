@@ -4,7 +4,6 @@ import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Chips, DatePicker, Input, Select, Sheet, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
 import { today } from "../lib/date-ranges";
-import { PAYMENT_ACCOUNT_OPTIONS, PAYMENT_METHOD_OPTIONS } from "../lib/payment-options";
 import {
   RETURN_REASONS,
   returnableOf,
@@ -24,6 +23,9 @@ interface ReturnSheetProps {
   purchase: Purchase;
   onClose: () => void;
   onConfirm: (ret: PurchaseReturn, picks: { item: PurchaseItem; quantity: number }[]) => void;
+  /** The active payment methods/accounts to choose from - fetched by the caller, live. */
+  methodOptions: { value: string; label: string }[];
+  accountOptions: { value: string; label: string }[];
 }
 
 const number = (value: string) => (value.trim() === "" ? 0 : Number(value));
@@ -53,7 +55,14 @@ const REFUND_OPTIONS: { value: RefundMode; label: string; help: string }[] = [
  * Sends goods back to the vendor, in two steps in the same side panel as
  * Receive stock: first what and how many, then why and how the money is handled.
  */
-export default function ReturnSheet({ open, purchase, onClose, onConfirm }: ReturnSheetProps) {
+export default function ReturnSheet({
+  open,
+  purchase,
+  onClose,
+  onConfirm,
+  methodOptions,
+  accountOptions,
+}: ReturnSheetProps) {
   const { colors, radius, spacing } = useTheme();
   const [step, setStep] = useState<1 | 2>(1);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
@@ -85,7 +94,7 @@ export default function ReturnSheet({ open, purchase, onClose, onConfirm }: Retu
 
   const lines = (purchase.items ?? []).filter((item) => returnableOf(item) > 0);
   const picks = lines
-    .map((item) => ({ item, quantity: number(quantities[item.sku] ?? "") }))
+    .map((item) => ({ item, quantity: number(quantities[item.id] ?? "") }))
     .filter((entry) => entry.quantity > 0);
   const units = picks.reduce((sum, entry) => sum + entry.quantity, 0);
   const credit = money(
@@ -93,7 +102,7 @@ export default function ReturnSheet({ open, purchase, onClose, onConfirm }: Retu
   );
 
   function problemWith(item: PurchaseItem): string | null {
-    const typed = quantities[item.sku] ?? "";
+    const typed = quantities[item.id] ?? "";
     const quantity = number(typed);
     if (typed.trim() === "") return null;
     if (Number.isNaN(quantity) || quantity < 0) return "Enter a number.";
@@ -271,7 +280,7 @@ export default function ReturnSheet({ open, purchase, onClose, onConfirm }: Retu
                 type="button"
                 onClick={() =>
                   setQuantities(
-                    Object.fromEntries(lines.map((item) => [item.sku, String(returnableOf(item))])),
+                    Object.fromEntries(lines.map((item) => [item.id, String(returnableOf(item))])),
                   )
                 }
                 style={{
@@ -290,11 +299,11 @@ export default function ReturnSheet({ open, purchase, onClose, onConfirm }: Retu
             {lines.map((item, index) => {
               const can = returnableOf(item);
               const problem = problemWith(item);
-              const quantity = number(quantities[item.sku] ?? "");
+              const quantity = number(quantities[item.id] ?? "");
               const chosen = quantity > 0 && !problem;
               return (
                 <div
-                  key={item.sku}
+                  key={item.id}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -329,9 +338,9 @@ export default function ReturnSheet({ open, purchase, onClose, onConfirm }: Retu
                     </div>
                   </div>
                   <QuantityPill
-                    value={quantities[item.sku] ?? ""}
+                    value={quantities[item.id] ?? ""}
                     onChange={(next) =>
-                      setQuantities((current) => ({ ...current, [item.sku]: next }))
+                      setQuantities((current) => ({ ...current, [item.id]: next }))
                     }
                     max={can}
                     actionLabel="Return"
@@ -349,7 +358,7 @@ export default function ReturnSheet({ open, purchase, onClose, onConfirm }: Retu
               <div style={{ ...textStyle("caption"), color: colors.inkMuted }}>RETURNING</div>
               {picks.map(({ item, quantity }) => (
                 <div
-                  key={item.sku}
+                  key={item.id}
                   style={{ display: "flex", justifyContent: "space-between", gap: spacing[4] }}
                 >
                   <span style={{ ...textStyle("body"), color: colors.ink }}>{item.name}</span>
@@ -479,7 +488,7 @@ export default function ReturnSheet({ open, purchase, onClose, onConfirm }: Retu
                   >
                     <Select
                       id="refund-method"
-                      options={PAYMENT_METHOD_OPTIONS}
+                      options={methodOptions}
                       value={method}
                       placeholder="Method"
                       searchable={false}
@@ -495,7 +504,7 @@ export default function ReturnSheet({ open, purchase, onClose, onConfirm }: Retu
                   >
                     <Select
                       id="refund-account"
-                      options={PAYMENT_ACCOUNT_OPTIONS}
+                      options={accountOptions}
                       value={accountId}
                       placeholder="Account"
                       searchable={false}

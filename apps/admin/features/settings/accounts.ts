@@ -1,185 +1,240 @@
-import { PAYMENT_ACCOUNT_LABELS, PAYMENT_ACCOUNT_OPTIONS } from "../../lib/payment-options";
+import { redirectToSignInIfUnauthorized } from "../../lib/auth";
+import { ensureStoreId } from "../../lib/storeContext";
+import { slugify } from "../../lib/slug";
 import { logAudit } from "../../lib/audit";
-import { listExpenses } from "../expenses/expenses";
-import { listPurchases } from "../purchases/purchases";
-import { listCollections, listCustomers, listSales } from "../sales/sales";
 import { formatPrice } from "../../lib/stock-display";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+
 export interface Account {
-  /** Also the code stored on payments, e.g. "hdfc-current". */
   id: string;
   name: string;
+  code: string;
+  status: "active" | "disabled";
   /** What was in the account when it was added to ZenZoo. */
-  opening: number;
-  /** Turned off: it stays in history and keeps its balance, but isn't offered for new payments. */
-  disabled?: boolean;
+  openingBalance: number;
+  /** The live, running balance - kept correct by the database itself, never recalculated here. */
+  balance: number;
 }
 
 export interface Transfer {
   id: string;
   /** ISO date, YYYY-MM-DD. */
   date: string;
-  fromId: string;
-  toId: string;
+  fromAccountId: string;
+  toAccountId: string;
   amount: number;
-  note?: string;
+  note: string | null;
 }
 
-// Sample data standing in for the `payment_accounts` table in docs/db-design.md, which
-// has no read capability on the backend yet. Opening balances are an addition here: the
-// table is only a label for where money lands, so the balance has to be worked out from
-// what has gone in and out since.
-let accounts: Account[] = [
-  { id: "cash-drawer", name: "Cash drawer", opening: 25000 },
-  { id: "hdfc-current", name: "HDFC Current Account", opening: 150000 },
-  { id: "icici-savings", name: "ICICI Savings Account", opening: 80000 },
-];
-
-let transfers: Transfer[] = [
-  {
-    id: "tr-1",
-    date: "2026-10-02",
-    fromId: "cash-drawer",
-    toId: "hdfc-current",
-    amount: 12000,
-    note: "Cash deposited at the bank",
-  },
-];
-
-const round = (value: number) => Math.round(value * 100) / 100;
-
-/** The pickers across the app read this list, so it is kept in step with the accounts. */
-function syncOptions() {
-  PAYMENT_ACCOUNT_OPTIONS.splice(
-    0,
-    PAYMENT_ACCOUNT_OPTIONS.length,
-    ...accounts
-      .filter((account) => !account.disabled)
-      .map((account) => ({ value: account.id, label: account.name })),
-  );
-  // Names stay known for every account, so history that mentions a disabled one still reads properly.
-  PAYMENT_ACCOUNT_LABELS.splice(
-    0,
-    PAYMENT_ACCOUNT_LABELS.length,
-    ...accounts.map((account) => ({ value: account.id, label: account.name })),
-  );
+interface AccountResponse {
+  id: string;
+  name: string;
+  code: string;
+  status: "active" | "disabled";
+  openingBalance: string;
+  balance: string;
 }
 
-export async function listAccounts(): Promise<Account[]> {
-  return accounts;
+interface TransferResponse {
+  id: string;
+  fromAccountId: string;
+  toAccountId: string;
+  amount: string;
+  date: string;
+  note: string | null;
 }
 
-export async function listTransfers(): Promise<Transfer[]> {
-  return transfers;
+function toAccount(response: AccountResponse): Account {
+  return {
+    id: response.id,
+    name: response.name,
+    code: response.code,
+    status: response.status,
+    openingBalance: Number(response.openingBalance),
+    balance: Number(response.balance),
+  };
 }
 
-const slug = (name: string) =>
-  name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+function toTransfer(response: TransferResponse): Transfer {
+  return {
+    id: response.id,
+    date: response.date,
+    fromAccountId: response.fromAccountId,
+    toAccountId: response.toAccountId,
+    amount: Number(response.amount),
+    note: response.note,
+  };
+}
 
-/** Adds an account; returns an error message or null. */
-export function addAccount(name: string, opening: number): string | null {
-  const clean = name.trim();
-  if (clean === "") return "Enter the account's name.";
-  if (accounts.some((account) => account.name.toLowerCase() === clean.toLowerCase())) {
-    return "An account with this name already exists.";
+async function parseError(response: Response): Promise<string> {
+  try {
+    const data = (await response.json()) as { error?: string };
+    return data.error ?? "Something went wrong.";
+  } catch {
+    return "Something went wrong.";
   }
-  let id = slug(clean) || `account-${Date.now()}`;
-  if (accounts.some((account) => account.id === id)) id = `${id}-${Date.now()}`;
-  accounts = [...accounts, { id, name: clean, opening: round(opening) }];
-  syncOptions();
+}
+
+/** Lists this store's accounts from the real API - requires at least "settings:view". */
+export async function listAccounts(): Promise<Account[]> {
+  const storeId = await ensureStoreId();
+  const response = await fetch(`${API_URL}/accounts?storeId=${storeId}`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    throw new Error(await parseError(response));
+  }
+  const data = (await response.json()) as AccountResponse[];
+  return data.map(toAccount);
+}
+
+/** Adds an account - requires "settings:edit". Returns the new account, or an error message. */
+export async function addAccount(name: string, openingBalance: number): Promise<Account | string> {
+  const storeId = await ensureStoreId();
+  const response = await fetch(`${API_URL}/accounts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ storeId, name, code: slugify(name), openingBalance }),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  const account = toAccount((await response.json()) as AccountResponse);
   logAudit({
     action: "created",
     module: "Accounts",
     entity: "Account",
-    label: clean,
+    label: account.name,
     before: null,
-    after: { Name: clean, "Opening balance": formatPrice(round(opening)) },
+    after: { Name: account.name, "Opening balance": formatPrice(account.openingBalance) },
+  });
+  return account;
+}
+
+/** Renames an account and/or corrects its opening balance - requires "settings:edit". */
+export async function editAccount(
+  id: string,
+  name: string,
+  openingBalance: number,
+): Promise<Account | string> {
+  const response = await fetch(`${API_URL}/accounts/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ name, openingBalance }),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  const account = toAccount((await response.json()) as AccountResponse);
+  logAudit({
+    action: "updated",
+    module: "Accounts",
+    entity: "Account",
+    label: account.name,
+    before: null,
+    after: { Name: account.name, "Opening balance": formatPrice(account.openingBalance) },
+  });
+  return account;
+}
+
+/** Turns an account on or off - requires "settings:edit". At least one account has to stay on. */
+export async function setAccountDisabled(id: string, disabled: boolean): Promise<string | null> {
+  const response = await fetch(`${API_URL}/accounts/${id}/status`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ disabled }),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  const account = toAccount((await response.json()) as AccountResponse);
+  logAudit({
+    action: "updated",
+    module: "Accounts",
+    entity: "Account",
+    label: account.name,
+    before: { Status: disabled ? "Active" : "Disabled" },
+    after: { Status: disabled ? "Disabled" : "Active" },
   });
   return null;
 }
 
-export function editAccount(id: string, name: string, opening: number): string | null {
-  const clean = name.trim();
-  if (clean === "") return "Enter the account's name.";
-  if (
-    accounts.some(
-      (account) => account.id !== id && account.name.toLowerCase() === clean.toLowerCase(),
-    )
-  ) {
-    return "An account with this name already exists.";
+/** Lists this store's transfer history - requires at least "settings:view". */
+export async function listTransfers(): Promise<Transfer[]> {
+  const storeId = await ensureStoreId();
+  const response = await fetch(`${API_URL}/account-transfers?storeId=${storeId}`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    throw new Error(await parseError(response));
   }
-  const previous = accounts.find((account) => account.id === id);
-  accounts = accounts.map((account) =>
-    account.id === id ? { ...account, name: clean, opening: round(opening) } : account,
-  );
-  syncOptions();
-  if (previous) {
-    logAudit({
-      action: "updated",
-      module: "Accounts",
-      entity: "Account",
-      label: clean,
-      before: { Name: previous.name, "Opening balance": formatPrice(previous.opening) },
-      after: { Name: clean, "Opening balance": formatPrice(round(opening)) },
-    });
-  }
-  return null;
+  const data = (await response.json()) as TransferResponse[];
+  return data.map(toTransfer);
 }
 
-/** Turns an account off or back on. At least one account has to stay on. */
-export function setAccountDisabled(id: string, disabled: boolean): string | null {
-  if (
-    disabled &&
-    accounts.filter((account) => !account.disabled && account.id !== id).length === 0
-  ) {
-    return "At least one account has to stay on.";
-  }
-  const previous = accounts.find((account) => account.id === id);
-  accounts = accounts.map((account) => (account.id === id ? { ...account, disabled } : account));
-  syncOptions();
-  if (previous) {
-    logAudit({
-      action: "updated",
-      module: "Accounts",
-      entity: "Account",
-      label: previous.name,
-      before: { Status: previous.disabled ? "Disabled" : "Active" },
-      after: { Status: disabled ? "Disabled" : "Active" },
-    });
-  }
-  return null;
+/** The active accounts, shaped for a Select. */
+export function accountOptions(accounts: Account[]): { value: string; label: string }[] {
+  return accounts
+    .filter((account) => account.status === "active")
+    .map((account) => ({ value: account.id, label: account.name }));
 }
 
-export function removeAccount(id: string): void {
-  accounts = accounts.filter((account) => account.id !== id);
-  syncOptions();
+export interface TransferInput {
+  fromAccountId: string;
+  toAccountId: string;
+  amount: number;
+  date: string;
+  note?: string;
 }
 
-export function addTransfer(input: Omit<Transfer, "id">): Transfer {
-  const transfer: Transfer = { ...input, id: `tr-${Date.now()}` };
-  transfers = [transfer, ...transfers];
-  const nameOf = (id: string) => accounts.find((account) => account.id === id)?.name ?? id;
+/**
+ * Moves money between two of this store's own accounts - requires
+ * "settings:edit". The database rejects it outright if the source account
+ * doesn't have enough balance (see account_transfers' own trigger); this
+ * never pre-checks that itself. Returns the new transfer, or an error message.
+ */
+export async function addTransfer(input: TransferInput): Promise<Transfer | string> {
+  const storeId = await ensureStoreId();
+  const response = await fetch(`${API_URL}/account-transfers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ storeId, ...input }),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  const transfer = toTransfer((await response.json()) as TransferResponse);
+  const nameOf = (id: string, accounts: Account[]) =>
+    accounts.find((account) => account.id === id)?.name ?? id;
+  const accounts = await listAccounts();
   logAudit({
     action: "created",
     module: "Accounts",
     entity: "Transfer",
-    label: `${nameOf(transfer.fromId)} to ${nameOf(transfer.toId)}`,
+    label: `${nameOf(transfer.fromAccountId, accounts)} to ${nameOf(transfer.toAccountId, accounts)}`,
     before: null,
     after: {
-      From: nameOf(transfer.fromId),
-      To: nameOf(transfer.toId),
+      From: nameOf(transfer.fromAccountId, accounts),
+      To: nameOf(transfer.toAccountId, accounts),
       Amount: formatPrice(transfer.amount),
-      Note: transfer.note ?? null,
+      Note: transfer.note,
     },
   });
   return transfer;
 }
 
-// ------------------------------------------------------------------ balances
+// ------------------------------------------------------------------ activity
 
 export interface Movement {
   date: string;
@@ -190,90 +245,29 @@ export interface Movement {
 }
 
 /**
- * Every rupee that has moved through an account: sales taken in, refunds to
- * customers out, payments to vendors out, refunds from vendors in, expenses
- * out, and transfers either way. An account's balance is its opening balance plus these.
+ * Every rupee that has moved through an account, as far as this app can
+ * currently see. Right now that's transfers only - sales, expenses and
+ * purchase payments have no backend wired to an account yet (see their
+ * own screens' notes), so they add nothing here until those capabilities
+ * exist. balance itself is never computed from this list - it's the
+ * database's own running total - this is only for the activity feed.
  */
-export async function accountMovements(): Promise<Movement[]> {
-  const [sales, purchases, expenses, collections, customers] = await Promise.all([
-    listSales(),
-    listPurchases(),
-    listExpenses(),
-    listCollections(),
-    listCustomers(),
-  ]);
-  const movements: Movement[] = [];
-
-  for (const sale of sales) {
-    for (const payment of sale.payments) {
-      if (payment.amount > 0 && payment.accountId) {
-        movements.push({
-          date: sale.date,
-          accountId: payment.accountId,
-          amount: payment.amount,
-          label: `Sale ${sale.number} · ${sale.customerName}`,
-        });
-      }
-    }
-    for (const ret of sale.returns ?? []) {
-      if (ret.refund.mode === "money" && ret.refund.accountId) {
-        movements.push({
-          date: ret.date,
-          accountId: ret.refund.accountId,
-          amount: -ret.refund.amount,
-          label: `Refund ${ret.number} · ${sale.customerName}`,
-        });
-      }
-    }
-  }
-
-  // Purchases no longer carry payments/returns at all (purchases.ts was
-  // rewired to the real API, which has no backend for either yet) - so
-  // there's nothing to add here until that capability exists. Previously
-  // this looped purchase.payments/.returns, both now gone.
-  void purchases;
-
-  for (const expense of expenses) {
-    movements.push({
-      date: expense.date,
-      accountId: expense.accountId,
-      amount: -expense.total,
-      label: `Expense · ${expense.payee ?? expense.lines[0]?.category ?? "bill"}${expense.lines.length > 1 ? ` · ${expense.lines.length} items` : expense.lines[0] ? ` · ${expense.lines[0].category}` : ""}`,
-    });
-  }
-
-  for (const collection of collections) {
-    movements.push({
-      date: collection.date,
-      accountId: collection.accountId,
-      amount: collection.amount,
-      label: `Dues collected · ${customers.find((customer) => customer.id === collection.customerId)?.name ?? "customer"}`,
-    });
-  }
-
+export function transferMovements(accounts: Account[], transfers: Transfer[]): Movement[] {
   const nameOf = (id: string) => accounts.find((account) => account.id === id)?.name ?? id;
+  const movements: Movement[] = [];
   for (const transfer of transfers) {
     movements.push({
       date: transfer.date,
-      accountId: transfer.fromId,
+      accountId: transfer.fromAccountId,
       amount: -transfer.amount,
-      label: `Transfer to ${nameOf(transfer.toId)}${transfer.note ? ` · ${transfer.note}` : ""}`,
+      label: `Transfer to ${nameOf(transfer.toAccountId)}${transfer.note ? ` · ${transfer.note}` : ""}`,
     });
     movements.push({
       date: transfer.date,
-      accountId: transfer.toId,
+      accountId: transfer.toAccountId,
       amount: transfer.amount,
-      label: `Transfer from ${nameOf(transfer.fromId)}${transfer.note ? ` · ${transfer.note}` : ""}`,
+      label: `Transfer from ${nameOf(transfer.fromAccountId)}${transfer.note ? ` · ${transfer.note}` : ""}`,
     });
   }
-
   return movements.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-}
-
-export function balanceOf(account: Account, movements: Movement[]): number {
-  return round(
-    movements
-      .filter((movement) => movement.accountId === account.id)
-      .reduce((sum, movement) => sum + movement.amount, account.opening),
-  );
 }

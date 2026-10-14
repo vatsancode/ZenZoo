@@ -4,13 +4,7 @@ import { useTheme } from "@zenzoo/design-tokens";
 import { Badge, Card, textStyle } from "@zenzoo/ui-web";
 import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import {
-  accountMovements,
-  balanceOf,
-  listAccounts,
-  type Account,
-  type Movement,
-} from "../features/settings/accounts";
+import { listAccounts, type Account } from "../features/settings/accounts";
 import {
   categoryBreakdown,
   changePercent,
@@ -93,19 +87,17 @@ export default function DashboardScreen() {
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [catalogue, setCatalogue] = useState<CatalogueItem[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [movements, setMovements] = useState<Movement[]>([]);
   const [collections, setCollections] = useState<DueCollection[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     async function load() {
-      const [s, e, p, pu, a, m, c, col] = await Promise.all([
+      const [s, e, p, pu, a, c, col] = await Promise.all([
         listSales(),
         listExpenses(),
         listProducts(),
         listPurchases(),
         listAccounts(),
-        accountMovements(),
         listCatalogueItems(),
         listCollections(),
       ]);
@@ -115,7 +107,6 @@ export default function DashboardScreen() {
       setProducts([...p]);
       setPurchases([...pu]);
       setAccounts([...a]);
-      setMovements(m);
       setCatalogue([...c]);
       setLoaded(true);
     }
@@ -151,7 +142,7 @@ export default function DashboardScreen() {
     [sales, collections],
   );
   const owed = useMemo(() => owedToVendors(purchases), [purchases]);
-  const cash = accounts.reduce((sum, account) => sum + balanceOf(account, movements), 0);
+  const cash = accounts.reduce((sum, account) => sum + account.balance, 0);
   const periodLabel = describeRange(range).toLowerCase();
 
   /** "▲ 12.4% vs the 7 days before", coloured by whether the change is good. */
@@ -274,7 +265,7 @@ export default function DashboardScreen() {
               >
                 <span style={{ ...textStyle("body"), color: colors.ink }}>{account.name}</span>
                 <span style={{ ...textStyle("data"), color: colors.ink }}>
-                  {formatPrice(balanceOf(account, movements))}
+                  {formatPrice(account.balance)}
                 </span>
               </div>
             ))}

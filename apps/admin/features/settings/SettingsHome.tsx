@@ -4,10 +4,11 @@ import { useTheme } from "@zenzoo/design-tokens";
 import { Icon, textStyle, useThemePreference, type IconName } from "@zenzoo/ui-web";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { accountMovements, balanceOf, listAccounts } from "./accounts";
-import { listCategories, listUnits } from "../../lib/catalogue";
+import { listAccounts } from "./accounts";
+import { listCategories } from "../../lib/catalogue";
 import { listAuditEntries } from "../../lib/audit";
-import { listPaymentMethods } from "../../lib/payment-options";
+import { listPaymentMethods } from "./paymentMethods";
+import { listUnits } from "./units";
 import { listRoles } from "./roles";
 import { listUsers } from "./userDirectory";
 import { listExpenseCategories } from "../expenses/expenses";
@@ -36,26 +37,28 @@ export default function SettingsHome() {
     total: 0,
     users: 0,
     roles: 0,
+    methodsOn: 0,
   });
 
   useEffect(() => {
     async function load() {
-      const [categories, units, accounts, movements, users, roles] = await Promise.all([
+      const [categories, units, accounts, users, roles, methods] = await Promise.all([
         listCategories(),
         listUnits(),
         listAccounts(),
-        accountMovements(),
         listUsers(),
         listRoles(),
+        listPaymentMethods(),
       ]);
       setCounts({
         categories: categories.length,
         subcategories: categories.reduce((sum, category) => sum + category.subcategories.length, 0),
         units: units.length,
         accounts: accounts.length,
-        total: accounts.reduce((sum, account) => sum + balanceOf(account, movements), 0),
+        total: accounts.reduce((sum, account) => sum + account.balance, 0),
         users: users.length,
         roles: roles.length,
+        methodsOn: methods.filter((method) => method.status === "active").length,
       });
     }
     void load();
@@ -118,7 +121,7 @@ export default function SettingsHome() {
       icon: "card",
       name: "Payment methods",
       description: "Choose which ways of paying are offered: Cash, UPI, Card and Bank.",
-      detail: `${listPaymentMethods().filter((method) => method.enabled).length} on`,
+      detail: `${counts.methodsOn} on`,
     },
     {
       href: "/settings/users",

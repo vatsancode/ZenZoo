@@ -4,7 +4,6 @@ import { useTheme } from "@zenzoo/design-tokens";
 import { Button, DatePicker, IconButton, Input, Modal, Select, textStyle } from "@zenzoo/ui-web";
 import type { ReactNode } from "react";
 import { today } from "../../lib/date-ranges";
-import { PAYMENT_ACCOUNT_OPTIONS, PAYMENT_METHOD_OPTIONS } from "../../lib/payment-options";
 
 /** A payment as typed: the amount stays a string until it is saved. */
 export interface PayRow {
@@ -55,6 +54,9 @@ interface PaymentsModalProps {
   footerNote: ReactNode;
   doneLabel: string;
   onDone: () => void;
+  /** The active payment methods/accounts to choose from - fetched by the caller, live. */
+  methodOptions: { value: string; label: string }[];
+  accountOptions: { value: string; label: string }[];
 }
 
 // More rows than this and the list scrolls inside the popup instead of growing it.
@@ -79,6 +81,8 @@ export default function PaymentsModal({
   footerNote,
   doneLabel,
   onDone,
+  methodOptions,
+  accountOptions,
 }: PaymentsModalProps) {
   const { colors, spacing } = useTheme();
 
@@ -171,7 +175,7 @@ export default function PaymentsModal({
                     onChange={(event) => update(index, { amount: event.target.value })}
                   />
                   <Select
-                    options={PAYMENT_METHOD_OPTIONS}
+                    options={methodOptions}
                     value={row.method}
                     placeholder="Method"
                     searchable={false}
@@ -180,7 +184,7 @@ export default function PaymentsModal({
                     onChange={(next) => update(index, { method: next })}
                   />
                   <Select
-                    options={PAYMENT_ACCOUNT_OPTIONS}
+                    options={accountOptions}
                     value={row.accountId}
                     placeholder="Account"
                     searchable={false}

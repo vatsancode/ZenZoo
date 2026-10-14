@@ -14,11 +14,19 @@ import {
 } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { addStock, editProduct, listProducts, saveProducts, type AddStockInput, type Product } from "./stocks";
-import { listRealProducts, type RealProduct } from "../../lib/realProducts";
+import {
+  createProduct,
+  listRealProducts,
+  updateProduct,
+  updateProductUnit,
+  updateVariant,
+  type RealProduct,
+} from "../../lib/realProducts";
 import { listCurrentStock } from "../../lib/realStock";
 import { formatPrice, stockStatus } from "../../lib/stock-display";
-import AddStockSheet from "../../components/AddStockSheet";
+import { listCategoriesFlat, type CategoryResponse } from "../../lib/catalogue";
+import { listUnits, unitOptions, type Unit as RealUnit } from "../settings/units";
+import AddStockSheet, { type StockFormInput } from "../../components/AddStockSheet";
 
 // A single price, or "low - high" when a product's variants are priced differently.
 function priceLabel(product: RealProduct): string {
@@ -42,22 +50,28 @@ function productHref(product: RealProduct): string {
 export default function StocksTable() {
   const { colors, spacing } = useTheme();
   const [products, setProducts] = useState<RealProduct[] | null>(null);
-  const [stock, setStock] = useState<Record<string, number>>({});
+  // null while loading - distinct from an empty {}, so a row with real
+  // stock can't flash "Out of stock" before the real count has arrived.
+  const [stock, setStock] = useState<Record<string, number> | null>(null);
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [addOpen, setAddOpen] = useState(false);
-  const [editing, setEditing] = useState<Product | null>(null);
+  const [editing, setEditing] = useState<RealProduct | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  // The mock catalogue, kept only to feed AddStockSheet - see this file's
-  // own note on why Add/Edit still targets it while the list above is real.
-  const [mockProducts, setMockProducts] = useState<Product[]>([]);
+  const [units, setUnits] = useState<RealUnit[]>([]);
+  const [categories, setCategories] = useState<CategoryResponse[]>([]);
+
+  function refresh() {
+    listRealProducts().then(setProducts);
+  }
 
   useEffect(() => {
-    listRealProducts().then(setProducts);
+    refresh();
     listCurrentStock().then(setStock);
-    listProducts().then(setMockProducts);
+    listUnits().then(setUnits);
+    listCategoriesFlat().then(setCategories);
   }, []);
 
   useEffect(() => {
@@ -71,26 +85,72 @@ export default function StocksTable() {
     setEditing(null);
   }
 
-  // One sheet serves both: adding a new product, or editing the clicked row.
-  // Both still only ever touch the mock catalogue (see this file's own
-  // note) - they never affect what the real table above is showing.
-  function handleSubmit(input: AddStockInput): { sku: string; error: string } | null {
-    const result = editing
-      ? editProduct(mockProducts, editing.id, input)
-      : addStock(mockProducts, input);
-    if (!result.ok) return { sku: result.sku, error: result.error };
-    setMockProducts(result.products);
-    saveProducts(result.products);
+  // Editing a product that has only its one starting variant edits both the
+  // product (name/category) and that variant (SKU/price) - a real
+  // multi-variant product only ever has its name/category touched here, the
+  // rest stays on the variants page, same as the form itself already shows.
+  // Unit is the one field that's genuinely product-wide: changing it bulk-
+  // updates every variant, regardless of how many there are.
+  async function handleSubmit(input: StockFormInput): Promise<{ sku: string; error: string } | null> {
+    if (editing) {
+      const productResult = await updateProduct(editing.id, {
+        name: input.name,
+        categoryId: input.categoryId,
+      });
+      if (typeof productResult === "string") return { sku: input.sku, error: productResult };
+
+      if (input.unitId !== editing.variants[0]?.unitId) {
+        const unitResult = await updateProductUnit(editing.id, input.unitId);
+        if (typeof unitResult === "string") return { sku: input.sku, error: unitResult };
+      }
+
+      if (editing.variantCount === 1) {
+        const soleVariant = editing.variants[0]!;
+        const variantResult = await updateVariant(soleVariant.id, {
+          name: input.name,
+          sku: input.sku || undefined,
+          basePrice: input.price,
+        });
+        if (typeof variantResult === "string") return { sku: input.sku, error: variantResult };
+      }
+
+      closeSheet();
+      setNotice(`${input.name} updated.`);
+      refresh();
+      return null;
+    }
+
+    const result = await createProduct({
+      name: input.name,
+      variantName: input.hasVariants ? input.variantName : undefined,
+      sku: input.sku || undefined,
+      basePrice: input.price,
+      unitId: input.unitId,
+      categoryId: input.categoryId,
+      openingQuantity: input.openingQuantity || undefined,
+      openingUnitCost: input.openingQuantity ? input.openingUnitCost : undefined,
+    });
+    if (typeof result === "string") return { sku: input.sku, error: result };
+
     closeSheet();
-    const { product } = result;
-    setNotice(
-      `${product.name} ${editing ? "updated" : "added"} in the sample catalogue (not the list below yet).`,
+    // Route by what was asked for (the toggle), not the variant count a
+    // freshly-created product happens to have - "Has variants" on still
+    // only creates the one, first variant, same count as "off" would, so
+    // the count alone can't tell them apart yet.
+    router.push(
+      input.hasVariants
+        ? `/stocks/${encodeURIComponent(result.id)}/variants`
+        : `/stocks/${encodeURIComponent(result.id)}/current-stock?variant=${encodeURIComponent(result.variants[0]!.id)}`,
     );
     return null;
   }
 
+  const existingNames = (products ?? [])
+    .filter((product) => product.id !== editing?.id)
+    .map((product) => product.name);
+
   const onHandFor = (product: RealProduct) =>
-    product.variants.reduce((sum, variant) => sum + (stock[variant.id] ?? 0), 0);
+    product.variants.reduce((sum, variant) => sum + (stock?.[variant.id] ?? 0), 0);
 
   const filtered = useMemo(() => {
     if (!products) return [];
@@ -132,12 +192,15 @@ export default function StocksTable() {
     {
       key: "quantity",
       header: "Stock",
-      render: (product) => <span style={textStyle("data")}>{onHandFor(product)}</span>,
+      render: (product) => (
+        <span style={textStyle("data")}>{stock ? onHandFor(product) : "..."}</span>
+      ),
     },
     {
       key: "status",
       header: "Status",
       render: (product) => {
+        if (!stock) return null;
         const status = stockStatus(onHandFor(product));
         return <Badge tone={status.tone}>{status.label}</Badge>;
       },
@@ -153,13 +216,7 @@ export default function StocksTable() {
           label={`Edit ${product.name}`}
           onClick={(event) => {
             event.stopPropagation();
-            // There's no real id->mock id mapping, so this is a best-effort
-            // name match into the sample catalogue, same "wired to the mock
-            // anyway" tradeoff as the rest of this file - matches nothing
-            // and opens as Add when no mock product shares this name.
-            const match = mockProducts.find((row) => row.name === product.name) ?? null;
-            setEditing(match);
-            if (!match) setAddOpen(true);
+            setEditing(product);
           }}
         />
       ),
@@ -223,8 +280,10 @@ export default function StocksTable() {
       )}
       <AddStockSheet
         open={addOpen || editing !== null}
-        products={mockProducts}
+        existingNames={existingNames}
         product={editing}
+        unitOptions={unitOptions(units)}
+        categories={categories}
         onClose={closeSheet}
         onSubmit={handleSubmit}
       />

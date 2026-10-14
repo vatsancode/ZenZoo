@@ -5,6 +5,7 @@ export * from "./DatePicker";
 export * from "./Modal";
 export * from "./Sheet";
 export * from "./Switch";
+export * from "./Checkbox";
 export * from "./Tabs";
 export * from "./Chips";
 export * from "./Pagination";

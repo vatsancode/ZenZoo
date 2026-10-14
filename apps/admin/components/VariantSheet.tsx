@@ -1,15 +1,10 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Button, Input, Select, Sheet } from "@zenzoo/ui-web";
+import { Button, Input, Sheet } from "@zenzoo/ui-web";
 import { useEffect, useState, type KeyboardEvent } from "react";
 import { priceProblem, quantityProblem, toPrice } from "../features/stocks/stock-validation";
-import {
-  UNIT_OPTIONS,
-  type Unit,
-  type Variant,
-  type VariantInput,
-} from "../features/stocks/stocks";
+import type { Variant, VariantInput } from "../features/stocks/stocks";
 import FormField from "./FormField";
 
 interface VariantSheetProps {
@@ -18,8 +13,6 @@ interface VariantSheetProps {
   variant: Variant | null;
   /** Names of the product's other variants, so a name can't be used twice. */
   existingNames: string[];
-  /** Unit pre-selected when adding. */
-  defaultUnit?: Unit;
   /** Lets a new variant start with no stock, e.g. when it's added from a purchase. */
   allowZeroStock?: boolean;
   onClose: () => void;
@@ -30,14 +23,7 @@ interface VariantSheetProps {
 }
 
 // Enter moves to the next field, or saves from the last one.
-const ORDER = [
-  "variant-name",
-  "variant-sku",
-  "variant-price",
-  "variant-purchase-price",
-  "variant-quantity",
-  "variant-unit",
-];
+const ORDER = ["variant-name", "variant-sku", "variant-price", "variant-purchase-price", "variant-quantity"];
 
 function focusField(id: string) {
   document.getElementById(id)?.focus();
@@ -47,7 +33,6 @@ export default function VariantSheet({
   open,
   variant,
   existingNames,
-  defaultUnit = "pcs",
   allowZeroStock = false,
   onClose,
   onSubmit,
@@ -58,7 +43,6 @@ export default function VariantSheet({
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
   const [quantity, setQuantity] = useState("");
-  const [unit, setUnit] = useState<Unit>("pcs");
   const [price, setPrice] = useState("");
   const [purchasePrice, setPurchasePrice] = useState("");
   const [skuError, setSkuError] = useState<{ sku: string; message: string } | null>(null);
@@ -70,7 +54,6 @@ export default function VariantSheet({
       setName("");
       setSku("");
       setQuantity("");
-      setUnit(defaultUnit);
       setPrice("");
       setPurchasePrice("");
       setSkuError(null);
@@ -80,10 +63,9 @@ export default function VariantSheet({
       setName(variant.name);
       setSku(variant.sku);
       setQuantity(String(variant.quantity));
-      setUnit(variant.unit);
       setPrice(variant.price ? String(variant.price) : "");
     }
-  }, [open, variant, defaultUnit]);
+  }, [open, variant]);
 
   const nameTaken = existingNames.some(
     (existing) => existing.trim().toLowerCase() === name.trim().toLowerCase(),
@@ -94,7 +76,11 @@ export default function VariantSheet({
       : nameTaken
         ? "This product already has a variant with this name."
         : null;
-  const quantityError = quantityProblem(quantity, unit, isEditing || allowZeroStock);
+  // Quantity isn't asked for when editing - stock only ever changes through
+  // a real movement (see Record movement), never a bare field edit. Unit
+  // no longer matters for validation here either - every variant under a
+  // product shares the product's own unit, chosen elsewhere.
+  const quantityError = isEditing ? null : quantityProblem(quantity, "", allowZeroStock);
   const priceError = priceProblem(price);
   // Purchase price is only asked for when adding; editing leaves it as it was.
   const purchasePriceError = isEditing ? null : priceProblem(purchasePrice);
@@ -111,7 +97,8 @@ export default function VariantSheet({
       name,
       sku,
       quantity: Number(quantity),
-      unit,
+      // Unit is inherited from the product, not picked here - see createVariant/setProductUnit.
+      unit: variant?.unit ?? "",
       price: toPrice(price),
       purchasePrice: variant ? variant.purchasePrice : toPrice(purchasePrice),
     });
@@ -122,7 +109,9 @@ export default function VariantSheet({
     }
   }
 
-  const order = isEditing ? ORDER.filter((id) => id !== "variant-purchase-price") : ORDER;
+  const order = isEditing
+    ? ORDER.filter((id) => id !== "variant-purchase-price" && id !== "variant-quantity")
+    : ORDER;
   function enterFrom(id: string) {
     return (event: KeyboardEvent<HTMLElement>) => {
       if (event.key !== "Enter") return;
@@ -240,32 +229,25 @@ export default function VariantSheet({
             </FormField>
           )}
 
-          <FormField
-            id="variant-quantity"
-            label="AVAILABLE"
-            span={6}
-            error={touched ? quantityError : null}
-          >
-            <Input
+          {isEditing ? null : (
+            <FormField
               id="variant-quantity"
-              inputMode="decimal"
-              autoComplete="off"
-              placeholder="0"
-              value={quantity}
-              aria-invalid={touched && quantityError ? true : undefined}
-              onChange={(event) => setQuantity(event.target.value)}
-              onKeyDown={enterFrom("variant-quantity")}
-            />
-          </FormField>
-          <FormField id="variant-unit" label="UNIT" span={6}>
-            <Select
-              id="variant-unit"
-              options={UNIT_OPTIONS}
-              value={unit}
-              onChange={(next) => setUnit(next as Unit)}
-              onKeyDown={enterFrom("variant-unit")}
-            />
-          </FormField>
+              label="AVAILABLE"
+              span={12}
+              error={touched ? quantityError : null}
+            >
+              <Input
+                id="variant-quantity"
+                inputMode="decimal"
+                autoComplete="off"
+                placeholder="0"
+                value={quantity}
+                aria-invalid={touched && quantityError ? true : undefined}
+                onChange={(event) => setQuantity(event.target.value)}
+                onKeyDown={enterFrom("variant-quantity")}
+              />
+            </FormField>
+          )}
         </div>
       </form>
     </Sheet>

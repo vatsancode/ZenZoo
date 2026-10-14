@@ -9,10 +9,13 @@ export interface UpdateVariantInput {
   name: string;
   sku?: string;
   basePrice: number;
-  unit?: string;
 }
 
-/** Edits one variant's name/SKU/price/unit. Status is a separate capability - see setVariantStatus. */
+/**
+ * Edits one variant's name/SKU/price. Status is a separate capability - see
+ * setVariantStatus. Unit isn't editable here at all - every variant under a
+ * product shares one, changed for all of them at once by setProductUnit.
+ */
 export const updateVariant = defineCapability<UpdateVariantInput, ProductDto>({
   name: "updateVariant",
   kind: "action",
@@ -37,7 +40,6 @@ export const updateVariant = defineCapability<UpdateVariantInput, ProductDto>({
             name,
             sku: input.sku?.trim() || null,
             base_price: input.basePrice,
-            unit: input.unit?.trim() || "pcs",
           },
         });
 

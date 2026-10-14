@@ -2,28 +2,26 @@
 
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Notice, Tabs, textStyle } from "@zenzoo/ui-web";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { NEW_BATCH_ID, type Batch, type Movement, type MovementType, type StockItem } from "./stock-history";
+import { createVariant, listRealProducts, type RealProduct } from "../../lib/realProducts";
 import {
-  MOVEMENT_ACTIONS,
-  NEW_BATCH_ID,
-  makeBatchBarcode,
-  nextBatchNo,
-  type Batch,
-  type Movement,
-  type RecordedMovement,
-  type StockItem,
-} from "./stock-history";
-import { listRealProducts, type RealProduct } from "../../lib/realProducts";
-import { listCurrentStock, listInventoryBatches, listStockMovements } from "../../lib/realStock";
+  listCurrentStock,
+  listInventoryBatches,
+  listStockMovements,
+  recordMovement,
+} from "../../lib/realStock";
 import { listPurchases, purchaseLinesForVariant, type Purchase } from "../purchases/purchases";
 import { listVendors, type Vendor } from "../vendors/vendors";
-import { today } from "../../lib/date-ranges";
 import CurrentBatchesTab from "./CurrentBatchesTab";
 import PageHeader from "../../components/PageHeader";
 import PurchaseHistoryTab from "./PurchaseHistoryTab";
 import RecordMovementSheet, { type MovementInput } from "./RecordMovementSheet";
 import StockMovementsTab from "./StockMovementsTab";
 import StockOverviewTab from "./StockOverviewTab";
+import VariantSheet from "../../components/VariantSheet";
+import type { VariantInput } from "./stocks";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -32,12 +30,34 @@ const TABS = [
   { id: "movements", label: "Stock movements" },
 ];
 
+// The real ledger's own movement_type values to this UI's display type -
+// every real type this screen can currently show; anything else (SOLD,
+// DAMAGED, ...) has no real write path yet, so isn't listed here rather
+// than guessed at. ADJUSTMENT_IN/OUT cover every hand-recorded change
+// (add, remove, and both directions of a count correction) - the database
+// only distinguishes the direction, not which of the three Record Movement
+// actions produced it.
+const MOVEMENT_TYPE_LABEL: Record<string, MovementType> = {
+  PURCHASED: "Purchased",
+  OPENING_STOCK: "Opening stock",
+  ADJUSTMENT_IN: "Added",
+  ADJUSTMENT_OUT: "Used/out",
+};
+
+// Mirrors the database's stock_movement_sign() - stock_movements only ever
+// stores a positive quantity; direction comes from the type.
+const MOVEMENT_SIGN: Record<string, 1 | -1> = {
+  PURCHASED: 1,
+  OPENING_STOCK: 1,
+  ADJUSTMENT_IN: 1,
+  ADJUSTMENT_OUT: -1,
+};
+
 /**
  * Stock for one real variant. Overview/Batches/Purchases/Movements all show
- * real data (inventory_batches, stock_movements, purchase_items). Record
- * Movement still opens and "works," but only against this screen's own
- * local state - it was never wired to a real write capability, and nothing
- * here changes that; see handleRecord's own note.
+ * real data (inventory_batches, stock_movements, purchase_items), and
+ * Record Movement writes real data too, via recordMovement - see
+ * handleRecord.
  */
 export default function CurrentStockView({
   productId,
@@ -47,6 +67,7 @@ export default function CurrentStockView({
   variantId?: string;
 }) {
   const { colors, spacing } = useTheme();
+  const router = useRouter();
   const [products, setProducts] = useState<RealProduct[] | undefined>(undefined);
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -56,13 +77,13 @@ export default function CurrentStockView({
 
   const [tab, setTab] = useState("current");
   const [recording, setRecording] = useState(false);
+  const [addingVariant, setAddingVariant] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  // Local-only: seeded from real data once it loads, then mutated purely on
-  // screen by Record Movement. Never written back to the server.
+  // Re-fetched from the server whenever stockMap changes - including right
+  // after Record Movement writes a real change, see handleRecord.
   const [localQuantity, setLocalQuantity] = useState<number | null>(null);
   const [localBatches, setLocalBatches] = useState<Batch[]>([]);
-  const [recorded, setRecorded] = useState<RecordedMovement[]>([]);
 
   useEffect(() => {
     listRealProducts().then(setProducts);
@@ -84,7 +105,6 @@ export default function CurrentStockView({
   useEffect(() => {
     if (!variant) return;
     setLocalQuantity(stockMap[variant.id] ?? 0);
-    setRecorded([]);
     listInventoryBatches(variant.id).then((batches) => {
       setLocalBatches(
         batches.map((batch) => ({
@@ -103,9 +123,9 @@ export default function CurrentStockView({
         movements.map((movement) => ({
           id: movement.id,
           date: movement.occurredAt.slice(0, 10),
-          type: "Purchased",
-          reference: movement.referenceType ?? "-",
-          quantity: movement.quantity,
+          type: MOVEMENT_TYPE_LABEL[movement.movementType] ?? "Purchased",
+          reference: movement.reason ?? movement.referenceType ?? "-",
+          quantity: (MOVEMENT_SIGN[movement.movementType] ?? 1) * movement.quantity,
           amount: null,
         })),
       );
@@ -126,7 +146,7 @@ export default function CurrentStockView({
     variant && localQuantity !== null
       ? {
           sku: variant.sku ?? variant.id,
-          unit: "pcs",
+          unit: variant.unit,
           quantity: localQuantity,
           price: Number(variant.basePrice),
           purchasePrice: latestUnitCost,
@@ -135,104 +155,43 @@ export default function CurrentStockView({
 
   const batchesWithStock = useMemo(() => localBatches.filter((batch) => batch.remaining > 0), [localBatches]);
 
-  // Moves the item's local stock (and one local batch's) up or down and logs it - never reaches the server.
-  function applyMovement(movement: Omit<RecordedMovement, "id" | "date" | "amount" | "sku">) {
-    if (!item || !variant) return;
-    setRecorded((current) => [
-      { ...movement, id: `local-${Date.now()}`, date: today(), amount: null, sku: variant.id },
-      ...current,
-    ]);
-    setLocalQuantity((current) => (current ?? 0) + movement.quantity);
-    setLocalBatches((current) => {
-      const existing = current.find((row) => row.id === movement.batchId);
-      if (!existing) {
-        if (!movement.newBatch) return current;
-        return [
-          {
-            id: movement.batchId,
-            batchNo: movement.batchNo,
-            barcode: movement.newBatch.barcode,
-            receivedOn: movement.newBatch.receivedOn,
-            received: movement.quantity,
-            remaining: movement.quantity,
-            unitCost: movement.newBatch.unitCost,
-          },
-          ...current,
-        ];
-      }
-      return current.map((row) =>
-        row.id === movement.batchId
-          ? { ...row, remaining: row.remaining + movement.quantity, received: Math.max(row.received, row.remaining + movement.quantity) }
-          : row,
-      );
-    });
-  }
-
-  function handleRecord(input: MovementInput) {
-    if (!item) return;
+  async function handleRecord(input: MovementInput): Promise<string | null> {
+    if (!variant) return null;
     const isNewBatch = input.batchId === NEW_BATCH_ID;
-    const existing = localBatches.find((row) => row.id === input.batchId);
-    if (!isNewBatch && !existing) return;
-
-    const quantity =
-      input.action === "remove"
-        ? -input.quantity
-        : input.action === "add"
-          ? input.quantity
-          : input.quantity - (existing?.remaining ?? 0);
-    const type = MOVEMENT_ACTIONS.find((row) => row.id === input.action)?.type ?? "Added";
-    const note = input.note.trim();
-    const reference =
-      input.action === "count"
-        ? `Stock count: ${existing?.remaining ?? 0} to ${input.quantity} - ${note}`
-        : note;
-
-    const todayDate = today();
-    const salt = Date.now();
-    const batchId = isNewBatch ? `local-batch-${salt}` : (existing?.id ?? "");
-    const batchNo = isNewBatch ? nextBatchNo(localBatches, todayDate) : (existing?.batchNo ?? "");
-
-    applyMovement({
-      type,
-      reference,
-      quantity,
-      batchId,
-      batchNo,
-      newBatch: isNewBatch
-        ? {
-            barcode: makeBatchBarcode(item.sku, salt),
-            receivedOn: todayDate,
-            unitCost: input.unitCost ?? item.purchasePrice,
-          }
-        : undefined,
+    const error = await recordMovement(variant.id, {
+      batchId: isNewBatch ? null : input.batchId,
+      action: input.action,
+      quantity: input.quantity,
+      unitCost: isNewBatch ? input.unitCost : undefined,
+      note: input.note.trim() || undefined,
     });
+    if (error) return error;
+
     setRecording(false);
-    setNotice(
-      isNewBatch
-        ? `${input.quantity} ${item.unit} added as new batch ${batchNo} (not saved to the server).`
-        : `${input.quantity} ${item.unit} ${quantity > 0 ? "added to" : "taken out of"} batch ${batchNo} (not saved to the server).`,
-    );
+    setNotice(isNewBatch ? `${input.quantity} ${item?.unit ?? ""} added as a new batch.` : "Stock updated.");
+    listCurrentStock().then(setStockMap);
+    return null;
   }
 
-  function handleUndo(movement: RecordedMovement) {
-    const batch = localBatches.find((row) => row.id === movement.batchId);
-    if (!batch) return;
-    if (batch.remaining - movement.quantity < 0) {
-      setNotice("That can't be undone: the stock it added has already gone out.");
-      return;
-    }
-    setRecorded((current) =>
-      current.map((row) => (row.id === movement.id ? { ...row, reversed: true } : row)),
-    );
-    applyMovement({
-      type: movement.type,
-      reference: `Undo: ${movement.reference}`,
-      quantity: -movement.quantity,
-      batchId: movement.batchId,
-      batchNo: movement.batchNo,
-      isReversal: true,
+  async function handleAddVariant(
+    input: VariantInput,
+  ): Promise<{ sku: string; error: string } | null> {
+    if (!product) return null;
+    const result = await createVariant(product.id, {
+      name: input.name,
+      sku: input.sku.trim() === "" ? undefined : input.sku,
+      basePrice: input.price,
+      openingQuantity: input.quantity || undefined,
+      openingUnitCost: input.quantity ? input.purchasePrice : undefined,
     });
-    setNotice(`Undone: ${movement.reference}`);
+    if (typeof result === "string") {
+      return { sku: input.sku, error: result };
+    }
+    setProducts((current) => current?.map((row) => (row.id === result.id ? result : row)));
+    setAddingVariant(false);
+    listCurrentStock().then(setStockMap);
+    router.push(`/stocks/${encodeURIComponent(product.id)}/variants`);
+    return null;
   }
 
   const backHref =
@@ -260,9 +219,14 @@ export default function CurrentStockView({
         backLabel={product && product.variants.length > 1 ? "Back to variants" : "Back to stocks"}
         action={
           item ? (
-            <Button variant="primary" onClick={() => setRecording(true)}>
-              Record movement
-            </Button>
+            <div style={{ display: "flex", gap: spacing[3] }}>
+              <Button variant="secondary" onClick={() => setAddingVariant(true)}>
+                Add variant
+              </Button>
+              <Button variant="primary" onClick={() => setRecording(true)}>
+                Record movement
+              </Button>
+            </div>
           ) : null
         }
       />
@@ -292,7 +256,7 @@ export default function CurrentStockView({
               <PurchaseHistoryTab item={item} purchases={purchaseLines} supplierName={supplierName} />
             ) : null}
             {tab === "movements" ? (
-              <StockMovementsTab item={item} recorded={recorded} historical={realMovements} onUndo={handleUndo} />
+              <StockMovementsTab item={item} movements={realMovements} />
             ) : null}
           </div>
           <RecordMovementSheet
@@ -302,6 +266,14 @@ export default function CurrentStockView({
             unit={item.unit}
             newBatchUnitCost={item.purchasePrice}
             onSubmit={handleRecord}
+          />
+          <VariantSheet
+            open={addingVariant}
+            variant={null}
+            existingNames={product?.variants.map((row) => row.name) ?? []}
+            allowZeroStock
+            onClose={() => setAddingVariant(false)}
+            onSubmit={handleAddVariant}
           />
         </>
       ) : null}

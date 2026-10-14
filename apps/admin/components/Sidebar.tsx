@@ -20,12 +20,12 @@ const navItems: NavItem[] = [
   { label: "Dashboard", href: "/" },
   { label: "Vendors", href: "/vendors" },
   { label: "Purchases", href: "/purchases" },
+  { label: "Stocks", href: "/stocks" },
   { label: "Expenses", href: "/expenses" },
   { label: "Catalogue", href: "/catalogue" },
   { label: "Point of Sale", href: "/point-of-sale" },
   { label: "Sales", href: "/sales" },
   { label: "Customers", href: "/customers" },
-  { label: "Stocks", href: "/stocks" },
   { label: "Settings", href: "/settings" },
   { label: "Style guide", href: "/style-guide" },
 ];

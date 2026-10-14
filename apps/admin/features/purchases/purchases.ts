@@ -227,6 +227,39 @@ export async function createPurchase(input: PurchaseInput): Promise<Purchase | s
   return toPurchase((await response.json()) as PurchaseResponse);
 }
 
+/**
+ * For a purchase that's already arrived - creates it straight at
+ * "received" with stock counted immediately, skipping draft and ordered.
+ * Requires "purchases:edit". Returns the new purchase, or an error message.
+ */
+export async function recordReceivedPurchase(input: PurchaseInput): Promise<Purchase | string> {
+  const storeId = await ensureStoreId();
+  const response = await fetch(`${API_URL}/purchases/received`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({
+      storeId,
+      supplierId: input.supplierId,
+      referenceNumber: input.reference,
+      purchaseDate: input.date,
+      adjustmentAmount: input.adjustment,
+      items: input.items.map((item) => ({
+        variantId: item.variantId,
+        quantity: item.quantity,
+        unitCost: item.unitCost,
+        discountAmount: item.discount ?? 0,
+        taxAmount: item.tax ?? 0,
+      })),
+    }),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  return toPurchase((await response.json()) as PurchaseResponse);
+}
+
 /** Rewrites a draft wholesale - only while still draft. Returns the updated purchase, or an error message. */
 export async function updatePurchase(id: string, input: PurchaseInput): Promise<Purchase | string> {
   const response = await fetch(`${API_URL}/purchases/${id}`, {
@@ -290,6 +323,86 @@ export async function receiveDelivery(
     return await parseError(response);
   }
   return toPurchase((await response.json()) as PurchaseResponse);
+}
+
+export interface PurchasePayment {
+  id: string;
+  paymentMethodId: string;
+  paymentAccountId: string;
+  amount: number;
+  date: string;
+  reference: string | null;
+  notes: string | null;
+}
+
+interface PurchasePaymentResponse {
+  id: string;
+  paymentMethodId: string;
+  paymentAccountId: string;
+  amount: string;
+  date: string;
+  reference: string | null;
+  notes: string | null;
+}
+
+function toPurchasePayment(response: PurchasePaymentResponse): PurchasePayment {
+  return {
+    id: response.id,
+    paymentMethodId: response.paymentMethodId,
+    paymentAccountId: response.paymentAccountId,
+    amount: Number(response.amount),
+    date: response.date,
+    reference: response.reference,
+    notes: response.notes,
+  };
+}
+
+/** Payments already recorded against this purchase - requires at least "purchases:view". */
+export async function listPurchasePayments(id: string): Promise<PurchasePayment[]> {
+  const response = await fetch(`${API_URL}/purchases/${id}/payments`, { credentials: "include" });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    throw new Error(await parseError(response));
+  }
+  const data = (await response.json()) as PurchasePaymentResponse[];
+  return data.map(toPurchasePayment);
+}
+
+export interface PurchasePaymentInput {
+  paymentMethodId: string;
+  paymentAccountId: string;
+  amount: number;
+  date: string;
+  reference?: string;
+  notes?: string;
+}
+
+/**
+ * Records a payment against this purchase and reduces the paying account's
+ * balance - requires "purchases:edit". The database rejects it outright if
+ * the purchase isn't ordered/received yet, or if the account can't afford
+ * it. Returns the new payment, or an error message.
+ */
+export async function createPurchasePayment(
+  id: string,
+  input: PurchasePaymentInput,
+): Promise<PurchasePayment | string> {
+  const response = await fetch(`${API_URL}/purchases/${id}/payments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  return toPurchasePayment((await response.json()) as PurchasePaymentResponse);
+}
+
+/** A payment can only be recorded once the order has been placed. */
+export function canPay(purchase: Purchase): boolean {
+  return purchase.status === "ordered" || purchase.status === "received";
 }
 
 /** The same supplier invoice can't be entered twice, unless the earlier one was cancelled. */
@@ -421,6 +534,16 @@ export function unitCredit(item: PurchaseItem): number {
 /** Units that arrived and have not gone back. */
 export function returnableOf(item: PurchaseItem): number {
   return Math.max(item.received - item.returned, 0);
+}
+
+/**
+ * Goods can go back once some have arrived and until all of them have been
+ * returned. Unlike the old mock, there's no separate "partially_received"
+ * status to check for here - "received" already covers both partial and
+ * full deliveries (fullyReceived distinguishes them), same as canReceive.
+ */
+export function canReturn(purchase: Purchase): boolean {
+  return purchase.status === "received" && purchase.items.some((item) => returnableOf(item) > 0);
 }
 
 export interface VariantPurchaseLine {

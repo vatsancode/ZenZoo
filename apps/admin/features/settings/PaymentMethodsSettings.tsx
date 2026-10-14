@@ -3,13 +3,12 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Card, Input, Modal, Notice, Switch, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
-import { logAudit } from "../../lib/audit";
 import {
   addPaymentMethod,
   listPaymentMethods,
   setPaymentMethodEnabled,
   type PaymentMethod,
-} from "../../lib/payment-options";
+} from "./paymentMethods";
 import PageHeader from "../../components/PageHeader";
 
 const NOTES: Record<string, string> = {
@@ -27,9 +26,14 @@ export default function PaymentMethodsSettings() {
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function reload() {
+    setMethods(await listPaymentMethods());
+  }
 
   useEffect(() => {
-    setMethods([...listPaymentMethods()]);
+    void reload();
   }, []);
 
   useEffect(() => {
@@ -38,48 +42,34 @@ export default function PaymentMethodsSettings() {
     return () => clearTimeout(timer);
   }, [message]);
 
-  function toggle(method: PaymentMethod, enabled: boolean) {
-    const error = setPaymentMethodEnabled(method.value, enabled);
+  async function toggle(method: PaymentMethod, enabled: boolean) {
+    const error = await setPaymentMethodEnabled(method.id, enabled);
     if (error) {
       setMessage(error);
       return;
     }
-    logAudit({
-      action: "updated",
-      module: "Settings",
-      entity: "Payment method",
-      label: method.label,
-      before: { Status: enabled ? "Off" : "On" },
-      after: { Status: enabled ? "On" : "Off" },
-    });
-    setMethods([...listPaymentMethods()]);
     setMessage(
       enabled
-        ? `${method.label} is on again.`
-        : `${method.label} is off. It no longer shows at the till; past sales keep it.`,
+        ? `${method.name} is on again.`
+        : `${method.name} is off. It no longer shows at the till; past sales keep it.`,
     );
+    void reload();
   }
 
-  function submitNew() {
-    const error = addPaymentMethod(newName);
-    if (error) {
-      setAddError(error);
+  async function submitNew() {
+    setSaving(true);
+    const result = await addPaymentMethod(newName);
+    setSaving(false);
+    if (typeof result === "string") {
+      setAddError(result);
       return;
     }
-    logAudit({
-      action: "created",
-      module: "Settings",
-      entity: "Payment method",
-      label: newName.trim(),
-      before: null,
-      after: { Status: "On" },
-    });
-    setMethods([...listPaymentMethods()]);
-    setMessage(`${newName.trim()} added and switched on.`);
+    setMessage(`${result.name} added and switched on.`);
     setAdding(false);
+    void reload();
   }
 
-  const onCount = methods.filter((method) => method.enabled).length;
+  const onCount = methods.filter((method) => method.status === "active").length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: spacing[6] }}>
@@ -108,7 +98,7 @@ export default function PaymentMethodsSettings() {
       <Card style={{ padding: `${spacing[2]}px ${spacing[6]}px` }}>
         {methods.map((method, index) => (
           <div
-            key={method.value}
+            key={method.id}
             style={{
               display: "flex",
               alignItems: "center",
@@ -118,23 +108,23 @@ export default function PaymentMethodsSettings() {
               borderTop: index === 0 ? "none" : `1px solid ${colors.border}`,
             }}
           >
-            <label htmlFor={`method-${method.value}`}>
+            <label htmlFor={`method-${method.id}`}>
               <div
                 style={{
                   ...textStyle("bodyMedium"),
-                  color: method.enabled ? colors.ink : colors.inkMuted,
+                  color: method.status === "active" ? colors.ink : colors.inkMuted,
                 }}
               >
-                {method.label}
+                {method.name}
               </div>
               <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
-                {NOTES[method.value] ?? "Added by you."}
+                {NOTES[method.code] ?? "Added by you."}
               </div>
             </label>
             <Switch
-              id={`method-${method.value}`}
-              checked={method.enabled}
-              onChange={(next) => toggle(method, next)}
+              id={`method-${method.id}`}
+              checked={method.status === "active"}
+              onChange={(next) => void toggle(method, next)}
             />
           </div>
         ))}
@@ -150,7 +140,7 @@ export default function PaymentMethodsSettings() {
           style={{ width: 420, maxWidth: "100%" }}
           onSubmit={(event) => {
             event.preventDefault();
-            submitNew();
+            void submitNew();
           }}
         >
           <div style={{ ...textStyle("title3"), color: colors.ink }}>Add payment method</div>
@@ -161,6 +151,7 @@ export default function PaymentMethodsSettings() {
               aria-label="Payment method name"
               placeholder="e.g. Cheque, Paytm wallet, Gift voucher"
               value={newName}
+              disabled={saving}
               onChange={(event) => {
                 setNewName(event.target.value);
                 setAddError(null);
@@ -183,11 +174,11 @@ export default function PaymentMethodsSettings() {
               marginTop: spacing[6],
             }}
           >
-            <Button type="button" variant="secondary" onClick={() => setAdding(false)}>
+            <Button type="button" variant="secondary" onClick={() => setAdding(false)} disabled={saving}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary">
-              Add
+            <Button type="submit" variant="primary" disabled={saving}>
+              {saving ? "Adding..." : "Add"}
             </Button>
           </div>
         </form>

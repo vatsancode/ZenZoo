@@ -8,6 +8,8 @@ import { signIn } from "./auth/signIn";
 import { SESSION_COOKIE_NAME } from "./auth/session";
 import { listTenants } from "./modules/platform/listTenants";
 import { provisionTenant, type ProvisionTenantInput } from "./modules/platform/provisionTenant";
+import { resetTenantOwnerPassword } from "./modules/platform/resetTenantOwnerPassword";
+import { updateTenantOwnerEmail } from "./modules/platform/updateTenantOwnerEmail";
 import { listRoles } from "./capabilities/reads/listRoles";
 import { createRole } from "./capabilities/actions/createRole";
 import { updateRole } from "./capabilities/actions/updateRole";
@@ -27,6 +29,7 @@ import { listProducts } from "./capabilities/reads/listProducts";
 import { createProduct } from "./capabilities/actions/createProduct";
 import { updateProduct } from "./capabilities/actions/updateProduct";
 import { setProductStatus } from "./capabilities/actions/setProductStatus";
+import { setProductUnit } from "./capabilities/actions/setProductUnit";
 import { createVariant } from "./capabilities/actions/createVariant";
 import { updateVariant } from "./capabilities/actions/updateVariant";
 import { setVariantStatus } from "./capabilities/actions/setVariantStatus";
@@ -36,12 +39,37 @@ import { updateSupplier } from "./capabilities/actions/updateSupplier";
 import { setSupplierStatus } from "./capabilities/actions/setSupplierStatus";
 import { listPurchases } from "./capabilities/reads/listPurchases";
 import { createPurchase } from "./capabilities/actions/createPurchase";
+import { recordReceivedPurchase } from "./capabilities/actions/recordReceivedPurchase";
 import { updatePurchase } from "./capabilities/actions/updatePurchase";
 import { setPurchaseStatus } from "./capabilities/actions/setPurchaseStatus";
 import { receivePurchase } from "./capabilities/actions/receivePurchase";
 import { listCurrentStock } from "./capabilities/reads/listCurrentStock";
 import { listInventoryBatches } from "./capabilities/reads/listInventoryBatches";
 import { listStockMovements } from "./capabilities/reads/listStockMovements";
+import { recordStockMovement } from "./capabilities/actions/recordStockMovement";
+import { listAccounts } from "./capabilities/reads/listAccounts";
+import { createAccount } from "./capabilities/actions/createAccount";
+import { updateAccount } from "./capabilities/actions/updateAccount";
+import { setAccountStatus } from "./capabilities/actions/setAccountStatus";
+import { listTransfers } from "./capabilities/reads/listTransfers";
+import { createTransfer } from "./capabilities/actions/createTransfer";
+import { listPaymentMethods } from "./capabilities/reads/listPaymentMethods";
+import { createPaymentMethod } from "./capabilities/actions/createPaymentMethod";
+import { setPaymentMethodStatus } from "./capabilities/actions/setPaymentMethodStatus";
+import { createPurchasePayment } from "./capabilities/actions/createPurchasePayment";
+import { listPurchasePayments } from "./capabilities/reads/listPurchasePayments";
+import { listUnits } from "./capabilities/reads/listUnits";
+import { createUnit } from "./capabilities/actions/createUnit";
+import { setUnitStatus } from "./capabilities/actions/setUnitStatus";
+import { listCatalogue } from "./capabilities/reads/listCatalogue";
+import { listCatalogueCandidates } from "./capabilities/reads/listCatalogueCandidates";
+import { getCatalogueSettings } from "./capabilities/reads/getCatalogueSettings";
+import { addToCatalogue } from "./capabilities/actions/addToCatalogue";
+import { removeFromCatalogue } from "./capabilities/actions/removeFromCatalogue";
+import { setCatalogueAutoImport } from "./capabilities/actions/setCatalogueAutoImport";
+import { createMadeToOrderItem } from "./capabilities/actions/createMadeToOrderItem";
+import { updateMadeToOrderItem } from "./capabilities/actions/updateMadeToOrderItem";
+import { deleteMadeToOrderItem } from "./capabilities/actions/deleteMadeToOrderItem";
 
 const CAPABILITY_FAILURE_STATUS: Record<string, number> = {
   NOT_FOUND: 404,
@@ -53,12 +81,18 @@ const CAPABILITY_FAILURE_STATUS: Record<string, number> = {
 };
 
 /** Sends a capability's result as the route's response - 2xx with its data, or the matching status with { error: message } on failure. */
-function sendCapabilityResult<T>(res: Response, result: CapabilityResult<T>, successStatus = 200): void {
+function sendCapabilityResult<T>(
+  res: Response,
+  result: CapabilityResult<T>,
+  successStatus = 200,
+): void {
   if (result.ok) {
     res.status(successStatus).json(result.data);
     return;
   }
-  res.status(CAPABILITY_FAILURE_STATUS[result.error.code] ?? 400).json({ error: result.error.message });
+  res
+    .status(CAPABILITY_FAILURE_STATUS[result.error.code] ?? 400)
+    .json({ error: result.error.message });
 }
 
 const REQUIRED_FIELDS: (keyof ProvisionTenantInput)[] = [
@@ -129,6 +163,38 @@ export function createApp(): Express {
     try {
       const result = await provisionTenant(body as ProvisionTenantInput);
       res.status(201).json(result);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Unknown error" });
+    }
+  });
+
+  app.post("/platform-admin/tenants/:id/reset-password", requirePlatformAdmin, async (req, res) => {
+    const id = req.params.id as string;
+    const newPassword = typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
+    if (!newPassword) {
+      res.status(400).json({ error: "Missing required field: newPassword" });
+      return;
+    }
+
+    try {
+      const result = await resetTenantOwnerPassword(id, newPassword);
+      res.status(200).json(result);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Unknown error" });
+    }
+  });
+
+  app.post("/platform-admin/tenants/:id/owner-email", requirePlatformAdmin, async (req, res) => {
+    const id = req.params.id as string;
+    const newEmail = typeof req.body?.newEmail === "string" ? req.body.newEmail.trim() : "";
+    if (!newEmail) {
+      res.status(400).json({ error: "Missing required field: newEmail" });
+      return;
+    }
+
+    try {
+      const result = await updateTenantOwnerEmail(id, newEmail);
+      res.status(200).json(result);
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : "Unknown error" });
     }
@@ -220,6 +286,12 @@ export function createApp(): Express {
     sendCapabilityResult(res, result);
   });
 
+  app.put("/products/:id/unit", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await setProductUnit.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
   app.post("/products/:id/variants", requireTenantUser, async (req, res) => {
     const sellableId = req.params.id as string;
     const result = await createVariant.execute(getActor(req), { ...req.body, sellableId });
@@ -235,6 +307,79 @@ export function createApp(): Express {
   app.put("/variants/:id/status", requireTenantUser, async (req, res) => {
     const id = req.params.id as string;
     const result = await setVariantStatus.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/catalogue", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await listCatalogue.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/catalogue/candidates", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await listCatalogueCandidates.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/catalogue/settings", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await getCatalogueSettings.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.put("/catalogue/settings", requireTenantUser, async (req, res) => {
+    const result = await setCatalogueAutoImport.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/catalogue/import", requireTenantUser, async (req, res) => {
+    const result = await addToCatalogue.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result);
+  });
+
+  app.delete("/catalogue/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await removeFromCatalogue.execute(getActor(req), { id, storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/catalogue/items", requireTenantUser, async (req, res) => {
+    const result = await createMadeToOrderItem.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.put("/catalogue/items/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await updateMadeToOrderItem.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.delete("/catalogue/items/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await deleteMadeToOrderItem.execute(getActor(req), { id, storeId });
     sendCapabilityResult(res, result);
   });
 
@@ -288,6 +433,80 @@ export function createApp(): Express {
     sendCapabilityResult(res, result);
   });
 
+  app.get("/accounts", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await listAccounts.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/accounts", requireTenantUser, async (req, res) => {
+    const result = await createAccount.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.put("/accounts/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await updateAccount.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.put("/accounts/:id/status", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await setAccountStatus.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/account-transfers", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await listTransfers.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/account-transfers", requireTenantUser, async (req, res) => {
+    const result = await createTransfer.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.get("/payment-methods", requireTenantUser, async (req, res) => {
+    const result = await listPaymentMethods.execute(getActor(req), undefined);
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/payment-methods", requireTenantUser, async (req, res) => {
+    const result = await createPaymentMethod.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.put("/payment-methods/:id/status", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await setPaymentMethodStatus.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/units", requireTenantUser, async (req, res) => {
+    const result = await listUnits.execute(getActor(req), undefined);
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/units", requireTenantUser, async (req, res) => {
+    const result = await createUnit.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.put("/units/:id/status", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await setUnitStatus.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
   app.get("/purchases", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
@@ -300,6 +519,11 @@ export function createApp(): Express {
 
   app.post("/purchases", requireTenantUser, async (req, res) => {
     const result = await createPurchase.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.post("/purchases/received", requireTenantUser, async (req, res) => {
+    const result = await recordReceivedPurchase.execute(getActor(req), req.body);
     sendCapabilityResult(res, result, 201);
   });
 
@@ -319,6 +543,18 @@ export function createApp(): Express {
     const id = req.params.id as string;
     const result = await receivePurchase.execute(getActor(req), { ...req.body, id });
     sendCapabilityResult(res, result);
+  });
+
+  app.get("/purchases/:id/payments", requireTenantUser, async (req, res) => {
+    const purchaseId = req.params.id as string;
+    const result = await listPurchasePayments.execute(getActor(req), { purchaseId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/purchases/:id/payments", requireTenantUser, async (req, res) => {
+    const purchaseId = req.params.id as string;
+    const result = await createPurchasePayment.execute(getActor(req), { ...req.body, purchaseId });
+    sendCapabilityResult(res, result, 201);
   });
 
   app.get("/stock/current", requireTenantUser, async (req, res) => {
@@ -341,6 +577,12 @@ export function createApp(): Express {
     const variantId = req.params.id as string;
     const result = await listStockMovements.execute(getActor(req), { variantId });
     sendCapabilityResult(res, result);
+  });
+
+  app.post("/variants/:id/movements", requireTenantUser, async (req, res) => {
+    const variantId = req.params.id as string;
+    const result = await recordStockMovement.execute(getActor(req), { ...req.body, variantId });
+    sendCapabilityResult(res, result, 201);
   });
 
   return app;

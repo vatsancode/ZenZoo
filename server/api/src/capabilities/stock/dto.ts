@@ -18,6 +18,7 @@ export interface StockMovementDto {
   quantity: number;
   batchId: string;
   referenceType: string | null;
+  reason: string | null;
   occurredAt: string;
 }
 
@@ -36,6 +37,7 @@ interface StockMovementRow {
   quantity: number;
   batch_id: string;
   reference_type: string | null;
+  reason: string | null;
   occurred_at: Date;
 }
 
@@ -57,6 +59,7 @@ export function toStockMovementDto(row: StockMovementRow): StockMovementDto {
     quantity: row.quantity,
     batchId: row.batch_id,
     referenceType: row.reference_type,
+    reason: row.reason,
     occurredAt: row.occurred_at.toISOString(),
   };
 }
@@ -76,5 +79,6 @@ export const STOCK_MOVEMENT_SELECT = {
   quantity: true,
   batch_id: true,
   reference_type: true,
+  reason: true,
   occurred_at: true,
 } as const;
