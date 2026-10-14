@@ -1,4 +1,4 @@
-# ZenZoo Design System — Components
+# Design System — Components
 
 The source of truth is the code itself: `packages/ui-web/src/*` (web
 components) and `packages/design-tokens/src/*` (the tokens they're built
@@ -356,7 +356,7 @@ Every component uses this to turn a named style into real CSS, rather than
 inlining font properties itself:
 
 ```ts
-import { typography, type TextStyleName } from "@zenzoo/design-tokens";
+import { typography, type TextStyleName } from "@app/design-tokens";
 import type { CSSProperties } from "react";
 
 /** Turns a named text style into the CSS properties that render it. */
@@ -380,7 +380,7 @@ export function textStyle(name: TextStyleName): CSSProperties {
 `secondary` / `danger`), full-pill, with a small press-scale micro-interaction.
 
 ```tsx
-import { useTheme, type ColorTokens } from "@zenzoo/design-tokens";
+import { useTheme, type ColorTokens } from "@app/design-tokens";
 import type { ButtonHTMLAttributes, CSSProperties } from "react";
 import { textStyle } from "../internal/textStyle";
 
@@ -444,7 +444,7 @@ export function Button({ variant = "primary", style, disabled, ...props }: Butto
 `aria-invalid` to switch to the danger border.
 
 ```tsx
-import { useTheme } from "@zenzoo/design-tokens";
+import { useTheme } from "@app/design-tokens";
 import type { InputHTMLAttributes } from "react";
 import { textStyle } from "../internal/textStyle";
 
@@ -487,7 +487,7 @@ optional `creatable` mode that lets the user type a brand-new value.
 ```tsx
 "use client";
 
-import { useTheme } from "@zenzoo/design-tokens";
+import { useTheme } from "@app/design-tokens";
 import {
   useEffect,
   useId,
@@ -837,7 +837,7 @@ shortcut, and flips to open upward/align right when it would run off-screen.
 ```tsx
 "use client";
 
-import { useTheme } from "@zenzoo/design-tokens";
+import { useTheme } from "@app/design-tokens";
 import {
   useEffect,
   useLayoutEffect,
@@ -1285,7 +1285,7 @@ with a dimmed backdrop. Use `Sheet` instead for a focused side-panel task
 (add/edit) rather than something that interrupts the whole screen.
 
 ```tsx
-import { useTheme } from "@zenzoo/design-tokens";
+import { useTheme } from "@app/design-tokens";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -1352,7 +1352,7 @@ pinned `footer`.
 ```tsx
 "use client";
 
-import { useTheme } from "@zenzoo/design-tokens";
+import { useTheme } from "@app/design-tokens";
 import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { IconButton } from "../IconButton";
@@ -1452,7 +1452,7 @@ export function Sheet({ open, onClose, children, title, label, footer, width = 4
 neighbouring `<label>` or `aria-label`.
 
 ```tsx
-import { useTheme } from "@zenzoo/design-tokens";
+import { useTheme } from "@app/design-tokens";
 import type { ButtonHTMLAttributes } from "react";
 
 export interface SwitchProps
@@ -1522,7 +1522,7 @@ arrow-key roving focus. Render the matching panel yourself with
 ```tsx
 "use client";
 
-import { useTheme } from "@zenzoo/design-tokens";
+import { useTheme } from "@app/design-tokens";
 import type { KeyboardEvent } from "react";
 import { textStyle } from "../internal/textStyle";
 
@@ -1602,7 +1602,7 @@ layout.
 ```tsx
 "use client";
 
-import { useTheme } from "@zenzoo/design-tokens";
+import { useTheme } from "@app/design-tokens";
 import type { KeyboardEvent } from "react";
 import { Icon } from "../Icon";
 import { textStyle } from "../internal/textStyle";
@@ -1760,7 +1760,7 @@ per page" `Select`.
 ```tsx
 "use client";
 
-import { useTheme } from "@zenzoo/design-tokens";
+import { useTheme } from "@app/design-tokens";
 import type { ReactNode } from "react";
 import { Select } from "../Select";
 import { textStyle } from "../internal/textStyle";
@@ -2067,7 +2067,7 @@ for row/header actions. `label` doubles as the tooltip and the accessible
 name.
 
 ```tsx
-import { useTheme } from "@zenzoo/design-tokens";
+import { useTheme } from "@app/design-tokens";
 import type { MouseEvent } from "react";
 import { Icon, type IconName } from "../Icon";
 
@@ -2122,7 +2122,7 @@ export function IconButton({ icon, label, onClick, tone = "default", disabled }:
 an action completes, announced to screen readers via `role="status"`.
 
 ```tsx
-import { useTheme } from "@zenzoo/design-tokens";
+import { useTheme } from "@app/design-tokens";
 import type { CSSProperties, ReactNode } from "react";
 import { textStyle } from "../internal/textStyle";
 
@@ -2162,7 +2162,7 @@ export function Notice({ children, style }: NoticeProps) {
 the generic container for grouped content.
 
 ```tsx
-import { useTheme } from "@zenzoo/design-tokens";
+import { useTheme } from "@app/design-tokens";
 import type { HTMLAttributes } from "react";
 
 export type CardProps = HTMLAttributes<HTMLDivElement>;
@@ -2194,7 +2194,7 @@ Columns declare their own `render`, so any cell content works; rows are
 optionally clickable (mouse and Enter-from-keyboard).
 
 ```tsx
-import { useTheme } from "@zenzoo/design-tokens";
+import { useTheme } from "@app/design-tokens";
 import type { ReactNode } from "react";
 import { textStyle } from "../internal/textStyle";
 
@@ -2290,7 +2290,7 @@ export function Table<Row>({ columns, rows, getRowKey, onRowClick }: TableProps<
 the badge's own text/background stay neutral regardless of tone.
 
 ```tsx
-import { useTheme, type ColorTokens } from "@zenzoo/design-tokens";
+import { useTheme, type ColorTokens } from "@app/design-tokens";
 import type { HTMLAttributes } from "react";
 import { textStyle } from "../internal/textStyle";
 
@@ -2353,7 +2353,7 @@ export function Badge({ tone = "neutral", style, children, ...props }: BadgeProp
 ## ThemeProvider
 
 `packages/ui-web/src/ThemeProvider/ThemeProvider.tsx` — wraps
-`@zenzoo/design-tokens`' own `ThemeProvider` (see [Theme](#theme-packagesdesign-tokenssrctheme) above) with web-specific
+`@app/design-tokens`' own `ThemeProvider` (see [Theme](#theme-packagesdesign-tokenssrctheme) above) with web-specific
 system-preference detection and a persisted choice. By default it follows
 `prefers-color-scheme` and keeps it live; a saved "light"/"dark" choice
 overrides that. Also exposes `useThemePreference()` for a settings screen to
@@ -2362,7 +2362,7 @@ read/change the choice.
 ```tsx
 "use client";
 
-import { ThemeProvider as TokensThemeProvider, type ThemeName } from "@zenzoo/design-tokens";
+import { ThemeProvider as TokensThemeProvider, type ThemeName } from "@app/design-tokens";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 export interface ThemeProviderProps {
@@ -2372,7 +2372,7 @@ export interface ThemeProviderProps {
 /** What the person chose: follow the device, or always light, or always dark. */
 export type ThemePreference = "system" | "light" | "dark";
 
-const STORAGE_KEY = "zenzoo-theme";
+const STORAGE_KEY = "app-theme";
 
 interface PreferenceContextValue {
   preference: ThemePreference;
@@ -2390,7 +2390,7 @@ export function useThemePreference(): PreferenceContextValue {
 }
 
 /**
- * Resolves the theme and provides it through `@zenzoo/design-tokens`' theme
+ * Resolves the theme and provides it through `@app/design-tokens`' theme
  * context. By default it follows the viewer's system light/dark preference and
  * keeps it current; a saved choice of light or dark overrides that. Starts from
  * "light" on the server (where `window` doesn't exist) and corrects itself on
@@ -2444,7 +2444,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
 ## Package exports
 
 `packages/ui-web/src/index.ts` — everything above is re-exported from
-`@zenzoo/ui-web`'s root:
+`@app/ui-web`'s root:
 
 ```ts
 export * from "./Button";
