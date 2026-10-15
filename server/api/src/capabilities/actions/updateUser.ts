@@ -37,7 +37,12 @@ export const updateUser = defineCapability<UpdateUserInput, UserDto>({
 
         await tx.users.update({
           where: { id: membership.user_id },
-          data: { email, first_name: firstName, last_name: lastName, phone: input.phone?.trim() || null },
+          data: {
+            email,
+            first_name: firstName,
+            last_name: lastName,
+            phone: input.phone?.trim() || null,
+          },
         });
 
         try {

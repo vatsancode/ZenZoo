@@ -1,13 +1,20 @@
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
-import { PAYMENT_METHOD_SELECT, toPaymentMethodDto, type PaymentMethodDto } from "../paymentMethods/dto";
+import {
+  PAYMENT_METHOD_SELECT,
+  toPaymentMethodDto,
+  type PaymentMethodDto,
+} from "../paymentMethods/dto";
 
 export interface SetPaymentMethodStatusInput {
   id: string;
   disabled: boolean;
 }
 
-export const setPaymentMethodStatus = defineCapability<SetPaymentMethodStatusInput, PaymentMethodDto>({
+export const setPaymentMethodStatus = defineCapability<
+  SetPaymentMethodStatusInput,
+  PaymentMethodDto
+>({
   name: "setPaymentMethodStatus",
   kind: "action",
   requiredPermission: "settings:edit",

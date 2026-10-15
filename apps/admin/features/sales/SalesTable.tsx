@@ -39,9 +39,15 @@ export default function SalesTable() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    listSales().then(setSales);
+    listSales()
+      .then(setSales)
+      .catch((reason: unknown) => {
+        setSales([]);
+        setLoadError(reason instanceof Error ? reason.message : "Couldn't load sales.");
+      });
   }, []);
 
   const filtered = useMemo(() => {
@@ -62,7 +68,8 @@ export default function SalesTable() {
         sale.number.toLowerCase().includes(q) ||
         sale.customerName.toLowerCase().includes(q) ||
         sale.lines.some(
-          (line) => line.name.toLowerCase().includes(q) || line.sku.toLowerCase().includes(q),
+          (line) =>
+            line.name.toLowerCase().includes(q) || (line.code ?? "").toLowerCase().includes(q),
         )
       );
     });
@@ -293,9 +300,10 @@ export default function SalesTable() {
         </div>
       ) : filtered.length === 0 ? (
         <div style={{ ...textStyle("callout"), color: colors.inkMuted, padding: spacing[6] }}>
-          {sales.length === 0
-            ? "No sales yet. Sales made at the Point of Sale appear here."
-            : "No sales match your search."}
+          {loadError ??
+            (sales.length === 0
+              ? "No sales yet. Sales made at the Point of Sale appear here."
+              : "No sales match your search.")}
         </div>
       ) : (
         <div>

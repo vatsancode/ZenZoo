@@ -22,7 +22,11 @@ export const listStockMovements = defineCapability<ListStockMovementsInput, Stoc
       await assertStoreAccess(actor, variant.store_id);
 
       const rows = await tx.stock_movements.findMany({
-        where: { tenant_id: actor.tenantId, store_id: variant.store_id, variant_id: input.variantId },
+        where: {
+          tenant_id: actor.tenantId,
+          store_id: variant.store_id,
+          variant_id: input.variantId,
+        },
         orderBy: { occurred_at: "desc" },
         select: STOCK_MOVEMENT_SELECT,
       });

@@ -135,7 +135,10 @@ export interface UpdateProductInput {
 }
 
 /** Renames/recategorizes a product - requires "stocks:edit". Returns the updated product, or an error message. */
-export async function updateProduct(id: string, input: UpdateProductInput): Promise<RealProduct | string> {
+export async function updateProduct(
+  id: string,
+  input: UpdateProductInput,
+): Promise<RealProduct | string> {
   const response = await fetch(`${API_URL}/products/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -156,7 +159,10 @@ export interface UpdateVariantInput {
 }
 
 /** Edits one variant's name/SKU/price - requires "stocks:edit". Unit isn't editable here - see updateProductUnit. Returns the updated product, or an error message. */
-export async function updateVariant(id: string, input: UpdateVariantInput): Promise<RealProduct | string> {
+export async function updateVariant(
+  id: string,
+  input: UpdateVariantInput,
+): Promise<RealProduct | string> {
   const response = await fetch(`${API_URL}/variants/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

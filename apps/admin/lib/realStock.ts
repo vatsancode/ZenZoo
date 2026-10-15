@@ -54,7 +54,9 @@ export interface RecordMovementInput {
 /** On-hand quantity per variant for this store - SUM(available_quantity), the real number, never a cache of it. */
 export async function listCurrentStock(): Promise<Record<string, number>> {
   const storeId = await ensureStoreId();
-  const rows = await get<{ variantId: string; onHand: number }[]>(`/stock/current?storeId=${storeId}`);
+  const rows = await get<{ variantId: string; onHand: number }[]>(
+    `/stock/current?storeId=${storeId}`,
+  );
   return Object.fromEntries(rows.map((row) => [row.variantId, row.onHand]));
 }
 

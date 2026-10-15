@@ -1,7 +1,11 @@
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
-import { PAYMENT_METHOD_SELECT, toPaymentMethodDto, type PaymentMethodDto } from "../paymentMethods/dto";
+import {
+  PAYMENT_METHOD_SELECT,
+  toPaymentMethodDto,
+  type PaymentMethodDto,
+} from "../paymentMethods/dto";
 
 export interface CreatePaymentMethodInput {
   name: string;
@@ -16,7 +20,10 @@ export const createPaymentMethod = defineCapability<CreatePaymentMethodInput, Pa
     if (!name) throw new Error("Enter a name for the payment method.");
 
     // payment_methods_code_format_check: upper-case, [A-Z0-9_]+ only.
-    const code = name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    const code = name
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
     if (!code) throw new Error("Enter a name for the payment method.");
 
     try {

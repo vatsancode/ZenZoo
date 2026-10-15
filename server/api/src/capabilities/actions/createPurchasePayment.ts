@@ -25,7 +25,10 @@ export interface CreatePurchasePaymentInput {
  * cheap upfront check and translates the trigger's own rejections into
  * plain sentences.
  */
-export const createPurchasePayment = defineCapability<CreatePurchasePaymentInput, PurchasePaymentDto>({
+export const createPurchasePayment = defineCapability<
+  CreatePurchasePaymentInput,
+  PurchasePaymentDto
+>({
   name: "createPurchasePayment",
   kind: "action",
   requiredPermission: "purchases:edit",

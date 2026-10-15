@@ -77,8 +77,36 @@ export const PAYMENT_ACCOUNT_LABELS: { value: string; label: string }[] = [
   ...PAYMENT_ACCOUNT_OPTIONS,
 ];
 
+// Names of the REAL payment methods and accounts, learnt from the sales and the till's own
+// options as they load (a sale carries the names of what it was paid with). Looked up first, so
+// history reads properly even for a method or account switched off since.
+const knownMethods = new Map<string, string>();
+const knownAccounts = new Map<string, string>();
+
+export function rememberPaymentNames(
+  methods: { code: string; name: string }[],
+  accounts: { id: string; name: string }[],
+) {
+  for (const method of methods) knownMethods.set(method.code, method.name);
+  for (const account of accounts) knownAccounts.set(account.id, account.name);
+}
+
+/** Every real method seen so far, for a filter - kept even if switched off since. */
+export function knownMethodOptions(): { value: string; label: string }[] {
+  return [...knownMethods].map(([value, label]) => ({ value, label }));
+}
+
+/** Every real account seen so far, for a filter. */
+export function knownAccountOptions(): { value: string; label: string }[] {
+  return [...knownAccounts].map(([value, label]) => ({ value, label }));
+}
+
 export function accountLabel(id: string): string {
-  return PAYMENT_ACCOUNT_LABELS.find((account) => account.value === id)?.label ?? id;
+  return (
+    knownAccounts.get(id) ??
+    PAYMENT_ACCOUNT_LABELS.find((account) => account.value === id)?.label ??
+    id
+  );
 }
 
 /** A sale paid entirely with store credit has this as its method, and no account. */
@@ -91,5 +119,5 @@ export const ON_ACCOUNT = "ON_ACCOUNT";
 export function paymentMethodLabel(code: string): string {
   if (code === STORE_CREDIT) return "Store credit";
   if (code === ON_ACCOUNT) return "On account";
-  return methods.find((method) => method.value === code)?.label ?? code;
+  return knownMethods.get(code) ?? methods.find((method) => method.value === code)?.label ?? code;
 }

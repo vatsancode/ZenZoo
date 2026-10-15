@@ -68,7 +68,7 @@ export default function PosSearch({ units, inCart, onAdd }: PosSearchProps) {
       event.preventDefault();
       const code = query.trim().toLowerCase();
       // A scanned code is an exact SKU: add it without needing to pick from the list.
-      const exact = units.find((unit) => unit.sku.toLowerCase() === code);
+      const exact = units.find((unit) => unit.code?.toLowerCase() === code);
       const choice = exact ?? results[highlight];
       if (choice) pick(choice);
     } else if (event.key === "Escape") {
@@ -159,7 +159,12 @@ export default function PosSearch({ units, inCart, onAdd }: PosSearchProps) {
                   <div style={{ minWidth: 0 }}>
                     <div style={textStyle("bodyMedium")}>{unit.name}</div>
                     <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
-                      <span style={textStyle("dataSmall")}>{unit.sku}</span> · {unit.category}
+                      {unit.code ? (
+                        <>
+                          <span style={textStyle("dataSmall")}>{unit.code}</span> ·{" "}
+                        </>
+                      ) : null}
+                      {unit.category}
                     </div>
                   </div>
                   <div style={{ textAlign: "right", flex: "none" }}>

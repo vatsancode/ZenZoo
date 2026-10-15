@@ -31,9 +31,7 @@ export async function listMyStores(actor: CapabilityActor): Promise<MyStoreDto[]
       where: {
         tenant_id: actor.tenantId,
         status: "active",
-        ...(restrictions.length > 0
-          ? { id: { in: restrictions.map((r) => r.store_id) } }
-          : {}),
+        ...(restrictions.length > 0 ? { id: { in: restrictions.map((r) => r.store_id) } } : {}),
       },
       orderBy: { name: "asc" },
       select: { id: true, name: true, code: true },

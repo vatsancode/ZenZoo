@@ -1,45 +1,46 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Button, Card, DatePicker, Input, Modal, Select, textStyle } from "@zenzoo/ui-web";
+import { Button, Card, Input, Modal, Select, textStyle } from "@zenzoo/ui-web";
 import { useState } from "react";
-import { today } from "../../lib/date-ranges";
-import { PAYMENT_ACCOUNT_OPTIONS, PAYMENT_METHOD_OPTIONS } from "../../lib/payment-options";
-import { dueBalance, type DueEntry } from "../sales/sales";
+import type { TillPaymentOptions } from "../../lib/till";
+import type { DueEntry } from "../sales/sales";
 import { formatDate, formatPrice } from "../../lib/stock-display";
-
-const DEFAULT_ACCOUNT: Record<string, string> = {
-  CASH: "cash-drawer",
-  UPI: "hdfc-current",
-  CARD: "hdfc-current",
-  BANK_TRANSFER: "hdfc-current",
-};
 
 export interface CollectInput {
   amount: number;
-  method: string;
+  /** Real ids, from the server's payment options. */
+  methodId: string;
   accountId: string;
-  date: string;
   note?: string;
 }
 
 /** What the customer owes on account: the balance, every credit sale and payment, and a way to collect. */
 export default function CustomerDues({
   entries,
+  owed,
+  options,
   onCollect,
 }: {
   entries: DueEntry[];
-  onCollect: (input: CollectInput) => void;
+  /** What they owe, from the server's ledger balance. */
+  owed: number;
+  /** The active methods and accounts a payment can come in by; null while loading. */
+  options: TillPaymentOptions | null;
+  /** Saves the payment; resolves to an error message to show, or null when it went through. */
+  onCollect: (input: CollectInput) => Promise<string | null>;
 }) {
   const { colors, spacing } = useTheme();
-  const owed = dueBalance(entries);
+  const methods = options?.methods ?? [];
+  const accounts = options?.accounts ?? [];
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("");
   const [accountId, setAccountId] = useState("");
-  const [date, setDate] = useState(today());
   const [note, setNote] = useState("");
   const [showErrors, setShowErrors] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
 
   const value = amount.trim() === "" ? 0 : Number(amount);
   const problem = !(value > 0)
@@ -50,27 +51,35 @@ export default function CustomerDues({
         ? "Choose how they paid."
         : accountId === ""
           ? "Choose the account the money went into."
-          : date === ""
-            ? "Choose the date."
-            : null;
+          : null;
 
   function openModal() {
     setAmount(String(owed));
     setMethod("");
     setAccountId("");
-    setDate(today());
     setNote("");
     setShowErrors(false);
+    setServerError(null);
     setOpen(true);
   }
 
-  function save() {
+  async function save() {
     if (problem) {
       setShowErrors(true);
       return;
     }
-    onCollect({ amount: value, method, accountId, date, note: note.trim() || undefined });
-    setOpen(false);
+    if (saving) return;
+    setSaving(true);
+    setServerError(null);
+    const failure = await onCollect({
+      amount: value,
+      methodId: method,
+      accountId,
+      note: note.trim() || undefined,
+    });
+    setSaving(false);
+    if (failure) setServerError(failure);
+    else setOpen(false);
   }
 
   return (
@@ -180,7 +189,7 @@ export default function CustomerDues({
               }}
             />
             <Select
-              options={PAYMENT_METHOD_OPTIONS}
+              options={methods.map((item) => ({ value: item.id, label: item.name }))}
               value={method}
               placeholder="How they paid"
               searchable={false}
@@ -188,11 +197,20 @@ export default function CustomerDues({
               aria-invalid={showErrors && method === "" ? true : undefined}
               onChange={(next) => {
                 setMethod(next);
-                setAccountId(DEFAULT_ACCOUNT[next] ?? "");
+                // A sensible place for the money: the cash drawer for cash, else the first account.
+                const code = methods.find((item) => item.id === next)?.code;
+                setAccountId(
+                  (code === "CASH"
+                    ? accounts.find((account) => /cash|drawer/i.test(account.name))
+                    : undefined
+                  )?.id ??
+                    accounts[0]?.id ??
+                    "",
+                );
               }}
             />
             <Select
-              options={PAYMENT_ACCOUNT_OPTIONS}
+              options={accounts.map((item) => ({ value: item.id, label: item.name }))}
               value={accountId}
               placeholder="Received into"
               searchable={false}
@@ -200,7 +218,6 @@ export default function CustomerDues({
               aria-invalid={showErrors && accountId === "" ? true : undefined}
               onChange={setAccountId}
             />
-            <DatePicker aria-label="Payment date" value={date} onChange={setDate} />
             <Input
               autoComplete="off"
               aria-label="Note"
@@ -220,14 +237,14 @@ export default function CustomerDues({
             }}
           >
             <span style={{ ...textStyle("footnote"), color: colors.danger }}>
-              {showErrors && problem ? problem : ""}
+              {serverError ?? (showErrors && problem ? problem : "")}
             </span>
             <div style={{ display: "flex", gap: spacing[3] }}>
               <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
                 Cancel
               </Button>
-              <Button type="button" variant="primary" onClick={save}>
-                Record payment
+              <Button type="button" variant="primary" disabled={saving} onClick={() => void save()}>
+                {saving ? "Saving..." : "Record payment"}
               </Button>
             </div>
           </div>

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.3.0",
+    "@zenzoo/pricing": "workspace:*",
     "@zenzoo/types": "workspace:*",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",

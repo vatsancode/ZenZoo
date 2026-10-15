@@ -3,11 +3,7 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Chips, DatePicker, MultiChips, Sheet, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
-import {
-  PAYMENT_ACCOUNT_OPTIONS,
-  listPaymentMethods,
-  STORE_CREDIT,
-} from "../../lib/payment-options";
+import { knownAccountOptions, knownMethodOptions } from "../../lib/payment-options";
 import { datePresets } from "../../lib/date-ranges";
 import FormField from "../../components/FormField";
 
@@ -30,13 +26,9 @@ interface SalesFilterSheetProps {
   onApply: (filters: SalesFilters) => void;
 }
 
-// Store credit is not a payment method you can pick at the till, but it is a way a sale was paid.
-// Every method ever used, including ones switched off since, so old sales can still be found.
-// Store credit is not a method you can pick at the till, but it is a way a sale was paid.
-const methodFilterOptions = () => [
-  ...listPaymentMethods().map((method) => ({ value: method.value, label: method.label })),
-  { value: STORE_CREDIT, label: "Store credit" },
-];
+// Every method and account that appears on a sale seen so far - including ones switched off
+// since - so old sales can still be found. (Store credit joins the list when it is built.)
+const methodFilterOptions = () => knownMethodOptions();
 
 /** The sales filters in a side panel: the timeline, and the payment method. */
 export default function SalesFilterSheet({
@@ -151,7 +143,7 @@ export default function SalesFilterSheet({
           <div style={{ ...textStyle("headline"), color: colors.ink }}>Received into</div>
           <MultiChips
             aria-label="Accounts the money was received into"
-            options={PAYMENT_ACCOUNT_OPTIONS}
+            options={knownAccountOptions()}
             value={draft.accounts}
             columns={2}
             onChange={(accounts) => setDraft((current) => ({ ...current, accounts }))}

@@ -2,12 +2,9 @@
 
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Card, Chips, IconButton, Input, Select, Switch, textStyle } from "@zenzoo/ui-web";
-import { useState, type ReactNode } from "react";
-import {
-  ON_ACCOUNT,
-  PAYMENT_ACCOUNT_OPTIONS,
-  PAYMENT_METHOD_OPTIONS,
-} from "../../lib/payment-options";
+import { useEffect, useState, type ReactNode } from "react";
+import { ON_ACCOUNT } from "../../lib/payment-options";
+import type { TillPaymentOptions } from "../../lib/till";
 import {
   cartTotals,
   saleProfit,
@@ -20,6 +17,7 @@ import { formatPrice } from "../../lib/stock-display";
 import InfoTip from "../../components/InfoTip";
 import { UnitToggle } from "./PosLines";
 import ProfitBreakdown from "./ProfitBreakdown";
+import QuickAddCustomer from "./QuickAddCustomer";
 
 export interface CheckoutDetails {
   customerId?: string;
@@ -39,13 +37,16 @@ export interface CheckoutDetails {
 interface PosCheckoutProps {
   lines: CartLine[];
   customers: Customer[];
-  /** Creates a customer from a typed name and returns it. */
-  onNewCustomer: (name: string) => Customer;
+  /** The active payment methods and this store's accounts - from the server, so real ids. */
+  paymentOptions: TillPaymentOptions | null;
+  /** Saves a customer added at the counter; resolves to them, or an error message. */
+  onNewCustomer: (name: string, phone: string) => Promise<Customer | string>;
   /** Store credit a customer holds, in rupees. */
   creditBalanceOf: (customerId: string) => number;
   /** What a customer already owes on account, in rupees. */
   dueBalanceOf: (customerId: string) => number;
-  onComplete: (details: CheckoutDetails) => void;
+  /** Saves the sale; resolves to an error message to show, or null when it went through. */
+  onComplete: (details: CheckoutDetails) => Promise<string | null>;
 }
 
 const WALK_IN = "walk-in";
@@ -61,14 +62,6 @@ interface PayLine {
 }
 
 const blankLine = (): PayLine => ({ method: "", accountId: "", amount: "", tendered: "" });
-
-// A sensible place for the money to land for each method; the cashier can still change it.
-const DEFAULT_ACCOUNT: Record<string, string> = {
-  CASH: "cash-drawer",
-  UPI: "hdfc-current",
-  CARD: "hdfc-current",
-  BANK_TRANSFER: "hdfc-current",
-};
 
 const money = (value: number) => Math.round(value * 100) / 100;
 const typed = (value: string) => (value.trim() === "" ? null : Number(value));
@@ -93,6 +86,7 @@ function Label({ children }: { children: ReactNode }) {
 export default function PosCheckout({
   lines,
   customers,
+  paymentOptions,
   onNewCustomer,
   creditBalanceOf,
   dueBalanceOf,
@@ -100,12 +94,26 @@ export default function PosCheckout({
 }: PosCheckoutProps) {
   const { colors, radius, spacing } = useTheme();
   const [customerId, setCustomerId] = useState(WALK_IN);
+  // What was typed into "Add new customer" while the quick-add popup is open; null when closed.
+  const [newCustomer, setNewCustomer] = useState<string | null>(null);
   const [billValue, setBillValue] = useState("");
   const [billType, setBillType] = useState<DiscountType>("amount");
   const [pay, setPay] = useState<PayLine[]>([blankLine()]);
   const [useCredit, setUseCredit] = useState(false);
   // Typed over the most that can be used; null means as much as possible.
   const [creditTyped, setCreditTyped] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const methods = paymentOptions?.methods ?? [];
+  const accounts = paymentOptions?.accounts ?? [];
+  // A sensible place for the money to land: the cash drawer for cash, otherwise the first account.
+  // The cashier can still change it.
+  const defaultAccountFor = (code: string) =>
+    (code === "CASH" ? accounts.find((account) => /cash|drawer/i.test(account.name)) : undefined)
+      ?.id ??
+    accounts[0]?.id ??
+    "";
 
   const totals = cartTotals(lines, billValue, billType);
   const customer = customers.find((item) => item.id === customerId);
@@ -148,20 +156,25 @@ export default function PosCheckout({
   );
 
   const methodChips = [
-    ...PAYMENT_METHOD_OPTIONS.map((option) => ({
-      value: option.value,
-      label: option.value === "BANK_TRANSFER" ? "Bank" : option.label,
+    ...methods.map((method) => ({
+      value: method.code,
+      label: method.code === "BANK_TRANSFER" ? "Bank" : method.name,
     })),
     ...(customer ? [{ value: ON_ACCOUNT, label: "Pay later" }] : []),
   ];
   const methodOptions = [
-    ...PAYMENT_METHOD_OPTIONS,
+    ...methods.map((method) => ({ value: method.code, label: method.name })),
     ...(customer ? [{ value: ON_ACCOUNT, label: "Pay later (on account)" }] : []),
   ];
 
   // The first thing still wrong with the payment, in the order the panel reads.
   function problemWithPayment(): string | null {
     if (coveredByCredit) return null;
+    // One balance means owing and holding credit cancel out, so anything put on account would
+    // quietly use the credit up. Make the cashier use it first so the bill says what happened.
+    if (onAccount > 0 && money(balance - creditUsed) > 0) {
+      return `${formatPrice(money(balance - creditUsed))} store credit is still available - use it before paying later.`;
+    }
     for (let index = 0; index < pay.length; index += 1) {
       const line = pay[index]!;
       const which = pay.length > 1 ? ` for payment ${index + 1}` : "";
@@ -185,7 +198,18 @@ export default function PosCheckout({
     ? "Add an item to start the sale."
     : unpriced
       ? `Enter the price for ${unpriced.name}.`
-      : problemWithPayment();
+      : !paymentOptions
+        ? "Loading the payment options..."
+        : methods.length === 0 || accounts.length === 0
+          ? "Set up a payment method and an account in Settings first."
+          : problemWithPayment();
+
+  // Whatever the server said about the last attempt no longer applies once the payment is changed.
+  // The cart's lines are left out on purpose: when the server says prices or stock moved, the till
+  // refreshes the lines at the same moment it shows the message, and that must not wipe it.
+  useEffect(() => {
+    setSubmitError(null);
+  }, [billValue, billType, pay, customerId, useCredit, creditTyped]);
 
   function pickCustomer(value: string) {
     setUseCredit(false);
@@ -195,8 +219,8 @@ export default function PosCheckout({
     if (value === WALK_IN || customers.some((item) => item.id === value)) {
       setCustomerId(value);
     } else if (value.trim() !== "") {
-      // Not in the list: the cashier typed a new customer.
-      setCustomerId(onNewCustomer(value).id);
+      // Not in the list: the cashier typed a new customer - confirm name and phone first.
+      setNewCustomer(value);
     }
   }
 
@@ -207,7 +231,7 @@ export default function PosCheckout({
   function chooseMethod(index: number, method: string) {
     updateLine(index, {
       method,
-      accountId: method === ON_ACCOUNT ? "" : (DEFAULT_ACCOUNT[method] ?? ""),
+      accountId: method === ON_ACCOUNT ? "" : defaultAccountFor(method),
       tendered: "",
     });
   }
@@ -222,12 +246,14 @@ export default function PosCheckout({
     ]);
   }
 
-  function complete() {
-    if (missing) return;
+  async function complete() {
+    if (missing || submitting) return;
     const money_ = pay
       .map((line, index) => ({ line, amount: amounts[index]! }))
       .filter(({ line }) => line.method !== ON_ACCOUNT);
-    onComplete({
+    setSubmitting(true);
+    setSubmitError(null);
+    const failure = await onComplete({
       customerId: customer?.id,
       customerName: customer?.name ?? "Walk-in customer",
       payments: coveredByCredit
@@ -249,6 +275,8 @@ export default function PosCheckout({
       billType,
       creditUsed,
     });
+    setSubmitting(false);
+    if (failure) setSubmitError(failure);
   }
 
   const row = (text: string, value: ReactNode, muted = true) => (
@@ -287,6 +315,15 @@ export default function PosCheckout({
           createLabel="Add new customer"
           aria-label="Customer"
           onChange={pickCustomer}
+        />
+        <QuickAddCustomer
+          typed={newCustomer}
+          onClose={() => setNewCustomer(null)}
+          onSave={onNewCustomer}
+          onAdded={(added) => {
+            setNewCustomer(null);
+            setCustomerId(added.id);
+          }}
         />
         {owes > 0 ? (
           <div style={{ ...textStyle("footnote"), color: colors.warning, marginTop: spacing[2] }}>
@@ -516,7 +553,10 @@ export default function PosCheckout({
                       </div>
                     ) : (
                       <Select
-                        options={PAYMENT_ACCOUNT_OPTIONS}
+                        options={accounts.map((account) => ({
+                          value: account.id,
+                          label: account.name,
+                        }))}
                         value={line.accountId}
                         placeholder="Received into"
                         searchable={false}
@@ -601,12 +641,19 @@ export default function PosCheckout({
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: spacing[3] }}>
-        <Button type="button" variant="primary" disabled={missing !== null} onClick={complete}>
-          {coveredByCredit
-            ? "Complete sale · paid by store credit"
-            : onAccount > 0 && takenNow === 0
-              ? `Complete sale · ${formatPrice(onAccount)} on account`
-              : `Complete sale · ${formatPrice(payNow)}`}
+        <Button
+          type="button"
+          variant="primary"
+          disabled={missing !== null || submitting}
+          onClick={() => void complete()}
+        >
+          {submitting
+            ? "Saving the sale..."
+            : coveredByCredit
+              ? "Complete sale · paid by store credit"
+              : onAccount > 0 && takenNow === 0
+                ? `Complete sale · ${formatPrice(onAccount)} on account`
+                : `Complete sale · ${formatPrice(payNow)}`}
         </Button>
         <div
           style={{
@@ -616,11 +663,17 @@ export default function PosCheckout({
             minHeight: 18,
           }}
         >
-          {missing && hasLines
-            ? missing
-            : onAccount > 0 && takenNow > 0
-              ? `${formatPrice(takenNow)} now, ${formatPrice(onAccount)} on account`
-              : ""}
+          {submitError ? (
+            <span role="alert" style={{ color: colors.danger }}>
+              {submitError}
+            </span>
+          ) : missing && hasLines ? (
+            missing
+          ) : onAccount > 0 && takenNow > 0 ? (
+            `${formatPrice(takenNow)} now, ${formatPrice(onAccount)} on account`
+          ) : (
+            ""
+          )}
         </div>
       </div>
     </Card>

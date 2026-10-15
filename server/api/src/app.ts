@@ -62,6 +62,24 @@ import { listUnits } from "./capabilities/reads/listUnits";
 import { createUnit } from "./capabilities/actions/createUnit";
 import { setUnitStatus } from "./capabilities/actions/setUnitStatus";
 import { listCatalogue } from "./capabilities/reads/listCatalogue";
+import { listTillItems } from "./capabilities/reads/listTillItems";
+import { previewSale } from "./capabilities/reads/previewSale";
+import { createSale } from "./capabilities/actions/createSale";
+import { listSales } from "./capabilities/reads/listSales";
+import { getSale } from "./capabilities/reads/getSale";
+import {
+  listCustomerPaymentOptions,
+  listTillPaymentOptions,
+} from "./capabilities/reads/listTillPaymentOptions";
+import { listCustomers } from "./capabilities/reads/listCustomers";
+import { listCustomerPayments } from "./capabilities/reads/listCustomerPayments";
+import { receiveCustomerPayment } from "./capabilities/actions/receiveCustomerPayment";
+import { listTillCustomers } from "./capabilities/reads/listTillCustomers";
+import { getCustomer } from "./capabilities/reads/getCustomer";
+import { createCustomer } from "./capabilities/actions/createCustomer";
+import { quickAddCustomer } from "./capabilities/actions/quickAddCustomer";
+import { updateCustomer } from "./capabilities/actions/updateCustomer";
+import { setCustomerStatus } from "./capabilities/actions/setCustomerStatus";
 import { listCatalogueCandidates } from "./capabilities/reads/listCatalogueCandidates";
 import { getCatalogueSettings } from "./capabilities/reads/getCatalogueSettings";
 import { addToCatalogue } from "./capabilities/actions/addToCatalogue";
@@ -320,6 +338,16 @@ export function createApp(): Express {
     sendCapabilityResult(res, result);
   });
 
+  app.get("/till/items", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await listTillItems.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
   app.get("/catalogue/candidates", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
@@ -381,6 +409,122 @@ export function createApp(): Express {
     }
     const result = await deleteMadeToOrderItem.execute(getActor(req), { id, storeId });
     sendCapabilityResult(res, result);
+  });
+
+  app.get("/customers", requireTenantUser, async (req, res) => {
+    const includeArchived = req.query.includeArchived === "true";
+    const result = await listCustomers.execute(getActor(req), { includeArchived });
+    sendCapabilityResult(res, result);
+  });
+
+  // Before "/customers/:id", or "payments" would be read as a customer id.
+  app.get("/customers/payment-options", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await listCustomerPaymentOptions.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/customers/payments", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const customerId = typeof req.query.customerId === "string" ? req.query.customerId : undefined;
+    const result = await listCustomerPayments.execute(getActor(req), { storeId, customerId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/customers/:id/payments", requireTenantUser, async (req, res) => {
+    const customerId = req.params.id as string;
+    const result = await receiveCustomerPayment.execute(getActor(req), { ...req.body, customerId });
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.get("/customers/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await getCustomer.execute(getActor(req), { id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/customers", requireTenantUser, async (req, res) => {
+    const result = await createCustomer.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.put("/customers/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await updateCustomer.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.put("/customers/:id/status", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await setCustomerStatus.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/till/preview", requireTenantUser, async (req, res) => {
+    const result = await previewSale.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/till/payment-options", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await listTillPaymentOptions.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/sales", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const text = (value: unknown) =>
+      typeof value === "string" && value !== "" ? value : undefined;
+    const result = await listSales.execute(getActor(req), {
+      storeId,
+      from: text(req.query.from),
+      to: text(req.query.to),
+      customerId: text(req.query.customerId),
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/sales/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await getSale.execute(getActor(req), { storeId, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/sales", requireTenantUser, async (req, res) => {
+    const result = await createSale.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.get("/till/customers", requireTenantUser, async (req, res) => {
+    const result = await listTillCustomers.execute(getActor(req), undefined);
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/till/customers", requireTenantUser, async (req, res) => {
+    const result = await quickAddCustomer.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
   });
 
   app.get("/users", requireTenantUser, async (req, res) => {

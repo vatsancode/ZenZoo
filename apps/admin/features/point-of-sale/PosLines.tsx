@@ -186,7 +186,7 @@ export default function PosLines({ lines, onLineChange, onRemove, onClear }: Pos
                 <div style={{ minWidth: 0 }}>
                   <div style={{ ...textStyle("bodyMedium"), color: colors.ink }}>{line.name}</div>
                   <div style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>
-                    {line.service ? "Service" : line.sku}
+                    {line.service ? "Made to order" : (line.code ?? "")}
                   </div>
                 </div>
 

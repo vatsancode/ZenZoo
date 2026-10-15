@@ -93,13 +93,14 @@ export default function DashboardScreen() {
   useEffect(() => {
     async function load() {
       const [s, e, p, pu, a, c, col] = await Promise.all([
-        listSales(),
+        // The dashboard shouldn't fail to open for someone without access to sales.
+        listSales().catch(() => []),
         listExpenses(),
         listProducts(),
         listPurchases(),
         listAccounts(),
         listCatalogueItems(),
-        listCollections(),
+        listCollections().catch(() => []),
       ]);
       setSales([...s]);
       setCollections([...col]);

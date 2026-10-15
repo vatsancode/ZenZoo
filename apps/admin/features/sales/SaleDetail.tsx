@@ -1,19 +1,14 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Badge, Button, Card, Notice, textStyle } from "@zenzoo/ui-web";
+import { Badge, Card, Notice, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState, type ReactNode } from "react";
 import { accountLabel, paymentMethodLabel } from "../../lib/payment-options";
 import {
-  canReturnSale,
   getSale,
-  listCustomers,
-  recordSaleReturn,
   SALE_STATUS_LABEL,
   saleRefundTotal,
   saleStatus,
-  type SaleLine,
-  type SaleReturn,
   saleDiscountTotal,
   salePaymentLabel,
   saleLineNet,
@@ -22,9 +17,8 @@ import {
   type Sale,
 } from "./sales";
 import { formatDate, formatPrice } from "../../lib/stock-display";
-import { listProducts, receiveStock, saveProducts } from "../stocks/stocks";
+import { listCustomers } from "../../lib/customers";
 import PageHeader from "../../components/PageHeader";
-import SaleReturnSheet from "./SaleReturnSheet";
 import StatTile, { StatRow } from "../../components/StatTile";
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
@@ -65,7 +59,6 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
   const [sale, setSale] = useState<Sale | null | undefined>(undefined);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [hovered, setHovered] = useState<string | null>(null);
-  const [returnOpen, setReturnOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -76,7 +69,10 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
 
   useEffect(() => {
     getSale(saleId).then(setSale);
-    listCustomers().then(setCustomers);
+    // Someone who can see sales may not have access to Customers - the sale keeps its name anyway.
+    listCustomers(true)
+      .then(setCustomers)
+      .catch(() => setCustomers([]));
   }, [saleId]);
 
   if (sale === undefined) {
@@ -88,7 +84,7 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
       <>
         <PageHeader title="Sale not found" backHref="/sales" backLabel="Back to sales" />
         <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>
-          This sale doesn&apos;t exist, or was made in a session that has since reloaded.
+          This sale doesn&apos;t exist, or you don&apos;t have access to sales.
         </div>
       </>
     );
@@ -99,29 +95,6 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
   const status = saleStatus(sale);
   const customer = customers.find((item) => item.id === sale.customerId);
 
-  async function confirmReturn(ret: SaleReturn, picks: { line: SaleLine; quantity: number }[]) {
-    if (!sale) return;
-    recordSaleReturn(sale.id, ret);
-    // The goods come back into stock.
-    saveProducts(
-      receiveStock(
-        await listProducts(),
-        picks.map(({ line, quantity }) => ({ productId: line.productId, sku: line.sku, quantity })),
-      ),
-    );
-    const units = picks.reduce((sum, entry) => sum + entry.quantity, 0);
-    setReturnOpen(false);
-    setNotice(
-      `Return ${ret.number} recorded: ${units} ${units === 1 ? "unit" : "units"} back in stock. ${
-        ret.refund.mode === "money"
-          ? `${formatPrice(ret.refund.amount)} refunded.`
-          : ret.refund.mode === "credit"
-            ? `${formatPrice(ret.refund.amount)} added as store credit.`
-            : "No refund given."
-      }`,
-    );
-    getSale(sale.id).then(setSale);
-  }
   const profit = saleProfitOf(sale);
   const discount = saleDiscountTotal(sale);
   const units = sale.lines.reduce((sum, line) => sum + line.quantity, 0);
@@ -140,11 +113,6 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
             <Badge tone={status === "completed" ? "success" : "warning"}>
               {SALE_STATUS_LABEL[status]}
             </Badge>
-            {canReturnSale(sale) ? (
-              <Button type="button" variant="primary" onClick={() => setReturnOpen(true)}>
-                Return items
-              </Button>
-            ) : null}
           </div>
         }
       />
@@ -230,7 +198,11 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
             >
               <div style={{ minWidth: 0 }}>
                 <div style={{ ...textStyle("body"), color: colors.ink }}>{line.name}</div>
-                <div style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>{line.sku}</div>
+                {line.code ? (
+                  <div style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>
+                    {line.code}
+                  </div>
+                ) : null}
               </div>
               <span style={textStyle("data")}>
                 {line.quantity} {line.unit}
@@ -458,13 +430,6 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
           </div>
         </Card>
       </div>
-
-      <SaleReturnSheet
-        open={returnOpen}
-        sale={sale}
-        onClose={() => setReturnOpen(false)}
-        onConfirm={confirmReturn}
-      />
     </div>
   );
 }

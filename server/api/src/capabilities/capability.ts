@@ -29,6 +29,18 @@ export class PolicyViolationError extends Error {
   }
 }
 
+/**
+ * Thrown from a handler when the request was fine but the world has moved on since the caller
+ * last looked - a price changed, the stock ran out. Comes back as CONFLICT (409), so a till can
+ * tell "review and try again" apart from "that was never a valid request".
+ */
+export class ConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConflictError";
+  }
+}
+
 export class PermissionDeniedError extends Error {
   constructor(permission: Permission) {
     super(`Missing permission: ${permission}`);
@@ -91,6 +103,9 @@ export function defineCapability<Input, Output>(
         const data = await definition.handler(actor, input);
         return { ok: true, data };
       } catch (error) {
+        if (error instanceof ConflictError) {
+          return { ok: false, error: { code: "CONFLICT", message: error.message } };
+        }
         return {
           ok: false,
           error: {

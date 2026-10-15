@@ -7,23 +7,15 @@ import {
   Notice,
   Pagination,
   Table,
+  Tabs,
   textStyle,
   type TableColumn,
 } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { creditBalance, creditEntries, customerSales, netSpent } from "./customer-insights";
-import {
-  addCustomer,
-  dueBalance,
-  dueEntries,
-  listCollections,
-  listCustomers,
-  listSales,
-  type Customer,
-  type DueCollection,
-  type Sale,
-} from "../sales/sales";
+import { customerSales, netSpent } from "./customer-insights";
+import { listSales, type Sale } from "../sales/sales";
+import { addCustomer, creditOf, listCustomers, owesOf, type Customer } from "../../lib/customers";
 import { formatDate, formatPrice } from "../../lib/stock-display";
 import CustomerSheet from "./CustomerSheet";
 
@@ -40,9 +32,10 @@ interface Row {
 export default function CustomersTable() {
   const { colors, spacing } = useTheme();
   const router = useRouter();
+  // Active and archived together - the tab only filters, so switching is instant.
   const [customers, setCustomers] = useState<Customer[] | null>(null);
+  const [status, setStatus] = useState<"active" | "archived">("active");
   const [sales, setSales] = useState<Sale[]>([]);
-  const [collections, setCollections] = useState<DueCollection[]>([]);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -50,9 +43,15 @@ export default function CustomersTable() {
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    listCustomers().then(setCustomers);
-    listSales().then(setSales);
-    listCollections().then(setCollections);
+    listCustomers(true)
+      .then(setCustomers)
+      .catch((reason: unknown) => {
+        setCustomers([]);
+        setNotice(reason instanceof Error ? reason.message : "Couldn't load customers.");
+      });
+    listSales()
+      .then(setSales)
+      .catch(() => setSales([]));
   }, []);
 
   useEffect(() => {
@@ -63,23 +62,21 @@ export default function CustomersTable() {
 
   const rows: Row[] = useMemo(
     () =>
-      (customers ?? []).map((customer) => {
-        const mine = customerSales(sales, customer.id);
-        return {
-          customer,
-          purchases: mine.length,
-          spent: netSpent(mine),
-          lastPurchase: mine[0]?.date,
-          credit: creditBalance(creditEntries(mine)),
-          owes: dueBalance(
-            dueEntries(
-              mine,
-              collections.filter((item) => item.customerId === customer.id),
-            ),
-          ),
-        };
-      }),
-    [customers, sales, collections],
+      (customers ?? [])
+        .filter((customer) => customer.status === status)
+        .map((customer) => {
+          const mine = customerSales(sales, customer.id);
+          return {
+            customer,
+            purchases: mine.length,
+            spent: netSpent(mine),
+            lastPurchase: mine[0]?.date,
+            // From the server's ledger total, so it always agrees with the till.
+            credit: creditOf(customer),
+            owes: owesOf(customer),
+          };
+        }),
+    [customers, sales, status],
   );
 
   const filtered = useMemo(() => {
@@ -88,7 +85,7 @@ export default function CustomersTable() {
     return rows.filter(
       ({ customer }) =>
         customer.name.toLowerCase().includes(q) ||
-        (customer.phone ?? "").toLowerCase().includes(q) ||
+        (customer.phone ?? "").includes(q.replace(/[\s-]/g, "")) ||
         (customer.email ?? "").toLowerCase().includes(q),
     );
   }, [rows, query]);
@@ -158,8 +155,25 @@ export default function CustomersTable() {
     },
   ];
 
+  const count = (which: "active" | "archived") =>
+    (customers ?? []).filter((customer) => customer.status === which).length;
+
   return (
     <div>
+      <div style={{ marginBottom: spacing[6] }}>
+        <Tabs
+          aria-label="Customer status"
+          tabs={[
+            { id: "active", label: `Active (${count("active")})` },
+            { id: "archived", label: `Archived (${count("archived")})` },
+          ]}
+          value={status}
+          onChange={(next) => {
+            setStatus(next as "active" | "archived");
+            setPage(1);
+          }}
+        />
+      </div>
       <div
         style={{
           display: "flex",
@@ -194,10 +208,14 @@ export default function CustomersTable() {
         </div>
       ) : filtered.length === 0 ? (
         <div style={{ ...textStyle("callout"), color: colors.inkMuted, padding: spacing[6] }}>
-          No customers match your search.
+          {query.trim()
+            ? "No customers match your search."
+            : status === "archived"
+              ? "No archived customers."
+              : "No customers yet. Add one here, or at the till when they buy."}
         </div>
       ) : (
-        <>
+        <div role="tabpanel" aria-labelledby={`tab-${status}`}>
           <Table
             columns={columns}
             rows={visible}
@@ -217,18 +235,25 @@ export default function CustomersTable() {
               setPage(1);
             }}
           />
-        </>
+        </div>
       )}
 
       <CustomerSheet
         open={addOpen}
+        existing={customers ?? []}
         onClose={() => setAddOpen(false)}
-        onSubmit={(input) => {
-          const customer = addCustomer(input.name, { phone: input.phone, email: input.email });
-          setCustomers((current) => [customer, ...(current ?? [])]);
+        onOpenCustomer={(id) => router.push(`/customers/${encodeURIComponent(id)}`)}
+        onSubmit={async (input) => {
+          const result = await addCustomer(input);
+          if (typeof result === "string") return result;
+          setCustomers((current) =>
+            [...(current ?? []), result].sort((a, b) => a.name.localeCompare(b.name)),
+          );
+          setStatus("active");
           setPage(1);
           setAddOpen(false);
-          setNotice(`${customer.name} added.`);
+          setNotice(`${result.name} added.`);
+          return null;
         }}
       />
     </div>

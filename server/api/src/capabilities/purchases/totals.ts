@@ -31,7 +31,10 @@ const round2 = (value: number) => Math.round(value * 100) / 100;
  * caller, so the header this writes can never disagree with its own
  * lines by the time either CHECK/trigger runs.
  */
-export function computeTotals(items: PurchaseLineInput[], adjustmentAmount: number): ComputedTotals {
+export function computeTotals(
+  items: PurchaseLineInput[],
+  adjustmentAmount: number,
+): ComputedTotals {
   const lines = items.map((item) => {
     const discountAmount = item.discountAmount ?? 0;
     const taxAmount = item.taxAmount ?? 0;
@@ -49,7 +52,9 @@ export function computeTotals(items: PurchaseLineInput[], adjustmentAmount: numb
     };
   });
 
-  const subtotalAmount = round2(lines.reduce((sum, line) => sum + round2(line.quantity * line.unitCost), 0));
+  const subtotalAmount = round2(
+    lines.reduce((sum, line) => sum + round2(line.quantity * line.unitCost), 0),
+  );
   const discountAmount = round2(lines.reduce((sum, line) => sum + line.discountAmount, 0));
   const taxAmount = round2(lines.reduce((sum, line) => sum + line.taxAmount, 0));
   const totalAmount = round2(subtotalAmount - discountAmount + taxAmount + adjustmentAmount);

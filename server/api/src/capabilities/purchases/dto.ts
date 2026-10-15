@@ -105,8 +105,7 @@ export function toPurchaseDto(row: PurchaseRow): PurchaseDto {
     referenceNumber: row.reference_number,
     purchaseDate: row.purchase_date.toISOString(),
     status,
-    fullyReceived:
-      status === "received" ? items.every((item) => item.pendingQuantity === 0) : null,
+    fullyReceived: status === "received" ? items.every((item) => item.pendingQuantity === 0) : null,
     subtotalAmount: row.subtotal_amount.toString(),
     discountAmount: row.discount_amount.toString(),
     taxAmount: row.tax_amount.toString(),

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@zenzoo/design-tokens": "workspace:*",
+    "@zenzoo/pricing": "workspace:*",
     "@zenzoo/types": "workspace:*",
     "@zenzoo/ui-web": "workspace:*",
     "next": "15.5.27",

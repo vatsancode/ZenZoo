@@ -1,6 +1,10 @@
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
-import { PAYMENT_METHOD_SELECT, toPaymentMethodDto, type PaymentMethodDto } from "../paymentMethods/dto";
+import {
+  PAYMENT_METHOD_SELECT,
+  toPaymentMethodDto,
+  type PaymentMethodDto,
+} from "../paymentMethods/dto";
 
 /** Tenant-wide, not store-scoped - payment_methods has no store_id ("how" is a tenant-level question, "where" (accounts) is per-store). */
 export const listPaymentMethods = defineCapability<void, PaymentMethodDto[]>({

@@ -15,7 +15,6 @@ import {
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  creditBalance,
   creditEntries,
   customerSales,
   netSpent,
@@ -23,24 +22,29 @@ import {
 } from "./customer-insights";
 import { paymentMethodLabel } from "../../lib/payment-options";
 import {
-  dueBalance,
   dueEntries,
-  editCustomer,
-  getCustomer,
-  listCollections,
   listSales,
-  recordCollection,
   SALE_STATUS_LABEL,
   salePaymentLabel,
   saleRefundTotal,
   saleStatus,
-  type Customer,
   type DueCollection,
   type Sale,
 } from "../sales/sales";
+import {
+  creditOf,
+  editCustomer,
+  getCustomer,
+  listCollections,
+  listCustomerPaymentOptions,
+  listCustomers,
+  owesOf,
+  receivePayment,
+  setCustomerArchived,
+  type Customer,
+} from "../../lib/customers";
+import type { TillPaymentOptions } from "../../lib/till";
 import { formatDate, formatPrice } from "../../lib/stock-display";
-import { listCatalogueItems, type CatalogueItem } from "../../lib/catalogue-items";
-import { listProducts, type Product } from "../stocks/stocks";
 import CustomerDues from "./CustomerDues";
 import CustomerSheet from "./CustomerSheet";
 import PageHeader from "../../components/PageHeader";
@@ -73,20 +77,31 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
   const [customer, setCustomer] = useState<Customer | null | undefined>(undefined);
   const [sales, setSales] = useState<Sale[]>([]);
   const [collections, setCollections] = useState<DueCollection[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [catalogue, setCatalogue] = useState<CatalogueItem[]>([]);
   const [tab, setTab] = useState("overview");
   const [editOpen, setEditOpen] = useState(false);
+  const [everyone, setEveryone] = useState<Customer[]>([]);
+  const [archiving, setArchiving] = useState(false);
+  const [paymentOptions, setPaymentOptions] = useState<TillPaymentOptions | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     getCustomer(customerId).then(setCustomer);
-    listSales().then(setSales);
-    listCollections().then(setCollections);
-    listProducts().then(setProducts);
-    listCatalogueItems().then((items) => setCatalogue([...items]));
+    // Only to point at whoever holds a phone number that's already taken, so failing is fine.
+    listCustomers(true)
+      .then(setEveryone)
+      .catch(() => setEveryone([]));
+    listSales({ customerId })
+      .then(setSales)
+      .catch(() => setSales([]));
+    listCollections(customerId)
+      .then(setCollections)
+      .catch(() => setCollections([]));
+    // Only needed to take a payment, which needs customers:edit - fine to be missing otherwise.
+    listCustomerPaymentOptions()
+      .then(setPaymentOptions)
+      .catch(() => setPaymentOptions(null));
   }, [customerId]);
 
   const mine = useMemo(() => customerSales(sales, customerId), [sales, customerId]);
@@ -99,13 +114,15 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
       ),
     [mine, collections, customerId],
   );
+  // Each sale line carries its item's category, so no separate product list is needed.
   const categoryByProduct = useMemo(
     () =>
-      new Map([
-        ...products.map((product) => [product.id, product.category] as const),
-        ...catalogue.map((item) => [item.id, item.category] as const),
-      ]),
-    [products, catalogue],
+      new Map(
+        mine.flatMap((sale) =>
+          sale.lines.map((line) => [line.productId, line.category ?? "Other"] as const),
+        ),
+      ),
+    [mine],
   );
   const preferences = useMemo(
     () => preferencesOf(mine, (productId) => categoryByProduct.get(productId) ?? "Other"),
@@ -127,15 +144,16 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
           backLabel="Back to customers"
         />
         <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>
-          This customer doesn&apos;t exist, or was added in a session that has since reloaded.
+          This customer doesn&apos;t exist, or you don&apos;t have access to customers.
         </div>
       </>
     );
   }
 
   const spent = netSpent(mine);
-  const balance = creditBalance(entries);
-  const owed = dueBalance(dues);
+  // What they owe, or the store credit they hold, comes from the server's ledger total.
+  const balance = creditOf(customer);
+  const owed = owesOf(customer);
   const issued = entries
     .filter((entry) => entry.amount > 0)
     .reduce((sum, entry) => sum + entry.amount, 0);
@@ -223,6 +241,24 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
     </div>
   );
 
+  async function toggleArchived() {
+    if (!customer) return;
+    setArchiving(true);
+    const archive = customer.status === "active";
+    const result = await setCustomerArchived(customer.id, archive);
+    setArchiving(false);
+    if (typeof result === "string") {
+      setNotice(result);
+      return;
+    }
+    setCustomer(result);
+    setNotice(
+      archive
+        ? `${result.name} archived. They no longer appear at the till; restore them any time.`
+        : `${result.name} restored.`,
+    );
+  }
+
   const nothingYet = (text: string) => (
     <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>{text}</div>
   );
@@ -238,6 +274,7 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
         backLabel="Back to customers"
         action={
           <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
+            {customer.status === "archived" ? <Badge tone="neutral">Archived</Badge> : null}
             {owed > 0 ? <Badge tone="warning">{formatPrice(owed)} due</Badge> : null}
             {balance > 0 ? <Badge tone="success">{formatPrice(balance)} store credit</Badge> : null}
             <Button
@@ -247,6 +284,15 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
               style={{ backgroundColor: "transparent", border: `1px solid ${colors.border}` }}
             >
               Edit customer
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={archiving}
+              onClick={() => void toggleArchived()}
+              style={{ backgroundColor: "transparent", border: `1px solid ${colors.border}` }}
+            >
+              {customer.status === "archived" ? "Restore" : "Archive"}
             </Button>
           </div>
         }
@@ -316,9 +362,11 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
                   {[
                     { label: "Phone", value: customer.phone ?? "-" },
                     { label: "Email", value: customer.email ?? "-" },
+                    { label: "Address", value: customer.address ?? "-" },
+                    { label: "Notes", value: customer.notes ?? "-" },
                     {
                       label: "Customer since",
-                      value: customer.since ? formatDate(customer.since) : "-",
+                      value: formatDate(customer.since),
                     },
                     { label: "Last purchase", value: mine[0] ? formatDate(mine[0].date) : "-" },
                   ].map((row, index) => (
@@ -441,13 +489,26 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
               </Card>
             </div>
 
-            {dues.length > 0 ? (
+            {dues.length > 0 || owed > 0 ? (
               <CustomerDues
                 entries={dues}
-                onCollect={(input) => {
-                  recordCollection({ ...input, customerId });
-                  listCollections().then((items) => setCollections([...items]));
+                owed={owed}
+                options={paymentOptions}
+                onCollect={async (input) => {
+                  const result = await receivePayment(customerId, {
+                    amount: input.amount,
+                    paymentMethodId: input.methodId,
+                    paymentAccountId: input.accountId,
+                    note: input.note,
+                  });
+                  if (typeof result === "string") return result;
+                  // Their balance and the list of payments have both changed.
+                  getCustomer(customerId).then(setCustomer);
+                  listCollections(customerId)
+                    .then(setCollections)
+                    .catch(() => undefined);
                   setNotice(`Recorded ${formatPrice(input.amount)} received.`);
+                  return null;
                 }}
               />
             ) : null}
@@ -608,12 +669,19 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
       <CustomerSheet
         open={editOpen}
         customer={customer}
+        existing={everyone}
         onClose={() => setEditOpen(false)}
-        onSubmit={(input) => {
-          editCustomer(customer.id, input);
+        onOpenCustomer={(id) => {
+          setEditOpen(false);
+          router.push(`/customers/${encodeURIComponent(id)}`);
+        }}
+        onSubmit={async (input) => {
+          const result = await editCustomer(customer.id, input);
+          if (typeof result === "string") return result;
+          setCustomer(result);
           setEditOpen(false);
           setNotice("Customer updated.");
-          getCustomer(customerId).then(setCustomer);
+          return null;
         }}
       />
     </div>

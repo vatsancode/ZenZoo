@@ -33,6 +33,9 @@ importers:
       '@zenzoo/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@zenzoo/pricing':
+        specifier: workspace:*
+        version: link:../../packages/pricing
       '@zenzoo/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -174,6 +177,24 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/pricing:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.7
+        version: 22.20.5
+      '@zenzoo/config':
+        specifier: workspace:*
+        version: link:../config
+      eslint:
+        specifier: ^9.18.0
+        version: 9.39.5(jiti@2.7.0)
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.15
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/types:
     devDependencies:
       '@zenzoo/config':
@@ -244,6 +265,9 @@ importers:
       '@prisma/client':
         specifier: ^6.3.0
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+      '@zenzoo/pricing':
+        specifier: workspace:*
+        version: link:../../packages/pricing
       '@zenzoo/types':
         specifier: workspace:*
         version: link:../../packages/types

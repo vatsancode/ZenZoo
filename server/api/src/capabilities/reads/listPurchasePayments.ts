@@ -11,7 +11,10 @@ export interface ListPurchasePaymentsInput {
   purchaseId: string;
 }
 
-export const listPurchasePayments = defineCapability<ListPurchasePaymentsInput, PurchasePaymentDto[]>({
+export const listPurchasePayments = defineCapability<
+  ListPurchasePaymentsInput,
+  PurchasePaymentDto[]
+>({
   name: "listPurchasePayments",
   kind: "read",
   requiredPermission: "purchases:view",
