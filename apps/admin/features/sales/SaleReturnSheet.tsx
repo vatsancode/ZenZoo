@@ -1,20 +1,18 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Button, Chips, DatePicker, Input, Select, Sheet, textStyle } from "@zenzoo/ui-web";
+import { Button, Chips, Input, Select, Sheet, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
-import { PAYMENT_ACCOUNT_OPTIONS, PAYMENT_METHOD_OPTIONS } from "../../lib/payment-options";
+import type { ReturnInput } from "../../lib/sales";
+import type { TillPaymentOptions } from "../../lib/till";
 import {
-  nextReturnNumber,
   returnableOf,
+  returnValueOf,
   SALE_RETURN_REASONS,
-  unitRefundOf,
   type Sale,
   type SaleLine,
   type SaleRefundMode,
-  type SaleReturn,
 } from "./sales";
-import { today } from "../../lib/date-ranges";
 import { formatPrice } from "../../lib/stock-display";
 import FormField from "../../components/FormField";
 import InfoTip from "../../components/InfoTip";
@@ -23,8 +21,11 @@ import QuantityPill from "../../components/QuantityPill";
 interface SaleReturnSheetProps {
   open: boolean;
   sale: Sale;
+  /** The active methods and accounts a refund can be paid by; null while loading. */
+  options: TillPaymentOptions | null;
   onClose: () => void;
-  onConfirm: (ret: SaleReturn, picks: { line: SaleLine; quantity: number }[]) => void;
+  /** Saves the return; resolves to an error message to show, or null when it went through. */
+  onConfirm: (input: Omit<ReturnInput, "id">) => Promise<string | null>;
 }
 
 const number = (value: string) => (value.trim() === "" ? 0 : Number(value));
@@ -38,24 +39,23 @@ const REFUND_HELP: Record<SaleRefundMode, string> = {
   none: "Nothing is paid back or credited. Use this for a straight swap handled as a new sale.",
 };
 
-// Where the money usually leaves from for each method; the cashier can still change it.
-const DEFAULT_ACCOUNT: Record<string, string> = {
-  CASH: "cash-drawer",
-  UPI: "hdfc-current",
-  CARD: "hdfc-current",
-  BANK_TRANSFER: "hdfc-current",
-};
-
 /**
  * Takes goods back from a customer, in two steps in a side panel: what is coming
  * back, then why and how the customer is made whole.
  */
-export default function SaleReturnSheet({ open, sale, onClose, onConfirm }: SaleReturnSheetProps) {
+export default function SaleReturnSheet({
+  open,
+  sale,
+  options,
+  onClose,
+  onConfirm,
+}: SaleReturnSheetProps) {
+  const methods = options?.methods ?? [];
+  const accounts = options?.accounts ?? [];
   const { colors, radius, spacing } = useTheme();
   const knownCustomer = Boolean(sale.customerId);
   const [step, setStep] = useState<1 | 2>(1);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
-  const [date, setDate] = useState(today());
   const [reason, setReason] = useState("");
   const [note, setNote] = useState("");
   const [mode, setMode] = useState<SaleRefundMode>("money");
@@ -64,12 +64,13 @@ export default function SaleReturnSheet({ open, sale, onClose, onConfirm }: Sale
   const [method, setMethod] = useState("");
   const [accountId, setAccountId] = useState("");
   const [touched, setTouched] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) return;
     setStep(1);
     setQuantities({});
-    setDate(today());
     setReason("");
     setNote("");
     setMode("money");
@@ -77,6 +78,8 @@ export default function SaleReturnSheet({ open, sale, onClose, onConfirm }: Sale
     setMethod("");
     setAccountId("");
     setTouched(false);
+    setSaving(false);
+    setServerError(null);
   }, [open]);
 
   const lines = sale.lines.filter((line) => returnableOf(line) > 0);
@@ -84,8 +87,9 @@ export default function SaleReturnSheet({ open, sale, onClose, onConfirm }: Sale
     .map((line) => ({ line, quantity: number(quantities[line.sku] ?? "") }))
     .filter((entry) => entry.quantity > 0);
   const units = picks.reduce((sum, entry) => sum + entry.quantity, 0);
+  // The same shared maths the server uses, so what is shown is what is paid.
   const value = money(
-    picks.reduce((sum, entry) => sum + entry.quantity * unitRefundOf(sale, entry.line), 0),
+    picks.reduce((sum, entry) => sum + returnValueOf(entry.line, entry.quantity), 0),
   );
 
   function problemWith(line: SaleLine): string | null {
@@ -103,7 +107,6 @@ export default function SaleReturnSheet({ open, sale, onClose, onConfirm }: Sale
   const paid = mode === "none" ? 0 : amount === null ? value : number(amount);
   const problems = {
     reason: reason === "" ? "Choose a reason." : null,
-    date: date === "" ? "Choose the return date." : null,
     amount:
       mode === "none"
         ? null
@@ -125,31 +128,31 @@ export default function SaleReturnSheet({ open, sale, onClose, onConfirm }: Sale
     }
   }
 
-  function confirm() {
+  async function confirm() {
     setTouched(true);
-    if (!stepTwoReady) return;
-    onConfirm(
-      {
-        id: `sret-${Date.now()}`,
-        number: nextReturnNumber(),
-        date,
-        reason,
-        note: note.trim() || undefined,
-        items: picks.map(({ line, quantity }) => ({
-          sku: line.sku,
-          name: line.name,
-          unit: line.unit,
-          quantity,
-          unitRefund: unitRefundOf(sale, line),
-        })),
-        value,
-        refund:
-          mode === "money"
-            ? { mode, amount: money(paid), method, accountId }
-            : { mode, amount: money(paid) },
-      },
-      picks,
-    );
+    if (!stepTwoReady || saving) return;
+    setSaving(true);
+    setServerError(null);
+    const failure = await onConfirm({
+      reason,
+      note: note.trim() || undefined,
+      items: picks.flatMap(({ line, quantity }) =>
+        line.id ? [{ saleItemId: line.id, quantity }] : [],
+      ),
+      refund:
+        mode === "none"
+          ? { mode }
+          : {
+              mode,
+              // Only when the customer is refunded less than the full value; otherwise the server
+              // works the full value out itself.
+              amount: amount === null ? undefined : money(paid),
+              paymentMethodId: mode === "money" ? method : undefined,
+              paymentAccountId: mode === "money" ? accountId : undefined,
+            },
+    });
+    setSaving(false);
+    if (failure) setServerError(failure);
   }
 
   const refundOptions: { value: SaleRefundMode; label: string }[] = [
@@ -167,7 +170,11 @@ export default function SaleReturnSheet({ open, sale, onClose, onConfirm }: Sale
       footer={
         <div style={{ display: "flex", flexDirection: "column", gap: spacing[4] }}>
           <div style={{ ...textStyle("body"), color: colors.inkMuted }}>
-            {picks.length === 0 ? (
+            {serverError ? (
+              <span role="alert" style={{ color: colors.danger }}>
+                {serverError}
+              </span>
+            ) : picks.length === 0 ? (
               "Enter how many are coming back to continue."
             ) : (
               <>
@@ -207,8 +214,14 @@ export default function SaleReturnSheet({ open, sale, onClose, onConfirm }: Sale
                 >
                   Back
                 </Button>
-                <Button type="button" variant="primary" onClick={confirm} style={{ flex: 2 }}>
-                  Confirm return
+                <Button
+                  type="button"
+                  variant="primary"
+                  disabled={saving}
+                  onClick={() => void confirm()}
+                  style={{ flex: 2 }}
+                >
+                  {saving ? "Saving the return..." : "Confirm return"}
                 </Button>
               </>
             )}
@@ -306,9 +319,11 @@ export default function SaleReturnSheet({ open, sale, onClose, onConfirm }: Sale
                 >
                   <div style={{ minWidth: 0 }}>
                     <div style={{ ...textStyle("bodyMedium"), color: colors.ink }}>{line.name}</div>
-                    <div style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>
-                      {line.sku}
-                    </div>
+                    {line.code ? (
+                      <div style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>
+                        {line.code}
+                      </div>
+                    ) : null}
                     <div
                       role={problem ? "alert" : undefined}
                       style={{
@@ -320,7 +335,7 @@ export default function SaleReturnSheet({ open, sale, onClose, onConfirm }: Sale
                       {problem
                         ? problem
                         : chosen
-                          ? `Worth ${formatPrice(money(quantity * unitRefundOf(sale, line)))}`
+                          ? `Worth ${formatPrice(returnValueOf(line, quantity))}`
                           : line.returned
                             ? `${can} can come back · ${line.returned} already returned`
                             : `${can} of ${line.quantity} sold can come back`}
@@ -382,20 +397,6 @@ export default function SaleReturnSheet({ open, sale, onClose, onConfirm }: Sale
                     searchable={false}
                     aria-invalid={touched && problems.reason ? true : undefined}
                     onChange={setReason}
-                  />
-                </FormField>
-                <FormField
-                  id="sret-date"
-                  label="RETURN DATE"
-                  span={1}
-                  error={touched ? problems.date : null}
-                >
-                  <DatePicker
-                    id="sret-date"
-                    value={date}
-                    clearable={false}
-                    align="right"
-                    onChange={setDate}
                   />
                 </FormField>
                 <FormField id="sret-note" label="NOTE (OPTIONAL)" span={2}>
@@ -483,14 +484,23 @@ export default function SaleReturnSheet({ open, sale, onClose, onConfirm }: Sale
                       >
                         <Select
                           id="sret-method"
-                          options={PAYMENT_METHOD_OPTIONS}
+                          options={methods.map((item) => ({ value: item.id, label: item.name }))}
                           value={method}
                           placeholder="Method"
                           searchable={false}
                           aria-invalid={touched && problems.method ? true : undefined}
                           onChange={(next) => {
                             setMethod(next);
-                            setAccountId(DEFAULT_ACCOUNT[next] ?? "");
+                            // The cash drawer for cash, otherwise the first account.
+                            const code = methods.find((item) => item.id === next)?.code;
+                            setAccountId(
+                              (code === "CASH"
+                                ? accounts.find((account) => /cash|drawer/i.test(account.name))
+                                : undefined
+                              )?.id ??
+                                accounts[0]?.id ??
+                                "",
+                            );
                           }}
                         />
                       </FormField>
@@ -502,7 +512,7 @@ export default function SaleReturnSheet({ open, sale, onClose, onConfirm }: Sale
                       >
                         <Select
                           id="sret-account"
-                          options={PAYMENT_ACCOUNT_OPTIONS}
+                          options={accounts.map((item) => ({ value: item.id, label: item.name }))}
                           value={accountId}
                           placeholder="Account"
                           searchable={false}

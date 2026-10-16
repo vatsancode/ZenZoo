@@ -65,3 +65,17 @@ export const listCustomerPaymentOptions = defineCapability<
     return runInTenantContext(actor, (tx) => paymentOptionsInTx(tx, actor, input.storeId));
   },
 });
+
+/** The same lists for the sale page, where a return is paid back out of an account. */
+export const listSaleRefundOptions = defineCapability<
+  ListTillPaymentOptionsInput,
+  TillPaymentOptionsDto
+>({
+  name: "listSaleRefundOptions",
+  kind: "read",
+  requiredPermission: "sales:edit",
+  async handler(actor, input) {
+    await assertStoreAccess(actor, input.storeId);
+    return runInTenantContext(actor, (tx) => paymentOptionsInTx(tx, actor, input.storeId));
+  },
+});

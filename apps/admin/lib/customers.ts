@@ -162,13 +162,98 @@ export async function listCollections(customerId?: string): Promise<DueCollectio
  */
 export async function receivePayment(
   customerId: string,
-  input: { amount: number; paymentMethodId: string; paymentAccountId: string; note?: string },
-): Promise<{ balance: number } | string> {
+  input: {
+    amount: number;
+    paymentMethodId: string;
+    paymentAccountId: string;
+    note?: string;
+    /** Allow more than they owe; the extra is kept as store credit. */
+    keepExtraAsCredit?: boolean;
+  },
+): Promise<{ balance: number; keptAsCredit: number } | string> {
   const storeId = await ensureStoreId();
-  const result = await send<{ balance: string }>(
+  const result = await send<{ balance: string; keptAsCredit: string }>(
     `/customers/${encodeURIComponent(customerId)}/payments`,
     "POST",
     { storeId, ...input },
   );
-  return typeof result === "string" ? result : { balance: Number(result.balance) };
+  return typeof result === "string"
+    ? result
+    : { balance: Number(result.balance), keptAsCredit: Number(result.keptAsCredit) };
+}
+
+/** One line of a customer's account - the server's CustomerStatementEntryDto, amounts as numbers. */
+export type StatementType =
+  | "CREDIT_SALE"
+  | "CREDIT_PAYMENT"
+  | "CREDIT_ADJUSTMENT"
+  | "CREDIT_REVERSAL"
+  | "SALE_PAYMENT"
+  | "RETURN_REFUND"
+  | "PAYMENT_RETURNED";
+
+export interface StatementEntry {
+  id: string;
+  /** ISO date and time it was entered. */
+  at: string;
+  type: StatementType;
+  /** What it did to the balance: above 0 is a debit (they owe more), below 0 a credit (they owe less, or hold store credit). 0 for cash-only lines. */
+  amount: number;
+  /** Cash that moved: above 0 received from the customer, below 0 paid back to them; null when no cash moved. */
+  money: number | null;
+  /** What they owed (above 0) or held as store credit (below 0) right after this entry. */
+  balance: number;
+  saleId: string | null;
+  saleNumber: string | null;
+  returnNumber: string | null;
+  /** STORE_CREDIT or ON_ACCOUNT for a sale entry; how it was paid for a payment received. */
+  methodCode: string | null;
+  methodName: string | null;
+  accountName: string | null;
+  reference: string | null;
+  note: string | null;
+  enteredBy: string;
+}
+
+interface StatementDto {
+  id: string;
+  createdAt: string;
+  type: StatementType;
+  amount: string;
+  money: string | null;
+  balance: string;
+  saleId: string | null;
+  saleNumber: string | null;
+  returnNumber: string | null;
+  methodCode: string | null;
+  methodName: string | null;
+  accountName: string | null;
+  reference: string | null;
+  note: string | null;
+  enteredBy: string;
+}
+
+/**
+ * Everything on a customer's account, oldest first, with the running balance after each entry -
+ * requires "customers:view". The ledger behind it is append-only: nothing here can be changed.
+ */
+export async function listCustomerStatement(customerId: string): Promise<StatementEntry[]> {
+  const rows = await read<StatementDto[]>(`/customers/${encodeURIComponent(customerId)}/statement`);
+  return rows.map((row) => ({
+    id: row.id,
+    at: row.createdAt,
+    type: row.type,
+    amount: Number(row.amount),
+    money: row.money === null ? null : Number(row.money),
+    balance: Number(row.balance),
+    saleId: row.saleId,
+    saleNumber: row.saleNumber,
+    returnNumber: row.returnNumber,
+    methodCode: row.methodCode,
+    methodName: row.methodName,
+    accountName: row.accountName,
+    reference: row.reference,
+    note: row.note,
+    enteredBy: row.enteredBy,
+  }));
 }

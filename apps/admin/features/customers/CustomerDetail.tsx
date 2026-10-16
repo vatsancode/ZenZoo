@@ -14,12 +14,7 @@ import {
 } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import {
-  creditEntries,
-  customerSales,
-  netSpent,
-  preferencesOf,
-} from "./customer-insights";
+import { creditEntries, customerSales, netSpent, preferencesOf } from "./customer-insights";
 import { paymentMethodLabel } from "../../lib/payment-options";
 import {
   dueEntries,
@@ -46,6 +41,8 @@ import {
 import type { TillPaymentOptions } from "../../lib/till";
 import { formatDate, formatPrice } from "../../lib/stock-display";
 import CustomerDues from "./CustomerDues";
+import RecordPaymentModal from "./RecordPaymentModal";
+import CustomerStatement from "./CustomerStatement";
 import CustomerSheet from "./CustomerSheet";
 import PageHeader from "../../components/PageHeader";
 import StatTile, { StatRow } from "../../components/StatTile";
@@ -53,6 +50,7 @@ import StatTile, { StatRow } from "../../components/StatTile";
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "history", label: "Purchase history" },
+  { id: "statement", label: "Account statement" },
 ];
 
 function CardTitle({ children, hint }: { children: ReactNode; hint?: string }) {
@@ -81,6 +79,7 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
   const [editOpen, setEditOpen] = useState(false);
   const [everyone, setEveryone] = useState<Customer[]>([]);
   const [archiving, setArchiving] = useState(false);
+  const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentOptions, setPaymentOptions] = useState<TillPaymentOptions | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -277,6 +276,9 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
             {customer.status === "archived" ? <Badge tone="neutral">Archived</Badge> : null}
             {owed > 0 ? <Badge tone="warning">{formatPrice(owed)} due</Badge> : null}
             {balance > 0 ? <Badge tone="success">{formatPrice(balance)} store credit</Badge> : null}
+            <Button type="button" variant="primary" onClick={() => setPaymentOpen(true)}>
+              Record payment
+            </Button>
             <Button
               type="button"
               variant="secondary"
@@ -490,27 +492,7 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
             </div>
 
             {dues.length > 0 || owed > 0 ? (
-              <CustomerDues
-                entries={dues}
-                owed={owed}
-                options={paymentOptions}
-                onCollect={async (input) => {
-                  const result = await receivePayment(customerId, {
-                    amount: input.amount,
-                    paymentMethodId: input.methodId,
-                    paymentAccountId: input.accountId,
-                    note: input.note,
-                  });
-                  if (typeof result === "string") return result;
-                  // Their balance and the list of payments have both changed.
-                  getCustomer(customerId).then(setCustomer);
-                  listCollections(customerId)
-                    .then(setCollections)
-                    .catch(() => undefined);
-                  setNotice(`Recorded ${formatPrice(input.amount)} received.`);
-                  return null;
-                }}
-              />
+              <CustomerDues entries={dues} owed={owed} onRecord={() => setPaymentOpen(true)} />
             ) : null}
 
             <Card>
@@ -636,6 +618,8 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
               )}
             </Card>
           </>
+        ) : tab === "statement" ? (
+          <CustomerStatement customerId={customerId} />
         ) : (
           <Card>
             <CardTitle>Purchase history</CardTitle>
@@ -665,6 +649,36 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
           </Card>
         )}
       </div>
+
+      <RecordPaymentModal
+        open={paymentOpen}
+        onClose={() => setPaymentOpen(false)}
+        customerName={customer.name}
+        owed={owed}
+        options={paymentOptions}
+        onSave={async (input) => {
+          const result = await receivePayment(customerId, {
+            amount: input.amount,
+            paymentMethodId: input.methodId,
+            paymentAccountId: input.accountId,
+            note: input.note,
+            keepExtraAsCredit: input.keepExtraAsCredit,
+          });
+          if (typeof result === "string") return result;
+          // Their balance, the list of payments and the statement have all changed.
+          getCustomer(customerId).then(setCustomer);
+          listCollections(customerId)
+            .then(setCollections)
+            .catch(() => undefined);
+          setPaymentOpen(false);
+          setNotice(
+            result.keptAsCredit > 0
+              ? `Recorded ${formatPrice(input.amount)} received. ${formatPrice(result.keptAsCredit)} is kept as store credit.`
+              : `Recorded ${formatPrice(input.amount)} received.`,
+          );
+          return null;
+        }}
+      />
 
       <CustomerSheet
         open={editOpen}

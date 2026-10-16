@@ -503,13 +503,20 @@ export default function PosCheckout({
                 }}
               >
                 {line.method === "" ? (
-                  <Chips
-                    aria-label={`Payment ${index + 1} method`}
-                    options={methodChips}
-                    value=""
-                    columns={3}
-                    onChange={(next) => chooseMethod(index, next)}
-                  />
+                  <>
+                    <Chips
+                      aria-label={`Payment ${index + 1} method`}
+                      options={methodChips}
+                      value=""
+                      columns={3}
+                      onChange={(next) => chooseMethod(index, next)}
+                    />
+                    {!customer ? (
+                      <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
+                        To pay later, choose a customer above first.
+                      </div>
+                    ) : null}
+                  </>
                 ) : (
                   <>
                     <div style={{ display: "flex", alignItems: "center", gap: spacing[2] }}>

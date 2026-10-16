@@ -2,6 +2,7 @@ import { paymentMethodLabel } from "../../lib/payment-options";
 import {
   parseTypedDiscount,
   priceCart,
+  returnValue,
   toPaise,
   toRupees,
   type PriceLineInput,
@@ -40,6 +41,10 @@ export { getSale, listSales } from "../../lib/sales";
 export { listCollections } from "../../lib/customers";
 
 export interface SaleLine {
+  /** The sale line's own id - what a return names. */
+  id?: string;
+  /** What the customer paid for the whole line (after discounts), exactly as the server has it. */
+  lineTotal?: number;
   /** A key that is always unique (the variant's id) - not shown to people; see `code`. */
   sku: string;
   /** The SKU people see and scan, when the item has one. */
@@ -132,6 +137,9 @@ export interface Sale {
   creditUsed?: number;
   /** Goods the customer brought back, oldest first. */
   returns?: SaleReturn[];
+  /** Cancelled: the sale stays on record (and keeps its number) but counts for nothing. */
+  voided?: boolean;
+  voidReason?: string;
 }
 
 const round = (value: number) => Math.round(value * 100) / 100;
@@ -278,6 +286,8 @@ export function saleLineNet(line: SaleLine): number {
 
 /** Profit on a recorded sale: what was kept after refunds, less what the goods that stayed sold cost. */
 export function saleProfitOf(sale: Sale): Profit {
+  // A cancelled sale never happened: no revenue and no cost.
+  if (sale.voided) return makeProfit(0, 0, true);
   const cost = sale.lines.reduce(
     (sum, line) => sum + (line.unitCost ?? 0) * (line.quantity - (line.returned ?? 0)),
     0,
@@ -302,13 +312,26 @@ export function unitRefundOf(sale: Sale, line: SaleLine): number {
   return round((saleLineNet(line) / line.quantity) * billFactor);
 }
 
-/** Units of a line still with the customer, so still returnable. */
+/**
+ * Units of a line still with the customer, so still returnable. A made-to-order item (a service)
+ * has no stock to put back, so it is never returnable - cancel the sale instead.
+ */
 export function returnableOf(line: SaleLine): number {
+  if (line.service) return 0;
   return Math.max(line.quantity - (line.returned ?? 0), 0);
 }
 
 export function canReturnSale(sale: Sale): boolean {
-  return sale.lines.some((line) => returnableOf(line) > 0);
+  return !sale.voided && sale.lines.some((line) => returnableOf(line) > 0);
+}
+
+/**
+ * What coming back is worth: `quantity` more units of a line, given what has already been
+ * returned - the same shared maths the server uses, so the figure shown is the figure paid.
+ */
+export function returnValueOf(line: SaleLine, quantity: number): number {
+  const total = line.lineTotal ?? saleLineNet(line);
+  return toRupees(returnValue(toPaise(total), line.quantity, line.returned ?? 0, quantity));
 }
 
 /** Money and credit given back for this sale. */
@@ -316,28 +339,20 @@ export function saleRefundTotal(sale: Sale): number {
   return round((sale.returns ?? []).reduce((sum, ret) => sum + ret.refund.amount, 0));
 }
 
-export type SaleStatus = "completed" | "partly_returned" | "returned";
+export type SaleStatus = "completed" | "partly_returned" | "returned" | "voided";
 
 export const SALE_STATUS_LABEL: Record<SaleStatus, string> = {
   completed: "Completed",
   partly_returned: "Partly returned",
   returned: "Returned",
+  voided: "Cancelled",
 };
 
 export function saleStatus(sale: Sale): SaleStatus {
+  if (sale.voided) return "voided";
   const returned = sale.lines.reduce((sum, line) => sum + (line.returned ?? 0), 0);
   if (returned === 0) return "completed";
   return canReturnSale(sale) ? "partly_returned" : "returned";
-}
-
-/**
- * The next credit slip number. Returns aren't saved to the server yet (they come with voids), so
- * this counts from a local counter - a placeholder until that is built.
- */
-let returnCounter = 0;
-export function nextReturnNumber(): string {
-  returnCounter += 1;
-  return `RET-${String(returnCounter).padStart(4, "0")}`;
 }
 
 // ------------------------------------------------------------------ dues

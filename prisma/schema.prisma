@@ -45,6 +45,7 @@ model customer_credit_ledger {
   created_by                   String                   @db.Uuid
   created_at                   DateTime                 @default(now()) @db.Timestamptz(6)
   reference                    String?                  @db.VarChar(100)
+  sale_return_id               String?                  @db.Uuid
   payment_method_id            String?                  @db.Uuid
   payment_account_id           String?                  @db.Uuid
   notes                        String?
@@ -148,6 +149,7 @@ model payment_accounts {
   stores                                                                                   stores              @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "payment_accounts_store_fk")
   tenants                                                                                  tenants             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   purchase_payments                                                                        purchase_payments[]
+  sale_returns                                                                             sale_returns[]
   sale_payments                                                                            sale_payments[]
 
   @@unique([tenant_id, store_id, code], map: "payment_accounts_tenant_store_code_unique")
@@ -168,6 +170,7 @@ model payment_methods {
   updated_at         DateTime            @default(now()) @db.Timestamptz(6)
   tenants            tenants             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   purchase_payments  purchase_payments[]
+  sale_returns       sale_returns[]
   sale_payments      sale_payments[]
 
   @@unique([tenant_id, code], map: "payment_methods_tenant_code_unique")
@@ -411,6 +414,7 @@ model sale_return_items {
   sale_item_id       String             @db.Uuid
   sale_item_batch_id String             @db.Uuid
   quantity           Int
+  value_amount       Decimal            @default(0) @db.Decimal(12, 2)
   notes              String?            @db.VarChar(500)
   created_at         DateTime           @default(now()) @db.Timestamptz(6)
   updated_at         DateTime           @default(now()) @db.Timestamptz(6)
@@ -436,9 +440,17 @@ model sale_returns {
   return_number     String?             @db.VarChar(50)
   status            String              @default("draft") @db.VarChar(20)
   reason            String?             @db.VarChar(500)
+  note              String?
+  value_amount      Decimal             @default(0) @db.Decimal(14, 2)
+  refund_mode       String              @default("none") @db.VarChar(10)
+  refund_amount     Decimal             @default(0) @db.Decimal(14, 2)
+  refund_method_id  String?             @db.Uuid
+  refund_account_id String?             @db.Uuid
   created_by        String              @db.Uuid
   created_at        DateTime            @default(now()) @db.Timestamptz(6)
   updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  payment_methods   payment_methods?    @relation(fields: [tenant_id, refund_method_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sale_returns_refund_method_fk")
+  payment_accounts  payment_accounts?   @relation(fields: [tenant_id, store_id, refund_account_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sale_returns_refund_account_fk")
   sale_return_items sale_return_items[]
   users             users               @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   sales             sales               @relation(fields: [tenant_id, store_id, sale_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "sale_returns_sale_fk")

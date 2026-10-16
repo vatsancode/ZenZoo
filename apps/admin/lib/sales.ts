@@ -1,7 +1,8 @@
 import { redirectToSignInIfUnauthorized } from "./auth";
 import { rememberPaymentNames } from "./payment-options";
 import { ensureStoreId } from "./storeContext";
-import type { Sale } from "../features/sales/sales";
+import type { TillPaymentOptions } from "./till";
+import type { Sale, SaleReturn } from "../features/sales/sales";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -16,7 +17,10 @@ interface SaleDto {
   discount: string;
   billDiscount: string;
   total: string;
+  status: "draft" | "completed" | "voided";
+  voidReason: string | null;
   lines: {
+    id: string;
     variantId: string;
     productId: string;
     productName: string;
@@ -30,6 +34,22 @@ interface SaleDto {
     discount: string;
     billShare: string;
     cost: string;
+    lineTotal: string;
+    returned: number;
+  }[];
+  returns: {
+    id: string;
+    number: string | null;
+    createdAt: string;
+    reason: string | null;
+    note: string | null;
+    refundMode: "money" | "credit" | "none";
+    value: string;
+    refundAmount: string;
+    refundMethodCode: string | null;
+    refundAccountId: string | null;
+    refundAccountName: string | null;
+    items: { saleItemId: string; quantity: number; value: string }[];
   }[];
   payments: {
     paymentMethodCode: string;
@@ -78,6 +98,49 @@ export function toSale(dto: SaleDto): Sale {
   );
 
   const billDiscount = Number(dto.billDiscount);
+  const lineBySaleItem = new Map(dto.lines.map((line) => [line.id, line]));
+  const nameOf = (line: SaleDto["lines"][number]) =>
+    line.variantName === line.productName
+      ? line.productName
+      : `${line.productName} - ${line.variantName}`;
+  const returns: SaleReturn[] = dto.returns.map((ret) => {
+    if (ret.refundMethodCode || ret.refundAccountName) {
+      rememberPaymentNames(
+        ret.refundMethodCode ? [{ code: ret.refundMethodCode, name: ret.refundMethodCode }] : [],
+        ret.refundAccountId && ret.refundAccountName
+          ? [{ id: ret.refundAccountId, name: ret.refundAccountName }]
+          : [],
+      );
+    }
+    return {
+      id: ret.id,
+      number: ret.number ?? "",
+      date: localDay(ret.createdAt),
+      reason: ret.reason ?? "",
+      note: ret.note ?? undefined,
+      items: ret.items.flatMap((item) => {
+        const line = lineBySaleItem.get(item.saleItemId);
+        return line
+          ? [
+              {
+                sku: line.variantId,
+                name: nameOf(line),
+                unit: line.unit,
+                quantity: item.quantity,
+                unitRefund: round(Number(item.value) / item.quantity),
+              },
+            ]
+          : [];
+      }),
+      value: Number(ret.value),
+      refund: {
+        mode: ret.refundMode,
+        amount: Number(ret.refundAmount),
+        method: ret.refundMethodCode ?? undefined,
+        accountId: ret.refundAccountId ?? undefined,
+      },
+    };
+  });
   // Money received goes in `payments`; what was put on the customer's account does not - the
   // screens show it as store credit spent and as left on account.
   const sum = (code: string) =>
@@ -95,6 +158,9 @@ export function toSale(dto: SaleDto): Sale {
     customerId: dto.customerId ?? undefined,
     customerName: dto.customerName ?? "Walk-in customer",
     lines: dto.lines.map((line) => ({
+      id: line.id,
+      lineTotal: Number(line.lineTotal),
+      returned: line.returned > 0 ? line.returned : undefined,
       sku: line.variantId,
       code: line.sku,
       productId: line.productId,
@@ -126,7 +192,9 @@ export function toSale(dto: SaleDto): Sale {
       })),
     creditUsed: creditUsed > 0 ? creditUsed : undefined,
     dueAmount: dueAmount > 0 ? dueAmount : undefined,
-    returns: [],
+    returns,
+    voided: dto.status === "voided" ? true : undefined,
+    voidReason: dto.voidReason ?? undefined,
   };
 }
 
@@ -144,13 +212,15 @@ export interface ListSalesOptions {
   from?: string;
   to?: string;
   customerId?: string;
+  /** Cancelled sales too - only the Sales list wants them; totals everywhere else leave them out. */
+  includeVoided?: boolean;
 }
 
 /** The store's completed sales, newest first - requires "sales:view". Capped at the latest 1000. */
 export async function listSales(options: ListSalesOptions = {}): Promise<Sale[]> {
   const storeId = await ensureStoreId();
   const query = new URLSearchParams({ storeId });
-  for (const [key, value] of Object.entries(options)) if (value) query.set(key, value);
+  for (const [key, value] of Object.entries(options)) if (value) query.set(key, String(value));
   const response = await fetch(`${API_URL}/sales?${query}`, { credentials: "include" });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
@@ -235,4 +305,71 @@ export async function createSale(input: CreateSaleInput): Promise<CreateSaleResu
     };
   }
   return { ok: true, sale: toSale((await response.json()) as SaleDto) };
+}
+
+/** The active methods and accounts a refund can be paid back by - requires "sales:edit". */
+export async function listSaleRefundOptions(): Promise<TillPaymentOptions> {
+  const storeId = await ensureStoreId();
+  const response = await fetch(`${API_URL}/sales/payment-options?storeId=${storeId}`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    throw new Error(await parseError(response));
+  }
+  const options = (await response.json()) as TillPaymentOptions;
+  rememberPaymentNames(options.methods, options.accounts);
+  return options;
+}
+
+export interface ReturnInput {
+  /** Made when the return sheet opens. Reuse it to retry the SAME return; the server never takes goods back twice for one id. */
+  id: string;
+  reason: string;
+  note?: string;
+  items: { saleItemId: string; quantity: number }[];
+  refund: {
+    mode: "money" | "credit" | "none";
+    /** Rupees - leave out for the full value of the goods. */
+    amount?: number;
+    paymentMethodId?: string;
+    paymentAccountId?: string;
+  };
+}
+
+/** What a sale change (return or cancel) came to: the sale as it is now, or why it didn't happen. */
+export type SaleChangeResult = { ok: true; sale: Sale } | { ok: false; error: string };
+
+async function changeSale(path: string, body: unknown): Promise<SaleChangeResult> {
+  const storeId = await ensureStoreId();
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ storeId, ...(body as object) }),
+    });
+  } catch {
+    return {
+      ok: false,
+      error:
+        "Couldn't reach the server. Check the connection and try again - it won't be done twice.",
+    };
+  }
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return { ok: false, error: await parseError(response) };
+  }
+  return { ok: true, sale: toSale((await response.json()) as SaleDto) };
+}
+
+/** Takes goods back and makes the customer whole - requires "sales:edit". */
+export function createSaleReturn(saleId: string, input: ReturnInput): Promise<SaleChangeResult> {
+  return changeSale(`/sales/${encodeURIComponent(saleId)}/returns`, input);
+}
+
+/** Cancels a completed sale - requires "sales:delete". */
+export function voidSale(saleId: string, reason: string): Promise<SaleChangeResult> {
+  return changeSale(`/sales/${encodeURIComponent(saleId)}/void`, { reason });
 }

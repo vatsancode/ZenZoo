@@ -11,6 +11,8 @@ export interface ListSalesInput {
   /** Sold on or before this date (YYYY-MM-DD). */
   to?: string;
   customerId?: string;
+  /** Cancelled sales too - for the Sales list, which shows them struck out. Everything else leaves them out. */
+  includeVoided?: boolean;
   /** Newest first, capped - default 1000, at most 5000. */
   limit?: number;
 }
@@ -38,8 +40,7 @@ export async function listSalesInTx(
     where: {
       tenant_id: actor.tenantId,
       store_id: input.storeId,
-      // Completed sales only for now - voided ones join the list when voiding is built.
-      status: "completed",
+      status: input.includeVoided ? { in: ["completed", "voided"] } : "completed",
       ...(input.customerId ? { customer_id: input.customerId } : {}),
       ...(input.from || input.to
         ? {

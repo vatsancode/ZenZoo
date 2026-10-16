@@ -42,7 +42,7 @@ export default function SalesTable() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    listSales()
+    listSales({ includeVoided: true })
       .then(setSales)
       .catch((reason: unknown) => {
         setSales([]);
@@ -76,11 +76,13 @@ export default function SalesTable() {
   }, [sales, query, filters]);
 
   // The figures follow the filter, so "UPI only" shows what UPI brought in.
-  const revenue = filtered.reduce((sum, sale) => sum + sale.total - saleRefundTotal(sale), 0);
-  const refunds = filtered.reduce((sum, sale) => sum + saleRefundTotal(sale), 0);
-  const discounts = filtered.reduce((sum, sale) => sum + saleDiscountTotal(sale), 0);
-  const profit = filtered.reduce((sum, sale) => sum + saleProfitOf(sale).profit, 0);
-  const units = filtered.reduce(
+  // A cancelled sale never happened, so it is listed but counts for nothing.
+  const counted = filtered.filter((sale) => !sale.voided);
+  const revenue = counted.reduce((sum, sale) => sum + sale.total - saleRefundTotal(sale), 0);
+  const refunds = counted.reduce((sum, sale) => sum + saleRefundTotal(sale), 0);
+  const discounts = counted.reduce((sum, sale) => sum + saleDiscountTotal(sale), 0);
+  const profit = counted.reduce((sum, sale) => sum + saleProfitOf(sale).profit, 0);
+  const units = counted.reduce(
     (sum, sale) => sum + sale.lines.reduce((inner, line) => inner + line.quantity, 0),
     0,
   );
@@ -185,7 +187,9 @@ export default function SalesTable() {
       render: (sale) => {
         const status = saleStatus(sale);
         return (
-          <Badge tone={status === "completed" ? "success" : "warning"}>
+          <Badge
+            tone={status === "completed" ? "success" : status === "voided" ? "danger" : "warning"}
+          >
             {SALE_STATUS_LABEL[status]}
           </Badge>
         );

@@ -1,11 +1,13 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Badge, Card, Notice, textStyle } from "@zenzoo/ui-web";
-import { useEffect, useState, type ReactNode } from "react";
+import { Badge, Button, Card, Input, Modal, Notice, textStyle } from "@zenzoo/ui-web";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { accountLabel, paymentMethodLabel } from "../../lib/payment-options";
 import {
+  canReturnSale,
   getSale,
+  paidNow,
   SALE_STATUS_LABEL,
   saleRefundTotal,
   saleStatus,
@@ -18,6 +20,14 @@ import {
 } from "./sales";
 import { formatDate, formatPrice } from "../../lib/stock-display";
 import { listCustomers } from "../../lib/customers";
+import {
+  createSaleReturn,
+  listSaleRefundOptions,
+  voidSale,
+  type ReturnInput,
+} from "../../lib/sales";
+import type { TillPaymentOptions } from "../../lib/till";
+import SaleReturnSheet from "./SaleReturnSheet";
 import PageHeader from "../../components/PageHeader";
 import StatTile, { StatRow } from "../../components/StatTile";
 
@@ -60,6 +70,15 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [hovered, setHovered] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [returnOpen, setReturnOpen] = useState(false);
+  // Made when the return sheet opens and kept until it goes through, so retrying after a dropped
+  // connection can never take the goods back twice.
+  const returnId = useRef<string | null>(null);
+  const [refundOptions, setRefundOptions] = useState<TillPaymentOptions | null>(null);
+  const [voidOpen, setVoidOpen] = useState(false);
+  const [voidReason, setVoidReason] = useState("");
+  const [voiding, setVoiding] = useState(false);
+  const [voidError, setVoidError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!notice) return;
@@ -69,6 +88,10 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
 
   useEffect(() => {
     getSale(saleId).then(setSale);
+    // Only needed to pay a refund back, which needs sales:edit - fine to be missing otherwise.
+    listSaleRefundOptions()
+      .then(setRefundOptions)
+      .catch(() => setRefundOptions(null));
     // Someone who can see sales may not have access to Customers - the sale keeps its name anyway.
     listCustomers(true)
       .then(setCustomers)
@@ -95,6 +118,43 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
   const status = saleStatus(sale);
   const customer = customers.find((item) => item.id === sale.customerId);
 
+  async function confirmReturn(input: Omit<ReturnInput, "id">): Promise<string | null> {
+    if (!sale) return "This sale is not loaded.";
+    if (!returnId.current) returnId.current = crypto.randomUUID();
+    const result = await createSaleReturn(sale.id, { ...input, id: returnId.current });
+    if (!result.ok) return result.error;
+    returnId.current = null;
+    setSale(result.sale);
+    setReturnOpen(false);
+    const ret = result.sale.returns?.[result.sale.returns.length - 1];
+    const units = ret?.items.reduce((sum, entry) => sum + entry.quantity, 0) ?? 0;
+    setNotice(
+      `Return ${ret?.number ?? ""} recorded: ${units} ${units === 1 ? "unit" : "units"} back in stock. ${
+        ret?.refund.mode === "money"
+          ? `${formatPrice(ret.refund.amount)} refunded.`
+          : ret?.refund.mode === "credit"
+            ? `${formatPrice(ret.refund.amount)} added as store credit.`
+            : "No refund given."
+      }`,
+    );
+    return null;
+  }
+
+  async function confirmVoid() {
+    if (!sale) return;
+    setVoiding(true);
+    setVoidError(null);
+    const result = await voidSale(sale.id, voidReason);
+    setVoiding(false);
+    if (!result.ok) {
+      setVoidError(result.error);
+      return;
+    }
+    setSale(result.sale);
+    setVoidOpen(false);
+    setNotice(`Sale ${result.sale.number} cancelled. The items are back in stock.`);
+  }
+
   const profit = saleProfitOf(sale);
   const discount = saleDiscountTotal(sale);
   const units = sale.lines.reduce((sum, line) => sum + line.quantity, 0);
@@ -110,14 +170,49 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
         backLabel="Back to sales"
         action={
           <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
-            <Badge tone={status === "completed" ? "success" : "warning"}>
+            <Badge
+              tone={status === "completed" ? "success" : status === "voided" ? "danger" : "warning"}
+            >
               {SALE_STATUS_LABEL[status]}
             </Badge>
+            {canReturnSale(sale) ? (
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => {
+                  returnId.current = crypto.randomUUID();
+                  setReturnOpen(true);
+                }}
+              >
+                Return items
+              </Button>
+            ) : null}
+            {!sale.voided && (sale.returns ?? []).length === 0 ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setVoidReason("");
+                  setVoidError(null);
+                  setVoidOpen(true);
+                }}
+                style={{ backgroundColor: "transparent", border: `1px solid ${colors.border}` }}
+              >
+                Cancel sale
+              </Button>
+            ) : null}
           </div>
         }
       />
 
       {notice ? <Notice>{notice}</Notice> : null}
+      {sale.voided ? (
+        <Notice>
+          This sale was cancelled{sale.voidReason ? `: ${sale.voidReason}` : ""}. The items went
+          back into stock, and anything paid or put on the customer&apos;s account was reversed. The
+          receipt number stays on record.
+        </Notice>
+      ) : null}
 
       <StatRow>
         <StatTile
@@ -430,6 +525,80 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
           </div>
         </Card>
       </div>
+
+      <SaleReturnSheet
+        open={returnOpen}
+        sale={sale}
+        options={refundOptions}
+        onClose={() => setReturnOpen(false)}
+        onConfirm={confirmReturn}
+      />
+
+      <Modal open={voidOpen} onClose={() => (voiding ? undefined : setVoidOpen(false))}>
+        <div style={{ width: 440, maxWidth: "100%" }}>
+          <div style={{ ...textStyle("title3"), color: colors.ink }}>
+            Cancel sale {sale.number}?
+          </div>
+          <p
+            style={{ ...textStyle("body"), color: colors.inkMuted, margin: `${spacing[3]}px 0 0` }}
+          >
+            It is undone as if it never happened: the items go back into stock
+            {paidNow(sale) > 0
+              ? `, ${formatPrice(paidNow(sale))} is taken back out of the accounts it was paid into`
+              : ""}
+            {sale.dueAmount || sale.creditUsed
+              ? ", and what was put on the customer's account is reversed"
+              : ""}
+            . The sale stays on record, marked cancelled.
+          </p>
+          <div style={{ marginTop: spacing[5] }}>
+            <Input
+              autoFocus
+              autoComplete="off"
+              aria-label="Why it is being cancelled"
+              placeholder="Why is it being cancelled?"
+              value={voidReason}
+              onChange={(event) => {
+                setVoidReason(event.target.value);
+                setVoidError(null);
+              }}
+            />
+          </div>
+          {voidError ? (
+            <div
+              role="alert"
+              style={{ ...textStyle("footnote"), color: colors.danger, marginTop: spacing[3] }}
+            >
+              {voidError}
+            </div>
+          ) : null}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: spacing[3],
+              marginTop: spacing[6],
+            }}
+          >
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={voiding}
+              onClick={() => setVoidOpen(false)}
+            >
+              Keep the sale
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              disabled={voiding || voidReason.trim() === ""}
+              onClick={() => void confirmVoid()}
+            >
+              {voiding ? "Cancelling..." : "Cancel sale"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

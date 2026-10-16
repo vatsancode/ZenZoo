@@ -165,3 +165,38 @@ export function priceCart(input: PriceCartInput): PricedCart {
 
   return { lines, subtotal, lineDiscounts, billDiscount, total: afterLines - billDiscount };
 }
+
+/**
+ * What `returning` units of a sale line are worth to the customer: their share of what they
+ * actually paid for the line (`lineTotal` - after the line's own discount and its share of the bill
+ * discount). Rounded half-up *cumulatively*, so a line returned in several goes always adds up to
+ * exactly its total - never a paisa over (which a per-unit rounding can do: 3 units at 100/3).
+ */
+export function returnValue(
+  lineTotal: Paise,
+  lineQuantity: number,
+  alreadyReturned: number,
+  returning: number,
+): Paise {
+  assertPaise(lineTotal, "A line total");
+  for (const [value, what] of [
+    [lineQuantity, "The line quantity"],
+    [alreadyReturned, "The quantity already returned"],
+    [returning, "The quantity returning"],
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new PricingError(`${what} must be a whole number, 0 or more (got ${value}).`);
+    }
+  }
+  if (lineQuantity === 0 || returning === 0) return 0;
+  if (alreadyReturned + returning > lineQuantity) {
+    throw new PricingError("That is more than was sold on the line.");
+  }
+  // x / y rounded half-up = floor((2x + y) / 2y), exactly, in BigInt (lineTotal x quantity can pass 2^53).
+  const upTo = (units: number): bigint => {
+    const x = BigInt(lineTotal) * BigInt(units);
+    const y = BigInt(lineQuantity);
+    return (BigInt(2) * x + y) / (BigInt(2) * y);
+  };
+  return Number(upTo(alreadyReturned + returning) - upTo(alreadyReturned));
+}

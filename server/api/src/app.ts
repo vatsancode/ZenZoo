@@ -65,14 +65,18 @@ import { listCatalogue } from "./capabilities/reads/listCatalogue";
 import { listTillItems } from "./capabilities/reads/listTillItems";
 import { previewSale } from "./capabilities/reads/previewSale";
 import { createSale } from "./capabilities/actions/createSale";
+import { createSaleReturn } from "./capabilities/actions/createSaleReturn";
+import { voidSale } from "./capabilities/actions/voidSale";
 import { listSales } from "./capabilities/reads/listSales";
 import { getSale } from "./capabilities/reads/getSale";
 import {
   listCustomerPaymentOptions,
+  listSaleRefundOptions,
   listTillPaymentOptions,
 } from "./capabilities/reads/listTillPaymentOptions";
 import { listCustomers } from "./capabilities/reads/listCustomers";
 import { listCustomerPayments } from "./capabilities/reads/listCustomerPayments";
+import { listCustomerStatement } from "./capabilities/reads/listCustomerStatement";
 import { receiveCustomerPayment } from "./capabilities/actions/receiveCustomerPayment";
 import { listTillCustomers } from "./capabilities/reads/listTillCustomers";
 import { getCustomer } from "./capabilities/reads/getCustomer";
@@ -445,6 +449,12 @@ export function createApp(): Express {
     sendCapabilityResult(res, result, 201);
   });
 
+  app.get("/customers/:id/statement", requireTenantUser, async (req, res) => {
+    const customerId = req.params.id as string;
+    const result = await listCustomerStatement.execute(getActor(req), { customerId });
+    sendCapabilityResult(res, result);
+  });
+
   app.get("/customers/:id", requireTenantUser, async (req, res) => {
     const id = req.params.id as string;
     const result = await getCustomer.execute(getActor(req), { id });
@@ -496,8 +506,32 @@ export function createApp(): Express {
       from: text(req.query.from),
       to: text(req.query.to),
       customerId: text(req.query.customerId),
+      includeVoided: req.query.includeVoided === "true",
       limit: req.query.limit ? Number(req.query.limit) : undefined,
     });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/sales/:id/returns", requireTenantUser, async (req, res) => {
+    const saleId = req.params.id as string;
+    const result = await createSaleReturn.execute(getActor(req), { ...req.body, saleId });
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.post("/sales/:id/void", requireTenantUser, async (req, res) => {
+    const saleId = req.params.id as string;
+    const result = await voidSale.execute(getActor(req), { ...req.body, saleId });
+    sendCapabilityResult(res, result);
+  });
+
+  // Before "/sales/:id", or "payment-options" would be read as a sale id.
+  app.get("/sales/payment-options", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await listSaleRefundOptions.execute(getActor(req), { storeId });
     sendCapabilityResult(res, result);
   });
 

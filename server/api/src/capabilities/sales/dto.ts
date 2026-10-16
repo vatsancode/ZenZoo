@@ -22,6 +22,26 @@ export interface SaleLineDto {
   lineTotal: string;
   /** What the units sold cost to buy, from the batches they came out of. "0.00" for a service. */
   cost: string;
+  /** How many units the customer has brought back, across completed returns. */
+  returned: number;
+}
+
+export interface SaleReturnDto {
+  id: string;
+  /** The credit slip number, e.g. RET-000001. */
+  number: string | null;
+  createdAt: string;
+  reason: string | null;
+  note: string | null;
+  refundMode: "money" | "credit" | "none";
+  /** What the goods were worth to the customer. */
+  value: string;
+  /** What was paid back or credited - can be less than the value. */
+  refundAmount: string;
+  refundMethodCode: string | null;
+  refundAccountId: string | null;
+  refundAccountName: string | null;
+  items: { saleItemId: string; quantity: number; value: string }[];
 }
 
 export interface SalePaymentDto {
@@ -55,8 +75,12 @@ export interface SaleDto {
   billDiscount: string;
   discountReason: string | null;
   total: string;
+  /** Why it was cancelled, for a voided sale. */
+  voidReason: string | null;
   lines: SaleLineDto[];
   payments: SalePaymentDto[];
+  /** Completed returns, oldest first. */
+  returns: SaleReturnDto[];
 }
 
 /** A Prisma Decimal (or anything shaped like one). */
@@ -83,7 +107,22 @@ interface SaleRow {
   bill_discount_value: Money | null;
   bill_discount_amount: Money;
   discount_reason: string | null;
+  void_reason: string | null;
   total_amount: Money;
+  sale_returns: {
+    id: string;
+    return_number: string | null;
+    created_at: Date;
+    reason: string | null;
+    note: string | null;
+    refund_mode: string;
+    value_amount: Money;
+    refund_amount: Money;
+    refund_account_id: string | null;
+    payment_methods: { code: string } | null;
+    payment_accounts: { name: string } | null;
+    sale_return_items: { sale_item_id: string; quantity: number; value_amount: Money }[];
+  }[];
   sale_items: {
     id: string;
     variant_id: string;
@@ -117,6 +156,16 @@ const kind = (value: string | null): "amount" | "percent" | null =>
   value === "amount" || value === "percent" ? value : null;
 
 export function toSaleDto(row: SaleRow): SaleDto {
+  // Units brought back per line, across every completed return (the select only loads those).
+  const returnedByItem = new Map<string, number>();
+  for (const ret of row.sale_returns) {
+    for (const item of ret.sale_return_items) {
+      returnedByItem.set(
+        item.sale_item_id,
+        (returnedByItem.get(item.sale_item_id) ?? 0) + item.quantity,
+      );
+    }
+  }
   return {
     id: row.id,
     number: row.sale_number,
@@ -132,6 +181,7 @@ export function toSaleDto(row: SaleRow): SaleDto {
     billDiscountValue: row.bill_discount_value ? rupees(row.bill_discount_value) : null,
     billDiscount: rupees(row.bill_discount_amount),
     discountReason: row.discount_reason,
+    voidReason: row.void_reason,
     total: rupees(row.total_amount),
     lines: row.sale_items.map((item) => {
       // Cost in paise so summing several batches stays exact (unit_cost has two decimals).
@@ -158,6 +208,7 @@ export function toSaleDto(row: SaleRow): SaleDto {
         billShare: rupees(item.bill_discount_share),
         lineTotal: rupees(item.line_total),
         cost: (costPaise / 100).toFixed(2),
+        returned: returnedByItem.get(item.id) ?? 0,
       };
     }),
     payments: row.sale_payments.map((payment) => ({
@@ -170,6 +221,32 @@ export function toSaleDto(row: SaleRow): SaleDto {
       amount: rupees(payment.amount),
       reference: payment.reference,
     })),
+    // Same-moment returns (only possible inside one transaction) fall back to their slip numbers.
+    returns: [...row.sale_returns]
+      .sort(
+        (a, b) =>
+          a.created_at.getTime() - b.created_at.getTime() ||
+          (a.return_number ?? "").localeCompare(b.return_number ?? ""),
+      )
+      .map((ret) => ({
+        id: ret.id,
+        number: ret.return_number,
+        createdAt: ret.created_at.toISOString(),
+        reason: ret.reason,
+        note: ret.note,
+        refundMode:
+          ret.refund_mode === "money" ? "money" : ret.refund_mode === "credit" ? "credit" : "none",
+        value: rupees(ret.value_amount),
+        refundAmount: rupees(ret.refund_amount),
+        refundMethodCode: ret.payment_methods?.code ?? null,
+        refundAccountId: ret.refund_account_id,
+        refundAccountName: ret.payment_accounts?.name ?? null,
+        items: ret.sale_return_items.map((item) => ({
+          saleItemId: item.sale_item_id,
+          quantity: item.quantity,
+          value: rupees(item.value_amount),
+        })),
+      })),
   };
 }
 
@@ -188,7 +265,31 @@ export const SALE_SELECT = {
   bill_discount_value: true,
   bill_discount_amount: true,
   discount_reason: true,
+  void_reason: true,
   total_amount: true,
+  // Completed returns only - a draft exists only inside the transaction that makes it.
+  sale_returns: {
+    where: { status: "completed" },
+    // Not by id: the till makes a return's id, so it says nothing about order. Slip numbers count up.
+    orderBy: { created_at: "asc" },
+    select: {
+      id: true,
+      return_number: true,
+      created_at: true,
+      reason: true,
+      note: true,
+      refund_mode: true,
+      value_amount: true,
+      refund_amount: true,
+      refund_account_id: true,
+      payment_methods: { select: { code: true } },
+      payment_accounts: { select: { name: true } },
+      sale_return_items: {
+        orderBy: { id: "asc" },
+        select: { sale_item_id: true, quantity: true, value_amount: true },
+      },
+    },
+  },
   // uuidv7 ids are time-ordered; created_at can't order rows made in one transaction (all equal).
   sale_items: {
     orderBy: { id: "asc" },

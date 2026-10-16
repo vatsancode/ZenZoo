@@ -4,6 +4,7 @@ import {
   parseTypedDiscount,
   priceCart,
   PricingError,
+  returnValue,
   toPaise,
   toRupees,
   type PriceLineInput,
@@ -173,5 +174,48 @@ describe("priceCart", () => {
       () => priceCart({ lines: [{ unitPrice: 100, quantity: Number.NaN }] }),
       PricingError,
     );
+  });
+});
+
+describe("returnValue", () => {
+  it("is the share of the line total, and all of it when everything comes back", () => {
+    assert.equal(returnValue(40000, 4, 0, 1), 10000);
+    assert.equal(returnValue(40000, 4, 0, 4), 40000);
+    assert.equal(returnValue(40000, 4, 3, 1), 10000);
+  });
+
+  it("adds up to exactly the line total however it is split (3 units of 100.00, 1 at a time)", () => {
+    // 100.00 over 3 units = 33.33 + 33.34 + 33.33 (cumulative half-up), never 3 x 33.33 = 99.99.
+    const parts = [0, 1, 2].map((done) => returnValue(10000, 3, done, 1));
+    assert.deepEqual(parts, [3333, 3334, 3333]);
+    assert.equal(
+      parts.reduce((a, b) => a + b, 0),
+      10000,
+    );
+  });
+
+  it("gives the same total whatever order and grouping the returns come in", () => {
+    const total = 98765; // an awkward amount
+    for (const split of [[7], [3, 4], [1, 6], [2, 2, 3], [1, 1, 1, 1, 1, 1, 1]]) {
+      let done = 0;
+      let sum = 0;
+      for (const n of split) {
+        sum += returnValue(total, 7, done, n);
+        done += n;
+      }
+      assert.equal(sum, total, split.join("+"));
+    }
+  });
+
+  it("is exact on large amounts", () => {
+    assert.equal(returnValue(99_999_999_999_999, 3, 0, 3), 99_999_999_999_999);
+  });
+
+  it("returns 0 for nothing, and refuses more than was sold or nonsense", () => {
+    assert.equal(returnValue(10000, 3, 0, 0), 0);
+    assert.throws(() => returnValue(10000, 3, 2, 2), PricingError);
+    assert.throws(() => returnValue(10000, 3, 0, -1), PricingError);
+    assert.throws(() => returnValue(-1, 3, 0, 1), PricingError);
+    assert.throws(() => returnValue(10000, 3.5, 0, 1), PricingError);
   });
 });
