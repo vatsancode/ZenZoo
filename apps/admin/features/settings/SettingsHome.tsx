@@ -11,7 +11,7 @@ import { listPaymentMethods } from "./paymentMethods";
 import { listUnits } from "./units";
 import { listRoles } from "./roles";
 import { listUsers } from "./userDirectory";
-import { listExpenseCategories } from "../expenses/expenses";
+import { listExpenseCategories } from "../expenses/expenseCategories";
 import { formatPrice } from "../../lib/stock-display";
 
 interface Tile {
@@ -33,6 +33,7 @@ export default function SettingsHome() {
     categories: 0,
     subcategories: 0,
     units: 0,
+    expenseCategories: 0,
     accounts: 0,
     total: 0,
     users: 0,
@@ -42,9 +43,10 @@ export default function SettingsHome() {
 
   useEffect(() => {
     async function load() {
-      const [categories, units, accounts, users, roles, methods] = await Promise.all([
+      const [categories, units, expenseCategories, accounts, users, roles, methods] = await Promise.all([
         listCategories(),
         listUnits(),
+        listExpenseCategories(),
         listAccounts(),
         listUsers(),
         listRoles(),
@@ -54,6 +56,7 @@ export default function SettingsHome() {
         categories: categories.length,
         subcategories: categories.reduce((sum, category) => sum + category.subcategories.length, 0),
         units: units.length,
+        expenseCategories: expenseCategories.length,
         accounts: accounts.length,
         total: accounts.reduce((sum, account) => sum + account.balance, 0),
         users: users.length,
@@ -78,7 +81,7 @@ export default function SettingsHome() {
       icon: "receipt",
       name: "Expense categories",
       description: "The headings your expenses are filed under, like Rent and Salaries.",
-      detail: `${listExpenseCategories().length} categories`,
+      detail: `${counts.expenseCategories} categories`,
     },
     {
       href: "/settings/units",

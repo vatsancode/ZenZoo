@@ -149,6 +149,7 @@ model payment_accounts {
   stores                                                                                   stores              @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "payment_accounts_store_fk")
   tenants                                                                                  tenants             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   purchase_payments                                                                        purchase_payments[]
+  expenses                                                                                 expenses[]
   sale_returns                                                                             sale_returns[]
   sale_payments                                                                            sale_payments[]
 
@@ -575,6 +576,7 @@ model stores {
   sales                   sales[]
   sellables               sellables[]
   tenants                 tenants                   @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  expenses                expenses[]
 
   @@unique([tenant_id, code], map: "stores_tenant_code_unique")
   @@unique([tenant_id, id], map: "stores_tenant_id_id_unique")
@@ -661,6 +663,9 @@ model tenants {
   tenant_memberships      tenant_memberships[]
   units                   units[]
   variants                variants[]
+  expense_categories      expense_categories[]
+  expenses                expenses[]
+  expense_lines           expense_lines[]
 
   @@index([status], map: "idx_tenants_status")
 }
@@ -679,6 +684,7 @@ model users {
   password_hash          String                   @db.VarChar(255)
   account_transfers      account_transfers[]
   customer_credit_ledger customer_credit_ledger[]
+  expenses               expenses[]
   purchase_payments      purchase_payments[]
   purchase_returns       purchase_returns[]
   sale_payments          sale_payments[]
@@ -796,4 +802,67 @@ model receipt_counters {
   stores      stores @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "receipt_counters_store_fk")
 
   @@id([tenant_id, store_id, prefix])
+}
+
+/// The headings expenses are filed under. The case-insensitive name index (expense_categories_tenant_name_unique) and the one-catch-all-per-tenant partial index exist only in the migration, like categories' partial indexes.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model expense_categories {
+  id            String          @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id     String          @db.Uuid
+  name          String          @db.VarChar(100)
+  is_catch_all  Boolean         @default(false)
+  created_at    DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime        @default(now()) @db.Timestamptz(6)
+  tenants       tenants         @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  expense_lines expense_lines[]
+
+  @@unique([tenant_id, id], map: "expense_categories_tenant_id_id_unique")
+}
+
+/// A bill the shop owes ('pending') or has paid. Only paid bills move money - see expenses_apply_balance() in the 20261016010000_expenses migration.
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model expenses {
+  id                 String            @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id          String            @db.Uuid
+  store_id           String            @db.Uuid
+  expense_date       DateTime          @db.Date
+  payee              String?           @db.VarChar(200)
+  reference          String?           @db.VarChar(100)
+  note               String?           @db.VarChar(500)
+  status             String            @default("paid") @db.VarChar(20)
+  due_date           DateTime?         @db.Date
+  paid_date          DateTime?         @db.Date
+  payment_account_id String?           @db.Uuid
+  total              Decimal           @db.Decimal(14, 2)
+  created_by         String            @db.Uuid
+  created_at         DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime          @default(now()) @db.Timestamptz(6)
+  users              users             @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  payment_accounts   payment_accounts? @relation(fields: [tenant_id, store_id, payment_account_id], references: [tenant_id, store_id, id], onDelete: NoAction, onUpdate: NoAction, map: "expenses_account_fk")
+  stores             stores            @relation(fields: [tenant_id, store_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "expenses_store_fk")
+  tenants            tenants           @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  expense_lines      expense_lines[]
+
+  @@unique([tenant_id, id], map: "expenses_tenant_id_id_unique")
+  @@index([tenant_id, store_id, expense_date(sort: Desc)], map: "idx_expenses_store_date")
+  @@index([tenant_id, store_id, status], map: "idx_expenses_store_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model expense_lines {
+  id                  String             @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id           String             @db.Uuid
+  expense_id          String             @db.Uuid
+  position            Int                @default(0)
+  description         String             @default("") @db.VarChar(300)
+  expense_category_id String             @db.Uuid
+  amount              Decimal            @db.Decimal(14, 2)
+  expenses            expenses           @relation(fields: [tenant_id, expense_id], references: [tenant_id, id], onDelete: Cascade, onUpdate: NoAction, map: "expense_lines_expense_fk")
+  expense_categories  expense_categories @relation(fields: [tenant_id, expense_category_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "expense_lines_category_fk")
+  tenants             tenants            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([tenant_id, expense_id], map: "idx_expense_lines_expense")
+  @@index([tenant_id, expense_category_id], map: "idx_expense_lines_category")
 }

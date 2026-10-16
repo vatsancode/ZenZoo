@@ -5,31 +5,32 @@ import { Button, Card, IconButton, Input, Modal, Notice, textStyle } from "@zenz
 import { useEffect, useState } from "react";
 import {
   addExpenseCategory,
-  CATCH_ALL_CATEGORY,
-  categoryUsage,
   deleteExpenseCategory,
   listExpenseCategories,
   renameExpenseCategory,
-} from "../expenses/expenses";
+  type ExpenseCategory,
+} from "../expenses/expenseCategories";
 import { formatPrice } from "../../lib/stock-display";
 import PageHeader from "../../components/PageHeader";
 
 /** The headings expenses are filed under: add, rename (expenses follow), and remove the unused ones. */
 export default function ExpenseCategoriesSettings() {
   const { colors, spacing } = useTheme();
-  const [names, setNames] = useState<string[]>([]);
+  const [categories, setCategories] = useState<ExpenseCategory[]>([]);
   const [newName, setNewName] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
-  const [renaming, setRenaming] = useState<{ from: string; to: string } | null>(null);
+  const [renaming, setRenaming] = useState<{ from: ExpenseCategory; to: string } | null>(null);
   const [renameError, setRenameError] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<ExpenseCategory | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  function reload() {
-    setNames([...listExpenseCategories()]);
+  async function reload() {
+    setCategories(await listExpenseCategories());
   }
 
-  useEffect(reload, []);
+  useEffect(() => {
+    void reload();
+  }, []);
 
   useEffect(() => {
     if (!notice) return;
@@ -37,21 +38,21 @@ export default function ExpenseCategoriesSettings() {
     return () => clearTimeout(timer);
   }, [notice]);
 
-  function create() {
-    const message = addExpenseCategory(newName);
-    if (message) {
-      setAddError(message);
+  async function create() {
+    const result = await addExpenseCategory(newName);
+    if (typeof result === "string") {
+      setAddError(result);
       return;
     }
     setNotice(`${newName.trim()} added.`);
     setNewName("");
     setAddError(null);
-    reload();
+    void reload();
   }
 
-  function saveRename() {
+  async function saveRename() {
     if (!renaming) return;
-    const message = renameExpenseCategory(renaming.from, renaming.to);
+    const message = await renameExpenseCategory(renaming.from, renaming.to);
     if (message) {
       setRenameError(message);
       return;
@@ -59,7 +60,15 @@ export default function ExpenseCategoriesSettings() {
     setNotice(`Renamed to ${renaming.to.trim()}. Expenses filed under it follow the new name.`);
     setRenaming(null);
     setRenameError(null);
-    reload();
+    void reload();
+  }
+
+  async function confirmDelete() {
+    if (!deleting) return;
+    const message = await deleteExpenseCategory(deleting);
+    setDeleting(null);
+    if (message) setNotice(message);
+    void reload();
   }
 
   return (
@@ -86,7 +95,7 @@ export default function ExpenseCategoriesSettings() {
               setAddError(null);
             }}
             onKeyDown={(event) => {
-              if (event.key === "Enter") create();
+              if (event.key === "Enter") void create();
             }}
           />
           {addError ? (
@@ -98,19 +107,20 @@ export default function ExpenseCategoriesSettings() {
             </div>
           ) : null}
         </div>
-        <Button type="button" variant="primary" onClick={create}>
+        <Button type="button" variant="primary" onClick={() => void create()}>
           Add category
         </Button>
       </div>
 
       <Card style={{ padding: `${spacing[2]}px ${spacing[6]}px` }}>
-        {names.map((name, index) => {
-          const usage = categoryUsage(name);
-          const locked = name === CATCH_ALL_CATEGORY;
-          const isRenaming = renaming?.from === name;
+        {categories.map((category, index) => {
+          const { name } = category;
+          const usage = category;
+          const locked = category.isCatchAll;
+          const isRenaming = renaming?.from.id === category.id;
           return (
             <div
-              key={name}
+              key={category.id}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -138,15 +148,15 @@ export default function ExpenseCategoriesSettings() {
                       value={renaming.to}
                       aria-invalid={renameError ? true : undefined}
                       onChange={(event) => {
-                        setRenaming({ from: name, to: event.target.value });
+                        setRenaming({ from: category, to: event.target.value });
                         setRenameError(null);
                       }}
                       onKeyDown={(event) => {
-                        if (event.key === "Enter") saveRename();
+                        if (event.key === "Enter") void saveRename();
                         if (event.key === "Escape") setRenaming(null);
                       }}
                     />
-                    <Button type="button" variant="primary" onClick={saveRename}>
+                    <Button type="button" variant="primary" onClick={() => void saveRename()}>
                       Save
                     </Button>
                     <Button
@@ -173,7 +183,7 @@ export default function ExpenseCategoriesSettings() {
                     <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
                       {usage.items === 0
                         ? "Not used yet"
-                        : `${usage.items} ${usage.items === 1 ? "item" : "items"} on ${usage.bills} ${usage.bills === 1 ? "bill" : "bills"} · ${formatPrice(usage.spent)} spent`}
+                        : `${usage.items} ${usage.items === 1 ? "item" : "items"} on ${usage.bills} ${usage.bills === 1 ? "bill" : "bills"} · ${formatPrice(usage.spent)} billed`}
                       {locked ? " · catch-all, always kept" : ""}
                     </div>
                   </div>
@@ -183,7 +193,7 @@ export default function ExpenseCategoriesSettings() {
                         icon="edit"
                         label={`Rename ${name}`}
                         onClick={() => {
-                          setRenaming({ from: name, to: name });
+                          setRenaming({ from: category, to: name });
                           setRenameError(null);
                         }}
                       />
@@ -199,7 +209,7 @@ export default function ExpenseCategoriesSettings() {
                             ? setNotice(
                                 `${name} is used on ${usage.bills} bills, so it can't be deleted. Rename it instead.`,
                               )
-                            : setDeleting(name)
+                            : setDeleting(category)
                         }
                       />
                     </div>
@@ -213,7 +223,7 @@ export default function ExpenseCategoriesSettings() {
 
       <Modal open={deleting !== null} onClose={() => setDeleting(null)}>
         <div style={{ width: 420, maxWidth: "100%" }}>
-          <div style={{ ...textStyle("title3"), color: colors.ink }}>Delete {deleting}?</div>
+          <div style={{ ...textStyle("title3"), color: colors.ink }}>Delete {deleting?.name}?</div>
           <p
             style={{ ...textStyle("body"), color: colors.inkMuted, margin: `${spacing[3]}px 0 0` }}
           >
@@ -233,11 +243,7 @@ export default function ExpenseCategoriesSettings() {
             <Button
               type="button"
               variant="danger"
-              onClick={() => {
-                if (deleting) deleteExpenseCategory(deleting);
-                setDeleting(null);
-                reload();
-              }}
+              onClick={() => void confirmDelete()}
             >
               Delete
             </Button>

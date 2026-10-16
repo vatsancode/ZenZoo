@@ -61,6 +61,15 @@ import { listPurchasePayments } from "./capabilities/reads/listPurchasePayments"
 import { listUnits } from "./capabilities/reads/listUnits";
 import { createUnit } from "./capabilities/actions/createUnit";
 import { setUnitStatus } from "./capabilities/actions/setUnitStatus";
+import { listExpenseCategories } from "./capabilities/reads/listExpenseCategories";
+import { createExpenseCategory } from "./capabilities/actions/createExpenseCategory";
+import { renameExpenseCategory } from "./capabilities/actions/renameExpenseCategory";
+import { deleteExpenseCategory } from "./capabilities/actions/deleteExpenseCategory";
+import { listExpenses } from "./capabilities/reads/listExpenses";
+import { createExpense } from "./capabilities/actions/createExpense";
+import { updateExpense } from "./capabilities/actions/updateExpense";
+import { payExpense } from "./capabilities/actions/payExpense";
+import { deleteExpense } from "./capabilities/actions/deleteExpense";
 import { listCatalogue } from "./capabilities/reads/listCatalogue";
 import { listTillItems } from "./capabilities/reads/listTillItems";
 import { previewSale } from "./capabilities/reads/previewSale";
@@ -682,6 +691,61 @@ export function createApp(): Express {
   app.put("/units/:id/status", requireTenantUser, async (req, res) => {
     const id = req.params.id as string;
     const result = await setUnitStatus.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/expense-categories", requireTenantUser, async (req, res) => {
+    const result = await listExpenseCategories.execute(getActor(req), undefined);
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/expense-categories", requireTenantUser, async (req, res) => {
+    const result = await createExpenseCategory.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.put("/expense-categories/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await renameExpenseCategory.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.delete("/expense-categories/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await deleteExpenseCategory.execute(getActor(req), { id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/expenses", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const result = await listExpenses.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/expenses", requireTenantUser, async (req, res) => {
+    const result = await createExpense.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  app.put("/expenses/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await updateExpense.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.put("/expenses/:id/pay", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await payExpense.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.delete("/expenses/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await deleteExpense.execute(getActor(req), { id });
     sendCapabilityResult(res, result);
   });
 

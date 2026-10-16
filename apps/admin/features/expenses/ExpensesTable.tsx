@@ -2,7 +2,9 @@
 
 import { useTheme } from "@zenzoo/design-tokens";
 import {
+  Badge,
   Button,
+  Chips,
   DatePicker,
   IconButton,
   Input,
@@ -12,21 +14,26 @@ import {
   Select,
   Sheet,
   Table,
+  Tabs,
   textStyle,
   type TableColumn,
 } from "@zenzoo/ui-web";
 import { useEffect, useMemo, useState } from "react";
-import { PAYMENT_ACCOUNT_OPTIONS, accountLabel } from "../../lib/payment-options";
-import { listVendors, type Vendor } from "../vendors/vendors";
+import { accountLabel, rememberPaymentNames } from "../../lib/payment-options";
+import { listAccounts, type Account } from "../settings/accounts";
+import { addVendor, listVendors, type Vendor } from "../vendors/vendors";
 import {
   addExpense,
   categoriesOf,
   deleteExpense,
   editExpense,
-  listExpenseCategories,
+  isOverdue,
   listExpenses,
+  payExpense,
   type Expense,
+  type ExpenseInput,
 } from "./expenses";
+import { listExpenseCategories, resolveExpenseCategories } from "./expenseCategories";
 import { formatDate, formatPrice } from "../../lib/stock-display";
 import { datePresets, isoDate } from "../../lib/date-ranges";
 import ExpenseFilterSheet, { NO_EXPENSE_FILTERS, type ExpenseFilters } from "./ExpenseFilterSheet";
@@ -43,17 +50,27 @@ interface LineRow {
 
 const blankLine = (): LineRow => ({ description: "", category: "", amount: "" });
 
-const accountName = (id: string) => accountLabel(id);
+const accountName = (id: string | undefined) => (id ? accountLabel(id) : "-");
+
+type StatusTab = "all" | "pending" | "paid";
+
+const STATUS_TABS: { id: StatusTab; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "pending", label: "To pay" },
+  { id: "paid", label: "Paid" },
+];
 
 // Columns of a line in the form: description, category, amount, remove.
 const LINE_COLUMNS = "minmax(0, 1.3fr) minmax(0, 1fr) 110px 32px";
 
-/** The bills the shop has paid, each with the items it covered and their categories. */
+/** The bills the shop owes or has paid, each with the items it covered and their categories. */
 export default function ExpensesTable() {
   const { colors, radius, spacing } = useTheme();
   const [expenses, setExpenses] = useState<Expense[] | null>(null);
   const [categories, setCategories] = useState<string[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [tab, setTab] = useState<StatusTab>("all");
   const [query, setQuery] = useState("");
   // Starts on this month; Filters changes it.
   const [filters, setFilters] = useState<ExpenseFilters>(() => {
@@ -66,12 +83,21 @@ export default function ExpensesTable() {
   // null = closed; an Expense = editing it; "new" = adding.
   const [editing, setEditing] = useState<Expense | "new" | null>(null);
   const [deleting, setDeleting] = useState<Expense | null>(null);
+  // The bill being marked paid, and what it is being paid with.
+  const [paying, setPaying] = useState<Expense | null>(null);
+  const [payAccountId, setPayAccountId] = useState("");
+  const [payDate, setPayDate] = useState("");
+  const [payError, setPayError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   // The form's fields.
   const [date, setDate] = useState("");
   const [payee, setPayee] = useState("");
   const [reference, setReference] = useState("");
+  const [status, setStatus] = useState<"paid" | "pending">("paid");
+  const [dueDate, setDueDate] = useState("");
+  const [paidDate, setPaidDate] = useState("");
   const [accountId, setAccountId] = useState("");
   const [note, setNote] = useState("");
   const [lines, setLines] = useState<LineRow[]>([blankLine()]);
@@ -79,9 +105,17 @@ export default function ExpensesTable() {
 
   async function reload() {
     setExpenses([...(await listExpenses())]);
-    setCategories([...listExpenseCategories()]);
+    setCategories((await listExpenseCategories()).map((item) => item.name));
     setVendors([...(await listVendors())]);
+    const real = await listAccounts();
+    rememberPaymentNames([], real);
+    setAccounts(real);
   }
+
+  const accountOptions = accounts
+    .filter((account) => account.status === "active")
+    .map((account) => ({ value: account.id, label: account.name }));
+  const today = isoDate(new Date());
 
   useEffect(() => {
     void reload();
@@ -97,9 +131,13 @@ export default function ExpensesTable() {
     const q = query.trim().toLowerCase();
     return (expenses ?? [])
       .filter((expense) => {
+        if (tab !== "all" && expense.status !== tab) return false;
         if (filters.from !== "" && expense.date < filters.from) return false;
         if (filters.to !== "" && expense.date > filters.to) return false;
-        if (filters.accounts.length > 0 && !filters.accounts.includes(expense.accountId))
+        if (
+          filters.accounts.length > 0 &&
+          !(expense.accountId && filters.accounts.includes(expense.accountId))
+        )
           return false;
         if (
           filters.categories.length > 0 &&
@@ -119,7 +157,7 @@ export default function ExpensesTable() {
         );
       })
       .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-  }, [expenses, query, filters]);
+  }, [expenses, query, filters, tab]);
 
   // Spending by category counts each line, so a mixed bill is split across its categories.
   const byCategory = new Map<string, number>();
@@ -129,7 +167,12 @@ export default function ExpensesTable() {
       byCategory.set(line.category, (byCategory.get(line.category) ?? 0) + line.amount);
     }
   }
-  const total = [...byCategory.values()].reduce((sum, value) => sum + value, 0);
+  const paidTotal = filtered
+    .filter((expense) => expense.status === "paid")
+    .reduce((sum, expense) => sum + expense.total, 0);
+  const owed = filtered.filter((expense) => expense.status === "pending");
+  const owedTotal = owed.reduce((sum, expense) => sum + expense.total, 0);
+  const overdueCount = owed.filter((expense) => isOverdue(expense, today)).length;
   const biggest = [...byCategory.entries()].sort((a, b) => b[1] - a[1])[0];
 
   const presetMatch = datePresets().find(
@@ -191,7 +234,10 @@ export default function ExpensesTable() {
     setDate(target === "new" ? isoDate(new Date()) : target.date);
     setPayee(target === "new" ? "" : (target.payee ?? ""));
     setReference(target === "new" ? "" : (target.reference ?? ""));
-    setAccountId(target === "new" ? "" : target.accountId);
+    setStatus(target === "new" ? "paid" : target.status);
+    setDueDate(target === "new" ? "" : (target.dueDate ?? ""));
+    setPaidDate(target === "new" ? isoDate(new Date()) : (target.paidDate ?? isoDate(new Date())));
+    setAccountId(target === "new" ? "" : (target.accountId ?? ""));
     setNote(target === "new" ? "" : (target.note ?? ""));
     setLines(
       target === "new"
@@ -216,38 +262,117 @@ export default function ExpensesTable() {
         : null;
   const problems = {
     date: date === "" ? "Choose the date." : null,
-    account: accountId === "" ? "Choose the account it was paid from." : null,
+    account:
+      status === "paid" && accountId === "" ? "Choose the account it was paid from." : null,
     lines: lines.some((row) => lineProblem(row) !== null)
       ? "Every item needs a category and an amount."
       : null,
   };
   const valid = Object.values(problems).every((item) => item === null);
 
-  function submit() {
+  async function submit() {
     setTouched(true);
-    if (!valid || !editing) return;
-    const input = {
+    if (!valid || !editing || saving) return;
+    setSaving(true);
+    // Categories typed in on the fly are created for real before the bill is filed under them.
+    const ids = await resolveExpenseCategories(lines.map((row) => row.category));
+    if (typeof ids === "string") {
+      setSaving(false);
+      setNotice(ids);
+      return;
+    }
+    const input: ExpenseInput = {
       date,
       payee,
       reference,
-      accountId,
       note,
+      status,
+      dueDate: status === "pending" ? dueDate : "",
+      accountId: status === "paid" ? accountId : "",
+      paidDate: status === "paid" ? paidDate : "",
       lines: lines.map((row) => ({
         description: row.description,
-        category: row.category,
+        categoryId: ids.get(row.category.trim().toLowerCase()) ?? "",
         amount: lineAmount(row),
       })),
     };
+    let message: string | null;
     if (editing === "new") {
-      addExpense(input);
-      setPage(1);
-      setNotice(`Expense of ${formatPrice(formTotal)} added.`);
+      const result = await addExpense(input);
+      message = typeof result === "string" ? result : null;
     } else {
-      editExpense(editing.id, input);
+      message = await editExpense(editing, input);
+    }
+    setSaving(false);
+    if (message) {
+      setNotice(message);
+      return;
+    }
+    if (editing === "new") {
+      setPage(1);
+      setNotice(
+        status === "pending"
+          ? `Bill of ${formatPrice(formTotal)} added to pay later.`
+          : `Expense of ${formatPrice(formTotal)} added.`,
+      );
+    } else {
       setNotice("Expense updated.");
     }
     setEditing(null);
     void reload();
+  }
+
+  function openPay(expense: Expense) {
+    setPaying(expense);
+    setPayAccountId("");
+    setPayDate(today);
+    setPayError(null);
+  }
+
+  async function confirmPay() {
+    if (!paying) return;
+    if (payAccountId === "") {
+      setPayError("Choose the account it was paid from.");
+      return;
+    }
+    if (payDate === "") {
+      setPayError("Choose the date it was paid.");
+      return;
+    }
+    const message = await payExpense(paying, payAccountId, payDate);
+    if (message) {
+      setPayError(message);
+      return;
+    }
+    setNotice(`${formatPrice(paying.total)} marked as paid from ${accountName(payAccountId)}.`);
+    setPaying(null);
+    void reload();
+  }
+
+  async function confirmDelete() {
+    if (!deleting) return;
+    const message = await deleteExpense(deleting);
+    setDeleting(null);
+    setNotice(message ?? "Expense deleted.");
+    void reload();
+  }
+
+  // Picking a name that is not a vendor yet creates the vendor (name only; the rest can be
+  // filled in on the Vendors page).
+  async function pickPayee(name: string) {
+    const typed = name.trim();
+    if (typed === "" || vendors.some((vendor) => vendor.name === typed)) {
+      setPayee(typed);
+      return;
+    }
+    const result = await addVendor({ name: typed, phone: "", email: "", taxId: "", mapUrl: "" });
+    if (typeof result === "string") {
+      setNotice(result);
+      return;
+    }
+    setVendors((current) => [...current, result]);
+    setPayee(result.name);
+    setNotice(`${result.name} added to your vendors.`);
   }
 
   function updateLine(index: number, patch: Partial<LineRow>) {
@@ -297,7 +422,33 @@ export default function ExpensesTable() {
         return names.length === 1 ? names[0] : `${names[0]} +${names.length - 1}`;
       },
     },
-    { key: "account", header: "Paid from", render: (expense) => accountName(expense.accountId) },
+    {
+      key: "status",
+      header: "Status",
+      render: (expense) => {
+        if (expense.status === "paid") {
+          return (
+            <span>
+              <Badge tone="success">Paid</Badge>
+              <span style={{ ...textStyle("footnote"), color: colors.inkMuted, display: "block" }}>
+                {accountName(expense.accountId)}
+              </span>
+            </span>
+          );
+        }
+        const overdue = isOverdue(expense, today);
+        return (
+          <span>
+            <Badge tone={overdue ? "danger" : "warning"}>{overdue ? "Overdue" : "To pay"}</Badge>
+            {expense.dueDate ? (
+              <span style={{ ...textStyle("footnote"), color: colors.inkMuted, display: "block" }}>
+                Due {formatDate(expense.dueDate)}
+              </span>
+            ) : null}
+          </span>
+        );
+      },
+    },
     {
       key: "total",
       header: "Total",
@@ -308,9 +459,32 @@ export default function ExpensesTable() {
       key: "actions",
       header: "",
       align: "right",
-      width: "96px",
+      width: "220px",
       render: (expense) => (
-        <span style={{ display: "inline-flex", gap: spacing[1] }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: spacing[1] }}>
+          {/* A fixed slot, so the edit and delete icons line up on paid and unpaid rows alike. */}
+          <span style={{ display: "inline-flex", justifyContent: "flex-end", width: 112 }}>
+            {expense.status === "pending" ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openPay(expense);
+                }}
+                style={{
+                  ...textStyle("callout"),
+                  height: 32,
+                  paddingInline: spacing[4],
+                  whiteSpace: "nowrap",
+                  border: `1px solid ${colors.border}`,
+                  backgroundColor: "transparent",
+                }}
+              >
+                Mark paid
+              </Button>
+            ) : null}
+          </span>
           <IconButton
             icon="edit"
             label={`Edit expense of ${formatPrice(expense.total)}`}
@@ -379,8 +553,27 @@ export default function ExpensesTable() {
         }}
       />
 
+      <Tabs
+        aria-label="Bills by payment status"
+        tabs={STATUS_TABS}
+        value={tab}
+        onChange={(next) => {
+          setTab(next as StatusTab);
+          setPage(1);
+        }}
+      />
+
       <StatRow>
-        <StatTile label="Total spent" value={formatPrice(total)} hint={rangeLabel || "All time"} />
+        <StatTile label="Paid" value={formatPrice(paidTotal)} hint={rangeLabel || "All time"} />
+        <StatTile
+          label="To pay"
+          value={formatPrice(owedTotal)}
+          hint={
+            owed.length === 0
+              ? "Nothing owed"
+              : `${owed.length} ${owed.length === 1 ? "bill" : "bills"}${overdueCount > 0 ? ` · ${overdueCount} overdue` : ""}`
+          }
+        />
         <StatTile
           label="Bills"
           value={String(filtered.length)}
@@ -429,6 +622,7 @@ export default function ExpensesTable() {
         open={filtersOpen}
         filters={filters}
         categories={categories}
+        accounts={accountOptions}
         onClose={() => setFiltersOpen(false)}
         onApply={(next) => {
           setFilters(next);
@@ -463,8 +657,18 @@ export default function ExpensesTable() {
               >
                 Cancel
               </Button>
-              <Button type="submit" form="expense-form" variant="primary" style={{ flex: 2 }}>
-                {editing === "new" ? "Add expense" : "Save changes"}
+              <Button
+                type="submit"
+                form="expense-form"
+                variant="primary"
+                disabled={saving}
+                style={{ flex: 2 }}
+              >
+                {editing === "new"
+                  ? status === "pending"
+                    ? "Add bill to pay"
+                    : "Add expense"
+                  : "Save changes"}
               </Button>
             </div>
           </div>
@@ -474,7 +678,7 @@ export default function ExpensesTable() {
           id="expense-form"
           onSubmit={(event) => {
             event.preventDefault();
-            submit();
+            void submit();
           }}
           style={{ display: "flex", flexDirection: "column", gap: spacing[8] }}
         >
@@ -487,7 +691,19 @@ export default function ExpensesTable() {
               alignItems: "start",
             }}
           >
-            <FormField id="expense-payee" label="PAID TO" span={1}>
+            <FormField id="expense-status" label="PAYMENT" span={2}>
+              <Chips
+                aria-label="Payment status"
+                options={[
+                  { value: "paid", label: "Paid now" },
+                  { value: "pending", label: "Pay later" },
+                ]}
+                value={status}
+                columns={2}
+                onChange={(next) => setStatus(next === "pending" ? "pending" : "paid")}
+              />
+            </FormField>
+            <FormField id="expense-payee" label={status === "paid" ? "PAID TO" : "OWED TO"} span={1}>
               <Select
                 id="expense-payee"
                 options={[
@@ -500,9 +716,9 @@ export default function ExpensesTable() {
                 value={payee}
                 placeholder="Choose a vendor"
                 creatable
-                createLabel="Someone else"
+                createLabel="Create new vendor"
                 aria-label="Paid to"
-                onChange={setPayee}
+                onChange={(next) => void pickPayee(next)}
               />
             </FormField>
             <FormField id="expense-reference" label="BILL NUMBER (OPTIONAL)" span={1}>
@@ -522,22 +738,45 @@ export default function ExpensesTable() {
             >
               <DatePicker id="expense-date" value={date} clearable={false} onChange={setDate} />
             </FormField>
-            <FormField
-              id="expense-account"
-              label="PAID FROM"
-              span={1}
-              error={touched ? problems.account : null}
-            >
-              <Select
-                id="expense-account"
-                options={PAYMENT_ACCOUNT_OPTIONS}
-                value={accountId}
-                placeholder="Choose an account"
-                searchable={false}
-                aria-invalid={touched && problems.account ? true : undefined}
-                onChange={setAccountId}
-              />
-            </FormField>
+            {status === "paid" ? (
+              <>
+                <FormField
+                  id="expense-account"
+                  label="PAID FROM"
+                  span={1}
+                  error={touched ? problems.account : null}
+                >
+                  <Select
+                    id="expense-account"
+                    options={accountOptions}
+                    value={accountId}
+                    placeholder="Choose an account"
+                    searchable={false}
+                    aria-invalid={touched && problems.account ? true : undefined}
+                    onChange={setAccountId}
+                  />
+                </FormField>
+                <FormField id="expense-paid-date" label="PAID ON" span={1}>
+                  <DatePicker
+                    id="expense-paid-date"
+                    value={paidDate}
+                    clearable={false}
+                    onChange={setPaidDate}
+                  />
+                </FormField>
+              </>
+            ) : (
+              <FormField id="expense-due-date" label="DUE ON (OPTIONAL)" span={1}>
+                <DatePicker
+                  id="expense-due-date"
+                  value={dueDate}
+                  placeholder="No due date"
+                  min={date || undefined}
+                  align="right"
+                  onChange={setDueDate}
+                />
+              </FormField>
+            )}
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: spacing[4] }}>
@@ -662,7 +901,7 @@ export default function ExpensesTable() {
             style={{ ...textStyle("body"), color: colors.inkMuted, margin: `${spacing[3]}px 0 0` }}
           >
             {deleting
-              ? `${formatPrice(deleting.total)}${deleting.payee ? ` to ${deleting.payee}` : ""} on ${formatDate(deleting.date)}. The money goes back into ${accountName(deleting.accountId)}.`
+              ? `${formatPrice(deleting.total)}${deleting.payee ? ` to ${deleting.payee}` : ""} on ${formatDate(deleting.date)}. ${deleting.status === "paid" ? `The money goes back into ${accountName(deleting.accountId)}.` : "It hasn't been paid, so no money moves."}`
               : ""}
           </p>
           <div
@@ -679,14 +918,78 @@ export default function ExpensesTable() {
             <Button
               type="button"
               variant="danger"
-              onClick={() => {
-                if (deleting) deleteExpense(deleting.id);
-                setDeleting(null);
-                setNotice("Expense deleted.");
-                void reload();
-              }}
+              onClick={() => void confirmDelete()}
             >
               Delete
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={paying !== null} onClose={() => setPaying(null)}>
+        <div style={{ width: 420, maxWidth: "100%" }}>
+          <div style={{ ...textStyle("title3"), color: colors.ink }}>Mark as paid</div>
+          <p
+            style={{ ...textStyle("body"), color: colors.inkMuted, margin: `${spacing[3]}px 0 0` }}
+          >
+            {paying
+              ? `${formatPrice(paying.total)}${paying.payee ? ` to ${paying.payee}` : ""}. The money comes out of the account you choose.`
+              : ""}
+          </p>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              columnGap: spacing[4],
+              marginTop: spacing[5],
+              alignItems: "start",
+            }}
+          >
+            <FormField id="pay-account" label="PAID FROM" span={1}>
+              <Select
+                id="pay-account"
+                options={accountOptions}
+                value={payAccountId}
+                placeholder="Choose an account"
+                searchable={false}
+                aria-invalid={payError && payAccountId === "" ? true : undefined}
+                onChange={(next) => {
+                  setPayAccountId(next);
+                  setPayError(null);
+                }}
+              />
+            </FormField>
+            <FormField id="pay-date" label="PAID ON" span={1}>
+              <DatePicker
+                id="pay-date"
+                value={payDate}
+                clearable={false}
+                align="right"
+                onChange={setPayDate}
+              />
+            </FormField>
+          </div>
+          {payError ? (
+            <div
+              role="alert"
+              style={{ ...textStyle("footnote"), color: colors.danger, marginTop: spacing[3] }}
+            >
+              {payError}
+            </div>
+          ) : null}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: spacing[3],
+              marginTop: spacing[6],
+            }}
+          >
+            <Button type="button" variant="secondary" onClick={() => setPaying(null)}>
+              Cancel
+            </Button>
+            <Button type="button" variant="primary" onClick={() => void confirmPay()}>
+              Mark paid
             </Button>
           </div>
         </div>

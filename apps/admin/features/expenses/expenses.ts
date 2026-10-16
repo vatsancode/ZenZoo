@@ -1,171 +1,123 @@
+import { redirectToSignInIfUnauthorized } from "../../lib/auth";
 import { logAudit } from "../../lib/audit";
 import { accountLabel } from "../../lib/payment-options";
 import { formatDate, formatPrice } from "../../lib/stock-display";
+import { ensureStoreId } from "../../lib/storeContext";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 /** One thing paid for on a bill: what it was, which category it belongs to, and what it cost. */
 export interface ExpenseLine {
   description: string;
+  /** The category's name, as shown. */
   category: string;
+  categoryId: string;
   amount: number;
 }
 
-/** A bill the shop paid: who was paid, from which account, and everything it covered. */
+/**
+ * A bill the shop owes or has paid. A pending bill has been received but not paid yet - it
+ * names no account and moves no money until it is marked paid.
+ */
 export interface Expense {
   id: string;
-  /** ISO date, YYYY-MM-DD. */
+  /** ISO date, YYYY-MM-DD: the date on the bill. */
   date: string;
-  /** Who was paid. */
+  /** Who is owed / was paid. */
   payee?: string;
   /** The bill or receipt number, if there is one. */
   reference?: string;
-  /** The account the money was paid from, e.g. "cash-drawer". */
-  accountId: string;
   note?: string;
+  status: "pending" | "paid";
+  /** Pending bills: when it falls due, if the bill says. */
+  dueDate?: string;
+  /** Paid bills: the day it was paid. */
+  paidDate?: string;
+  /** The account the money was paid from; absent while pending. */
+  accountId?: string;
   lines: ExpenseLine[];
   total: number;
+}
+
+export interface ExpenseLineInput {
+  description: string;
+  categoryId: string;
+  amount: number;
 }
 
 export interface ExpenseInput {
   date: string;
   payee: string;
   reference: string;
-  accountId: string;
   note: string;
-  lines: ExpenseLine[];
+  status: "pending" | "paid";
+  /** Pending only; "" for none. */
+  dueDate: string;
+  /** Paid only. */
+  accountId: string;
+  paidDate: string;
+  lines: ExpenseLineInput[];
 }
 
-// Sample data standing in for a real capability, same as lib/stocks.ts: there is no
-// expenses capability on the backend yet. Swap these bodies for real API calls once
-// one exists.
-let categories: string[] = [
-  "Rent",
-  "Salaries",
-  "Electricity",
-  "Transport",
-  "Packaging",
-  "Marketing",
-  "Repairs",
-  "Tea and snacks",
-  "Other",
-];
-
-const round = (value: number) => Math.round(value * 100) / 100;
-const totalOf = (lines: ExpenseLine[]) => round(lines.reduce((sum, line) => sum + line.amount, 0));
-
-function bill(
-  id: string,
-  date: string,
-  accountId: string,
-  lines: ExpenseLine[],
-  extra: { payee?: string; reference?: string; note?: string } = {},
-): Expense {
-  return { id, date, accountId, lines, total: totalOf(lines), ...extra };
+interface ExpenseResponse {
+  id: string;
+  date: string;
+  payee: string | null;
+  reference: string | null;
+  note: string | null;
+  status: "pending" | "paid";
+  dueDate: string | null;
+  paidDate: string | null;
+  accountId: string | null;
+  total: string;
+  lines: { description: string; categoryId: string; category: string; amount: string }[];
 }
 
-let expenses: Expense[] = [
-  bill(
-    "exp-1",
-    "2026-09-01",
-    "hdfc-current",
-    [{ description: "Shop rent, September", category: "Rent", amount: 45000 }],
-    { payee: "Mr. Subramanian (landlord)" },
-  ),
-  bill(
-    "exp-2",
-    "2026-09-05",
-    "hdfc-current",
-    [
-      { description: "Sales staff, 2 people", category: "Salaries", amount: 26000 },
-      { description: "Cashier", category: "Salaries", amount: 12000 },
-    ],
-    { payee: "Staff", note: "September salaries" },
-  ),
-  bill(
-    "exp-3",
-    "2026-09-12",
-    "hdfc-current",
-    [{ description: "Electricity bill", category: "Electricity", amount: 3850 }],
-    { payee: "TNEB", reference: "TN-5521904" },
-  ),
-  bill(
-    "exp-4",
-    "2026-09-18",
-    "cash-drawer",
-    [
-      { description: "Carry bags, 500", category: "Packaging", amount: 1400 },
-      { description: "Tissue paper rolls", category: "Packaging", amount: 600 },
-      { description: "Gift boxes", category: "Packaging", amount: 400 },
-    ],
-    { payee: "Sri Packaging Works", reference: "SPW-2210" },
-  ),
-  bill(
-    "exp-5",
-    "2026-09-27",
-    "cash-drawer",
-    [
-      { description: "Freight, Surat consignment", category: "Transport", amount: 1500 },
-      { description: "Loading and unloading", category: "Transport", amount: 300 },
-    ],
-    { payee: "Murugan Lorry Service" },
-  ),
-  bill(
-    "exp-6",
-    "2026-10-01",
-    "hdfc-current",
-    [{ description: "Shop rent, October", category: "Rent", amount: 45000 }],
-    { payee: "Mr. Subramanian (landlord)" },
-  ),
-  bill(
-    "exp-7",
-    "2026-10-03",
-    "icici-savings",
-    [
-      { description: "Festival hoardings, 3 locations", category: "Marketing", amount: 5000 },
-      { description: "Flex printing", category: "Marketing", amount: 1500 },
-    ],
-    { payee: "Bright Signs", reference: "BS/0917", note: "Festival season" },
-  ),
-  bill("exp-8", "2026-10-04", "cash-drawer", [
-    { description: "Tea and snacks for staff", category: "Tea and snacks", amount: 420 },
-  ]),
-];
-
-export async function listExpenses(): Promise<Expense[]> {
-  return expenses;
+function toExpense(response: ExpenseResponse): Expense {
+  return {
+    id: response.id,
+    date: response.date,
+    payee: response.payee ?? undefined,
+    reference: response.reference ?? undefined,
+    note: response.note ?? undefined,
+    status: response.status,
+    dueDate: response.dueDate ?? undefined,
+    paidDate: response.paidDate ?? undefined,
+    accountId: response.accountId ?? undefined,
+    total: Number(response.total),
+    lines: response.lines.map((line) => ({
+      description: line.description,
+      category: line.category,
+      categoryId: line.categoryId,
+      amount: Number(line.amount),
+    })),
+  };
 }
 
-export function listExpenseCategories(): string[] {
-  return categories;
-}
-
-function rememberCategories(lines: ExpenseLine[]) {
-  for (const line of lines) {
-    if (!categories.some((item) => item.toLowerCase() === line.category.toLowerCase())) {
-      categories = [...categories.filter((item) => item !== "Other"), line.category, "Other"];
-    }
+async function parseError(response: Response): Promise<string> {
+  try {
+    const data = (await response.json()) as { error?: string };
+    return data.error ?? "Something went wrong.";
+  } catch {
+    return "Something went wrong.";
   }
 }
 
-function clean(input: ExpenseInput) {
-  const lines = input.lines.map((line) => ({
-    description: line.description.trim(),
-    category: line.category.trim(),
-    amount: round(line.amount),
-  }));
-  return {
-    date: input.date,
-    accountId: input.accountId,
-    payee: input.payee.trim() || undefined,
-    reference: input.reference.trim() || undefined,
-    note: input.note.trim() || undefined,
-    lines,
-    total: totalOf(lines),
-  };
+/** Every bill, newest first - requires at least "expenses:view". */
+export async function listExpenses(): Promise<Expense[]> {
+  const storeId = await ensureStoreId();
+  const response = await fetch(`${API_URL}/expenses?storeId=${storeId}`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    throw new Error(await parseError(response));
+  }
+  return ((await response.json()) as ExpenseResponse[]).map(toExpense);
 }
 
 /** The fields of a bill as the audit log shows them. */
 function snapshot(expense: Expense) {
-  const accountName = accountLabel(expense.accountId);
   return {
     Date: formatDate(expense.date),
     "Paid to": expense.payee ?? null,
@@ -173,9 +125,12 @@ function snapshot(expense: Expense) {
     Items: expense.lines
       .map((line) => `${line.description || line.category} ${formatPrice(line.amount)}`)
       .join(", "),
-    Category: Array.from(new Set(expense.lines.map((line) => line.category))).join(", "),
+    Category: categoriesOf(expense).join(", "),
     Total: formatPrice(expense.total),
-    "Paid from": accountName,
+    Status: expense.status === "paid" ? "Paid" : "To pay",
+    Due: expense.dueDate ? formatDate(expense.dueDate) : null,
+    "Paid on": expense.paidDate ? formatDate(expense.paidDate) : null,
+    "Paid from": expense.accountId ? accountLabel(expense.accountId) : null,
     Note: expense.note ?? null,
   };
 }
@@ -183,10 +138,20 @@ function snapshot(expense: Expense) {
 const labelOf = (expense: Expense) =>
   `${expense.payee ?? expense.lines[0]?.category ?? "Expense"} · ${formatPrice(expense.total)}`;
 
-export function addExpense(input: ExpenseInput): Expense {
-  const expense: Expense = { id: `exp-${Date.now()}`, ...clean(input) };
-  rememberCategories(expense.lines);
-  expenses = [expense, ...expenses];
+/** Adds a bill - requires "expenses:edit". Returns the bill, or an error message. */
+export async function addExpense(input: ExpenseInput): Promise<Expense | string> {
+  const storeId = await ensureStoreId();
+  const response = await fetch(`${API_URL}/expenses`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ storeId, ...input }),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  const expense = toExpense((await response.json()) as ExpenseResponse);
   logAudit({
     action: "created",
     module: "Expenses",
@@ -198,37 +163,77 @@ export function addExpense(input: ExpenseInput): Expense {
   return expense;
 }
 
-export function editExpense(id: string, input: ExpenseInput): void {
-  const next = clean(input);
-  rememberCategories(next.lines);
-  const previous = expenses.find((expense) => expense.id === id);
-  expenses = expenses.map((expense) => (expense.id === id ? { id, ...next } : expense));
-  if (previous) {
-    const updated = { id, ...next };
-    logAudit({
-      action: "updated",
-      module: "Expenses",
-      entity: "Expense",
-      label: labelOf(updated),
-      before: snapshot(previous),
-      after: snapshot(updated),
-    });
+/** Saves changes to a bill - requires "expenses:edit". Returns an error message, or null. */
+export async function editExpense(previous: Expense, input: ExpenseInput): Promise<string | null> {
+  const response = await fetch(`${API_URL}/expenses/${previous.id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
   }
+  const expense = toExpense((await response.json()) as ExpenseResponse);
+  logAudit({
+    action: "updated",
+    module: "Expenses",
+    entity: "Expense",
+    label: labelOf(expense),
+    before: snapshot(previous),
+    after: snapshot(expense),
+  });
+  return null;
 }
 
-export function deleteExpense(id: string): void {
-  const removed = expenses.find((expense) => expense.id === id);
-  expenses = expenses.filter((expense) => expense.id !== id);
-  if (removed) {
-    logAudit({
-      action: "deleted",
-      module: "Expenses",
-      entity: "Expense",
-      label: labelOf(removed),
-      before: snapshot(removed),
-      after: null,
-    });
+/** Marks a pending bill paid from an account - requires "expenses:edit". Returns an error message, or null. */
+export async function payExpense(
+  previous: Expense,
+  accountId: string,
+  paidDate: string,
+): Promise<string | null> {
+  const response = await fetch(`${API_URL}/expenses/${previous.id}/pay`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ accountId, paidDate }),
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
   }
+  const expense = toExpense((await response.json()) as ExpenseResponse);
+  logAudit({
+    action: "updated",
+    module: "Expenses",
+    entity: "Expense",
+    label: labelOf(expense),
+    before: snapshot(previous),
+    after: snapshot(expense),
+  });
+  return null;
+}
+
+/** Deletes a bill; a paid one's money goes back into its account - requires "expenses:delete". */
+export async function deleteExpense(expense: Expense): Promise<string | null> {
+  const response = await fetch(`${API_URL}/expenses/${expense.id}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  logAudit({
+    action: "deleted",
+    module: "Expenses",
+    entity: "Expense",
+    label: labelOf(expense),
+    before: snapshot(expense),
+    after: null,
+  });
+  return null;
 }
 
 /** The distinct categories a bill touches, in the order they first appear. */
@@ -236,61 +241,7 @@ export function categoriesOf(expense: Expense): string[] {
   return Array.from(new Set(expense.lines.map((line) => line.category)));
 }
 
-// ------------------------------------------------------ managing the categories
-
-/** "Other" is the catch-all, so it always stays. */
-export const CATCH_ALL_CATEGORY = "Other";
-
-const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
-
-/** Adds a category; returns an error message, or null. */
-export function addExpenseCategory(name: string): string | null {
-  const clean = name.trim();
-  if (clean === "") return "Enter a name.";
-  if (categories.some((item) => sameName(item, clean))) return "This category already exists.";
-  categories = [
-    ...categories.filter((item) => item !== CATCH_ALL_CATEGORY),
-    clean,
-    CATCH_ALL_CATEGORY,
-  ];
-  return null;
-}
-
-/** Renames a category everywhere it is used; returns an error message, or null. */
-export function renameExpenseCategory(from: string, to: string): string | null {
-  const clean = to.trim();
-  if (from === CATCH_ALL_CATEGORY) return `"${CATCH_ALL_CATEGORY}" can't be renamed.`;
-  if (clean === "") return "Enter a name.";
-  if (categories.some((item) => item !== from && sameName(item, clean))) {
-    return "This category already exists.";
-  }
-  categories = categories.map((item) => (item === from ? clean : item));
-  expenses = expenses.map((expense) => ({
-    ...expense,
-    lines: expense.lines.map((line) =>
-      line.category === from ? { ...line, category: clean } : line,
-    ),
-  }));
-  return null;
-}
-
-export function deleteExpenseCategory(name: string): void {
-  if (name === CATCH_ALL_CATEGORY) return;
-  categories = categories.filter((item) => item !== name);
-}
-
-/** How a category is used: items, the bills they sit on, and what has been spent on it. */
-export function categoryUsage(name: string): { items: number; bills: number; spent: number } {
-  let items = 0;
-  let spent = 0;
-  const bills = new Set<string>();
-  for (const expense of expenses) {
-    for (const line of expense.lines) {
-      if (line.category !== name) continue;
-      items += 1;
-      spent += line.amount;
-      bills.add(expense.id);
-    }
-  }
-  return { items, bills: bills.size, spent: round(spent) };
+/** A pending bill whose due date has passed. */
+export function isOverdue(expense: Expense, today: string): boolean {
+  return expense.status === "pending" && expense.dueDate !== undefined && expense.dueDate < today;
 }

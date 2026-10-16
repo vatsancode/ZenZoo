@@ -4,7 +4,6 @@ import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Chips, DatePicker, MultiChips, Sheet, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
 import { datePresets } from "../../lib/date-ranges";
-import { PAYMENT_ACCOUNT_OPTIONS } from "../../lib/payment-options";
 import FormField from "../../components/FormField";
 
 export interface ExpenseFilters {
@@ -29,6 +28,8 @@ interface ExpenseFilterSheetProps {
   filters: ExpenseFilters;
   /** Every category that can be picked. */
   categories: string[];
+  /** The accounts a bill can have been paid from. */
+  accounts: { value: string; label: string }[];
   onClose: () => void;
   onApply: (filters: ExpenseFilters) => void;
 }
@@ -38,6 +39,7 @@ export default function ExpenseFilterSheet({
   open,
   filters,
   categories,
+  accounts,
   onClose,
   onApply,
 }: ExpenseFilterSheetProps) {
@@ -149,7 +151,7 @@ export default function ExpenseFilterSheet({
           <div style={{ ...textStyle("headline"), color: colors.ink }}>Paid from</div>
           <MultiChips
             aria-label="Accounts the money was paid from"
-            options={PAYMENT_ACCOUNT_OPTIONS}
+            options={accounts}
             value={draft.accounts}
             columns={2}
             onChange={(next) => setDraft((current) => ({ ...current, accounts: next }))}
