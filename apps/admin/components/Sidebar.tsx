@@ -6,36 +6,18 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAccess } from "../lib/access";
 import { signOut } from "../lib/auth";
+import { NAV_ITEMS } from "../lib/pageAccess";
 
-interface NavItem {
-  label: string;
-  href: string;
-}
-
-// Only sections with a real page behind them. The rest are shown below as
-// coming-soon labels rather than links, so the sidebar never points at a
-// page that doesn't exist yet.
-const navItems: NavItem[] = [
-  { label: "Dashboard", href: "/" },
-  { label: "Vendors", href: "/vendors" },
-  { label: "Purchases", href: "/purchases" },
-  { label: "Stocks", href: "/stocks" },
-  { label: "Expenses", href: "/expenses" },
-  { label: "Catalogue", href: "/catalogue" },
-  { label: "Point of Sale", href: "/point-of-sale" },
-  { label: "Sales", href: "/sales" },
-  { label: "Customers", href: "/customers" },
-  { label: "Settings", href: "/settings" },
-  { label: "Style guide", href: "/style-guide" },
-];
-
+// Links come from lib/pageAccess, filtered to what the signed-in role may open. Pages without a
+// real page yet are listed below as coming-soon labels rather than links, so the sidebar never
+// points at one that does not exist.
 const comingSoon: string[] = [];
 
 export default function Sidebar() {
   const { colors, spacing, radius } = useTheme();
   const pathname = usePathname();
   const router = useRouter();
-  const { me } = useAccess();
+  const { me, canOpen } = useAccess();
 
   return (
     <nav
@@ -66,7 +48,7 @@ export default function Sidebar() {
         ZenZoo
       </div>
 
-      {navItems.map((item) => {
+      {NAV_ITEMS.filter((item) => canOpen(item.href)).map((item) => {
         // Sub-pages (e.g. /stocks/<id>/variants) keep their parent section highlighted.
         const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
         return (

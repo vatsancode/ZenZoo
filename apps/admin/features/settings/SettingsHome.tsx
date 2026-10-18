@@ -12,6 +12,7 @@ import { listUnits } from "./units";
 import { listRoles } from "./roles";
 import { listUsers } from "./userDirectory";
 import { listExpenseCategories } from "../expenses/expenseCategories";
+import { useAccess } from "../../lib/access";
 import { formatPrice } from "../../lib/stock-display";
 
 interface Tile {
@@ -27,6 +28,7 @@ interface Tile {
 export default function SettingsHome() {
   const { colors, radius, spacing, elevation } = useTheme();
   const { preference } = useThemePreference();
+  const { me, canOpen } = useAccess();
   const [hovered, setHovered] = useState<string | null>(null);
   const [auditCount, setAuditCount] = useState(0);
   const [counts, setCounts] = useState({
@@ -42,31 +44,37 @@ export default function SettingsHome() {
   });
 
   useEffect(() => {
-    async function load() {
-      const [categories, units, expenseCategories, accounts, users, roles, methods] = await Promise.all([
-        listCategories(),
-        listUnits(),
-        listExpenseCategories(),
-        listAccounts(),
-        listUsers(),
-        listRoles(),
-        listPaymentMethods(),
-      ]);
-      setCounts({
+    if (!me) return;
+    // Each count is fetched only for a card this role can open, and one failing doesn't blank
+    // the rest - the numbers come from several areas and a role needn't have them all.
+    function when<T>(href: string, load: () => Promise<T>, apply: (value: T) => void) {
+      if (canOpen(href)) load().then(apply).catch(() => undefined);
+    }
+    const add = (patch: Partial<typeof counts>) => setCounts((current) => ({ ...current, ...patch }));
+
+    when("/settings/categories", listCategories, (categories) =>
+      add({
         categories: categories.length,
         subcategories: categories.reduce((sum, category) => sum + category.subcategories.length, 0),
-        units: units.length,
-        expenseCategories: expenseCategories.length,
+      }),
+    );
+    when("/settings/units", listUnits, (units) => add({ units: units.length }));
+    when("/settings/expense-categories", listExpenseCategories, (list) =>
+      add({ expenseCategories: list.length }),
+    );
+    when("/settings/accounts", listAccounts, (accounts) =>
+      add({
         accounts: accounts.length,
         total: accounts.reduce((sum, account) => sum + account.balance, 0),
-        users: users.length,
-        roles: roles.length,
-        methodsOn: methods.filter((method) => method.status === "active").length,
-      });
-    }
-    void load();
-    listAuditEntries().then((list) => setAuditCount(list.length));
-  }, []);
+      }),
+    );
+    when("/settings/users", listUsers, (users) => add({ users: users.length }));
+    when("/settings/users", listRoles, (roles) => add({ roles: roles.length }));
+    when("/settings/payment-methods", listPaymentMethods, (methods) =>
+      add({ methodsOn: methods.filter((method) => method.status === "active").length }),
+    );
+    when("/settings/audit-log", listAuditEntries, (list) => setAuditCount(list.length));
+  }, [me, canOpen]);
 
   const tiles: Tile[] = [
     {
@@ -143,7 +151,7 @@ export default function SettingsHome() {
         gap: spacing[6],
       }}
     >
-      {tiles.map((tile) => (
+      {tiles.filter((tile) => canOpen(tile.href)).map((tile) => (
         <Link
           key={tile.href}
           href={tile.href}

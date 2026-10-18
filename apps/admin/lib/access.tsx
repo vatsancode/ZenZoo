@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { getCurrentUser, type CurrentUser } from "./me";
+import { pageAllowed } from "./pageAccess";
 import type { AccessLevel, PermissionArea } from "../features/settings/users";
 
 const RANK: Record<AccessLevel, number> = { none: 0, view: 1, edit: 2, delete: 3 };
@@ -14,9 +15,11 @@ interface Access {
    * decides what to show; the API refuses anything the role can't do whatever the screen offers.
    */
   can: (area: PermissionArea, level: AccessLevel) => boolean;
+  /** Whether the role may open a page (see lib/pageAccess) - false until /me has answered. */
+  canOpen: (pathname: string) => boolean;
 }
 
-const AccessContext = createContext<Access>({ me: null, can: () => false });
+const AccessContext = createContext<Access>({ me: null, can: () => false, canOpen: () => false });
 
 /** Loads the signed-in person once for the whole admin shell. */
 export function AccessProvider({ children }: { children: ReactNode }) {
@@ -26,13 +29,11 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     getCurrentUser().then(setMe);
   }, []);
 
-  const value = useMemo<Access>(
-    () => ({
-      me,
-      can: (area, level) => (me ? RANK[me.permissions[area] ?? "none"] >= RANK[level] : false),
-    }),
-    [me],
-  );
+  const value = useMemo<Access>(() => {
+    const can: Access["can"] = (area, level) =>
+      me ? RANK[me.permissions[area] ?? "none"] >= RANK[level] : false;
+    return { me, can, canOpen: (pathname) => (me ? pageAllowed(pathname, can) : false) };
+  }, [me]);
 
   return <AccessContext.Provider value={value}>{children}</AccessContext.Provider>;
 }
