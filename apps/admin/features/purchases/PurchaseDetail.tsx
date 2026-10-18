@@ -29,8 +29,17 @@ import {
 } from "./purchases";
 import { formatDate, formatPrice } from "../../lib/stock-display";
 import { listVendors, type Vendor } from "../vendors/vendors";
-import { accountOptions, listAccounts, type Account } from "../settings/accounts";
-import { listPaymentMethods, methodOptions, type PaymentMethod } from "../settings/paymentMethods";
+import { accountOptions } from "../settings/accounts";
+import { methodOptions } from "../settings/paymentMethods";
+import { useAccess } from "../../lib/access";
+import {
+  lookupAccounts,
+  lookupPaymentMethods,
+  lookupVendors,
+  type AccountLookup,
+  type PaymentMethodLookup,
+  type VendorLookup,
+} from "../../lib/lookups";
 import PageHeader from "../../components/PageHeader";
 import PaymentsModal, { countedRows, newPayRow, payRowProblems, rowsTotal, type PayRow } from "./PaymentsModal";
 import ReceiveSheet, { type DeliveryInput } from "./ReceiveSheet";
@@ -81,9 +90,13 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
   const { colors, radius, spacing } = useTheme();
   const router = useRouter();
   const [purchase, setPurchase] = useState<Purchase | null | undefined>(undefined);
-  const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const { can } = useAccess();
+  const canSeeVendors = can("vendors", "view");
+  const [vendors, setVendors] = useState<VendorLookup[]>([]);
+  // The vendor's contact details come from the Vendors area, so only a role that has it asks.
+  const [vendorRecords, setVendorRecords] = useState<Vendor[]>([]);
+  const [accounts, setAccounts] = useState<AccountLookup[]>([]);
+  const [methods, setMethods] = useState<PaymentMethodLookup[]>([]);
   const [payments, setPayments] = useState<PurchasePayment[]>([]);
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -107,10 +120,14 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
   useEffect(() => {
     refresh();
     refreshPayments();
-    listVendors().then(setVendors);
-    listAccounts().then(setAccounts);
-    listPaymentMethods().then(setMethods);
+    lookupVendors().then(setVendors);
+    lookupAccounts().then(setAccounts);
+    lookupPaymentMethods().then(setMethods);
   }, [purchaseId]);
+
+  useEffect(() => {
+    if (canSeeVendors) listVendors().then(setVendorRecords);
+  }, [canSeeVendors]);
 
   useEffect(() => {
     if (!notice) return;
@@ -135,6 +152,7 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
 
   const vendor = vendors.find((item) => item.id === purchase.supplierId);
   const vendorName = vendor?.name ?? "Unknown vendor";
+  const vendorRecord = vendorRecords.find((item) => item.id === purchase.supplierId);
   const items = purchase.items;
   const deliveries = [...deliveriesOf(purchase)].reverse();
   const ordered = orderedUnits(purchase);
@@ -205,7 +223,7 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
     setTab("payments");
     setNotice(`${formatPrice(total)} recorded. Your account balance has been updated.`);
     refreshPayments();
-    listAccounts().then(setAccounts);
+    lookupAccounts().then(setAccounts);
   }
 
   async function handleCancel() {
@@ -311,7 +329,7 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
                 <CardTitle>Details</CardTitle>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", columnGap: spacing[5], rowGap: spacing[6] }}>
                   <Fact label="Vendor">
-                    {vendor ? (
+                    {vendor && canSeeVendors ? (
                       <Link href={`/vendors/${encodeURIComponent(vendor.id)}`} style={{ color: colors.ink }}>
                         {vendor.name}
                       </Link>
@@ -321,7 +339,7 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
                   </Fact>
                   <Fact label="Invoice number">{purchase.reference ?? "-"}</Fact>
                   <Fact label="Purchase date">{formatDate(purchase.date)}</Fact>
-                  <Fact label="Vendor phone">{vendor?.phone ?? "-"}</Fact>
+                  {canSeeVendors ? <Fact label="Vendor phone">{vendorRecord?.phone ?? "-"}</Fact> : null}
                 </div>
               </Card>
 

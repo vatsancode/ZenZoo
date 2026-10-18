@@ -4,9 +4,8 @@ import { useTheme } from "@zenzoo/design-tokens";
 import { textStyle } from "@zenzoo/ui-web";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useAccess } from "../lib/access";
 import { signOut } from "../lib/auth";
-import { getCurrentUser, type CurrentUser } from "../lib/me";
 
 interface NavItem {
   label: string;
@@ -36,11 +35,7 @@ export default function Sidebar() {
   const { colors, spacing, radius } = useTheme();
   const pathname = usePathname();
   const router = useRouter();
-  const [me, setMe] = useState<CurrentUser | null>(null);
-
-  useEffect(() => {
-    getCurrentUser().then(setMe);
-  }, []);
+  const { me } = useAccess();
 
   return (
     <nav

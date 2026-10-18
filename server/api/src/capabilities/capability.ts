@@ -1,4 +1,4 @@
-import { hasPermission } from "../auth/actor";
+import { hasAnyPermission } from "../auth/actor";
 import type { CapabilityActor, CapabilityResult } from "@zenzoo/types";
 
 /**
@@ -51,8 +51,12 @@ export class PermissionDeniedError extends Error {
 export interface CapabilityDefinition<Input, Output> {
   name: string;
   kind: "read" | "action";
-  /** Checked before anything else runs - see server/api/auth. */
-  requiredPermission: Permission;
+  /**
+   * Checked before anything else runs - see server/api/auth. A list means "any one of these":
+   * only for a read that several areas' screens share (see capabilities/lookups), never to
+   * widen what one area can reach.
+   */
+  requiredPermission: Permission | readonly Permission[];
   /** Business rules checked after the permission check - see server/api/policies. */
   policies?: Policy<Input>[];
   handler: (actor: CapabilityActor, input: Input) => Promise<Output>;
@@ -77,13 +81,14 @@ export function defineCapability<Input, Output>(
     name: definition.name,
     kind: definition.kind,
     async execute(actor, input) {
-      const allowed = await hasPermission(actor, definition.requiredPermission);
+      const required = [definition.requiredPermission].flat();
+      const allowed = await hasAnyPermission(actor, required);
       if (!allowed) {
         return {
           ok: false,
           error: {
             code: "PERMISSION_DENIED",
-            message: `Actor lacks permission "${definition.requiredPermission}" for capability "${definition.name}"`,
+            message: `Actor lacks permission ${required.map((item) => `"${item}"`).join(" or ")} for capability "${definition.name}"`,
           },
         };
       }

@@ -20,8 +20,8 @@ import {
 } from "@zenzoo/ui-web";
 import { useEffect, useMemo, useState } from "react";
 import { accountLabel, rememberPaymentNames } from "../../lib/payment-options";
-import { listAccounts, type Account } from "../settings/accounts";
-import { addVendor, listVendors, type Vendor } from "../vendors/vendors";
+import { lookupAccounts, lookupVendors, type AccountLookup, type VendorLookup } from "../../lib/lookups";
+import { addVendor } from "../vendors/vendors";
 import {
   addExpense,
   categoriesOf,
@@ -68,8 +68,8 @@ export default function ExpensesTable() {
   const { colors, radius, spacing } = useTheme();
   const [expenses, setExpenses] = useState<Expense[] | null>(null);
   const [categories, setCategories] = useState<string[]>([]);
-  const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [vendors, setVendors] = useState<VendorLookup[]>([]);
+  const [accounts, setAccounts] = useState<AccountLookup[]>([]);
   const [tab, setTab] = useState<StatusTab>("all");
   const [query, setQuery] = useState("");
   // Starts on this month; Filters changes it.
@@ -106,8 +106,8 @@ export default function ExpensesTable() {
   async function reload() {
     setExpenses([...(await listExpenses())]);
     setCategories((await listExpenseCategories()).map((item) => item.name));
-    setVendors([...(await listVendors())]);
-    const real = await listAccounts();
+    setVendors([...(await lookupVendors())]);
+    const real = await lookupAccounts();
     rememberPaymentNames([], real);
     setAccounts(real);
   }

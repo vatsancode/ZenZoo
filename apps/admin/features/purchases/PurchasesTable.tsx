@@ -14,20 +14,20 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { displayStatusLabel, displayStatusTone, listPurchases, type Purchase } from "./purchases";
 import { formatDate, formatPrice } from "../../lib/stock-display";
-import { listVendors, type Vendor } from "../vendors/vendors";
+import { lookupVendors, type VendorLookup } from "../../lib/lookups";
 
 export default function PurchasesTable() {
   const { colors, spacing } = useTheme();
   const router = useRouter();
   const [purchases, setPurchases] = useState<Purchase[] | null>(null);
-  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [vendors, setVendors] = useState<VendorLookup[]>([]);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     listPurchases().then(setPurchases);
-    listVendors().then(setVendors);
+    lookupVendors().then(setVendors);
   }, []);
 
   const vendorName = useMemo(() => {

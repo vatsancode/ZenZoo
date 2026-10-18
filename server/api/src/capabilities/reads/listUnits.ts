@@ -1,6 +1,7 @@
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
-import { UNIT_SELECT, toUnitDto, type UnitDto } from "../units/dto";
+import { type UnitDto } from "../units/dto";
+import { unitsInTx } from "../lookups/queries";
 
 /** Tenant-wide, not store-scoped - a business's units don't vary by store. */
 export const listUnits = defineCapability<void, UnitDto[]>({
@@ -8,13 +9,6 @@ export const listUnits = defineCapability<void, UnitDto[]>({
   kind: "read",
   requiredPermission: "stocks:view",
   async handler(actor) {
-    return runInTenantContext(actor, async (tx) => {
-      const rows = await tx.units.findMany({
-        where: { tenant_id: actor.tenantId },
-        orderBy: { created_at: "asc" },
-        select: UNIT_SELECT,
-      });
-      return rows.map(toUnitDto);
-    });
+    return runInTenantContext(actor, (tx) => unitsInTx(tx, actor));
   },
 });

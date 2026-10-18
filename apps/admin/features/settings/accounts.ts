@@ -182,7 +182,7 @@ export async function listTransfers(): Promise<Transfer[]> {
 }
 
 /** The active accounts, shaped for a Select. */
-export function accountOptions(accounts: Account[]): { value: string; label: string }[] {
+export function accountOptions(accounts: Pick<Account, "id" | "name" | "status">[]): { value: string; label: string }[] {
   return accounts
     .filter((account) => account.status === "active")
     .map((account) => ({ value: account.id, label: account.name }));

@@ -1,9 +1,16 @@
 import { runInTenantContext } from "../../shared/tenantContext";
 import type { CapabilityActor } from "@zenzoo/types";
+import { PERMISSION_AREAS, type AccessLevel } from "../../shared/permissionAreas";
 
 export interface CurrentUser {
   name: string;
   roleName: string | null;
+  /**
+   * What the person's role allows in every area, so the admin can leave out the buttons and
+   * pages they can't use. It only describes - the API checks the permission again on every
+   * request, so this can never grant anything.
+   */
+  permissions: Record<string, AccessLevel>;
 }
 
 /**
@@ -20,12 +27,22 @@ export async function getCurrentUser(actor: CapabilityActor): Promise<CurrentUse
       where: { tenant_id: actor.tenantId, user_id: actor.userId, status: { not: "removed" } },
       select: {
         users: { select: { first_name: true, last_name: true } },
-        roles: { select: { name: true } },
+        roles: {
+          select: { name: true, role_permissions: { select: { area: true, access_level: true } } },
+        },
       },
     });
     const name = membership?.users
       ? [membership.users.first_name, membership.users.last_name].filter(Boolean).join(" ")
       : "";
-    return { name, roleName: membership?.roles.name ?? null };
+    // A missing role_permissions row means "none" (docs/db-design.md).
+    const granted = membership?.roles.role_permissions ?? [];
+    const permissions = Object.fromEntries(
+      PERMISSION_AREAS.map((area) => [
+        area,
+        (granted.find((row) => row.area === area)?.access_level ?? "none") as AccessLevel,
+      ]),
+    );
+    return { name, roleName: membership?.roles.name ?? null, permissions };
   });
 }

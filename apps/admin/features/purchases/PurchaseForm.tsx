@@ -16,16 +16,19 @@ import {
 } from "./purchases";
 import { today } from "../../lib/date-ranges";
 import { formatPrice } from "../../lib/stock-display";
+import { useAccess } from "../../lib/access";
+import { createProduct, type CreateProductInput } from "../../lib/realProducts";
 import {
-  createProduct,
-  createVariant,
-  listRealProducts,
-  type CreateProductInput,
-  type RealProduct,
-} from "../../lib/realProducts";
-import { listVendors, type Vendor } from "../vendors/vendors";
-import { listUnits, unitOptions, type Unit as RealUnit } from "../settings/units";
-import { listCategoriesFlat, type CategoryResponse } from "../../lib/catalogue";
+  createPurchaseVariant,
+  lookupCategories,
+  lookupPurchasableProducts,
+  lookupUnits,
+  lookupVendors,
+  type PurchasableProduct,
+  type VendorLookup,
+} from "../../lib/lookups";
+import { unitOptions, type Unit as RealUnit } from "../settings/units";
+import type { CategoryResponse } from "../../lib/catalogue";
 import ProductPicker, { type PickedItem } from "./ProductPicker";
 import AddProductSheet from "../../components/AddProductSheet";
 import FormField from "../../components/FormField";
@@ -92,8 +95,9 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
   const { colors, radius, spacing } = useTheme();
   const router = useRouter();
 
-  const [products, setProducts] = useState<RealProduct[]>([]);
-  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const { can } = useAccess();
+  const [products, setProducts] = useState<PurchasableProduct[]>([]);
+  const [vendors, setVendors] = useState<VendorLookup[]>([]);
   const [units, setUnits] = useState<RealUnit[]>([]);
   const [categories, setCategories] = useState<CategoryResponse[]>([]);
 
@@ -110,17 +114,17 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const [referenceError, setReferenceError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [addingVariantFor, setAddingVariantFor] = useState<RealProduct | null>(null);
+  const [addingVariantFor, setAddingVariantFor] = useState<PurchasableProduct | null>(null);
   const [addingProduct, setAddingProduct] = useState(false);
 
   // undefined while the draft being edited loads; null when it can't be edited.
   const [editing, setEditing] = useState<Purchase | null | undefined>(purchaseId ? undefined : null);
 
   useEffect(() => {
-    listRealProducts().then(setProducts);
-    listVendors().then(setVendors);
-    listUnits().then(setUnits);
-    listCategoriesFlat().then(setCategories);
+    lookupPurchasableProducts().then(setProducts);
+    lookupVendors().then(setVendors);
+    lookupUnits().then(setUnits);
+    lookupCategories().then(setCategories);
   }, []);
 
   const byVariantId = useMemo(() => {
@@ -178,7 +182,7 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
 
   async function handleAddVariant(input: VariantInput): Promise<{ sku: string; error: string } | null> {
     if (!addingVariantFor) return null;
-    const result = await createVariant(addingVariantFor.id, {
+    const result = await createPurchaseVariant(addingVariantFor.id, {
       name: input.name,
       sku: input.sku.trim() === "" ? undefined : input.sku,
       basePrice: input.price,
@@ -198,7 +202,17 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
     if (typeof result === "string") {
       return { sku: input.sku ?? "", error: result };
     }
-    setProducts((current) => [...current, result]);
+    // Keep only what the picker shows, the same view the server's purchase lookup gives.
+    setProducts((current) => [
+      ...current,
+      {
+        id: result.id,
+        name: result.name,
+        variants: result.variants
+          .filter((variant) => variant.status === "active")
+          .map(({ id, name, sku, unit }) => ({ id, name, sku, unit })),
+      },
+    ]);
     setAddingProduct(false);
 
     // The whole point of creating it here is to buy it on this purchase -
@@ -328,7 +342,9 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
                 addedVariantIds={rows.map((row) => row.variantId)}
                 onPickMany={addPicked}
                 onAddVariant={setAddingVariantFor}
-                onAddProduct={() => setAddingProduct(true)}
+                // Creating a brand-new product is a Stocks action, so it's only offered to a role
+                // that holds it; the API refuses createProduct for anyone else regardless.
+                onAddProduct={can("stocks", "edit") ? () => setAddingProduct(true) : undefined}
               />
 
               <VariantSheet
@@ -341,7 +357,7 @@ export default function PurchaseForm({ purchaseId }: { purchaseId?: string }) {
               />
 
               <AddProductSheet
-                open={addingProduct}
+                open={addingProduct && can("stocks", "edit")}
                 existingNames={products.map((product) => product.name)}
                 unitOptions={unitOptions(units)}
                 categories={categories}

@@ -1,5 +1,5 @@
 import cors from "cors";
-import express, { type Express, type Response } from "express";
+import express, { type Express, type Request, type Response } from "express";
 import type { CapabilityResult } from "@zenzoo/types";
 import { requirePlatformAdmin } from "./auth/platform-admin";
 import { requireTenantUser } from "./auth/requireTenantUser";
@@ -10,6 +10,16 @@ import { listTenants } from "./modules/platform/listTenants";
 import { provisionTenant, type ProvisionTenantInput } from "./modules/platform/provisionTenant";
 import { resetTenantOwnerPassword } from "./modules/platform/resetTenantOwnerPassword";
 import { updateTenantOwnerEmail } from "./modules/platform/updateTenantOwnerEmail";
+import {
+  lookupAccounts,
+  lookupCategories,
+  lookupCustomers,
+  lookupPaymentMethods,
+  lookupSuppliers,
+  lookupUnits,
+} from "./capabilities/reads/lookups";
+import { lookupPurchasableProducts } from "./capabilities/reads/lookupPurchasableProducts";
+import { createPurchaseVariant } from "./capabilities/actions/createPurchaseVariant";
 import { listRoles } from "./capabilities/reads/listRoles";
 import { createRole } from "./capabilities/actions/createRole";
 import { updateRole } from "./capabilities/actions/updateRole";
@@ -567,6 +577,68 @@ export function createApp(): Express {
 
   app.post("/till/customers", requireTenantUser, async (req, res) => {
     const result = await quickAddCustomer.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result, 201);
+  });
+
+  // Lookups: small pickers under the asking screen's own area - see capabilities/reads/lookups.ts.
+  const requireStoreId = (req: Request, res: Response): string | null => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return null;
+    }
+    return storeId;
+  };
+
+  app.get("/lookups/suppliers", requireTenantUser, async (req, res) => {
+    const result = await lookupSuppliers.execute(getActor(req), undefined);
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/lookups/accounts", requireTenantUser, async (req, res) => {
+    const storeId = requireStoreId(req, res);
+    if (!storeId) return;
+    const result = await lookupAccounts.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/lookups/payment-methods", requireTenantUser, async (req, res) => {
+    const result = await lookupPaymentMethods.execute(getActor(req), undefined);
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/lookups/units", requireTenantUser, async (req, res) => {
+    const result = await lookupUnits.execute(getActor(req), undefined);
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/lookups/categories", requireTenantUser, async (req, res) => {
+    const storeId = requireStoreId(req, res);
+    if (!storeId) return;
+    const result = await lookupCategories.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/lookups/customers", requireTenantUser, async (req, res) => {
+    const result = await lookupCustomers.execute(getActor(req), undefined);
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/lookups/purchase-products", requireTenantUser, async (req, res) => {
+    const storeId = requireStoreId(req, res);
+    if (!storeId) return;
+    const result = await lookupPurchasableProducts.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.post("/purchase-products/:id/variants", requireTenantUser, async (req, res) => {
+    const sellableId = req.params.id as string;
+    const result = await createPurchaseVariant.execute(getActor(req), {
+      name: req.body.name,
+      sku: req.body.sku,
+      basePrice: req.body.basePrice,
+      sellableId,
+    });
     sendCapabilityResult(res, result, 201);
   });
 

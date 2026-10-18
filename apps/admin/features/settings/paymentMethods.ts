@@ -90,7 +90,9 @@ export async function setPaymentMethodEnabled(id: string, enabled: boolean): Pro
 }
 
 /** The active methods, shaped for a Select - value is the method's real id, not its code. */
-export function methodOptions(methods: PaymentMethod[]): { value: string; label: string }[] {
+export function methodOptions(
+  methods: Pick<PaymentMethod, "id" | "name" | "status">[],
+): { value: string; label: string }[] {
   return methods
     .filter((method) => method.status === "active")
     .map((method) => ({ value: method.id, label: method.name }));

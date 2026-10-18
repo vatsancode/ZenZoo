@@ -3,7 +3,7 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Input, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { RealProduct } from "../../lib/realProducts";
+import type { PurchasableProduct } from "../../lib/lookups";
 
 export interface PickedItem {
   variantId: string;
@@ -11,15 +11,19 @@ export interface PickedItem {
 }
 
 interface ProductPickerProps {
-  products: RealProduct[];
+  /** Active products with their active variants - the server only sends those. */
+  products: PurchasableProduct[];
   /** Variant ids already on the purchase; shown as added and not pickable again. */
   addedVariantIds: string[];
   /** Called with every variant given a quantity, when the user confirms. */
   onPickMany: (items: PickedItem[]) => void;
   /** Called when the user wants a new variant under an existing product. */
-  onAddVariant: (product: RealProduct) => void;
-  /** Called when the user wants to create a brand-new product, not just a variant. */
-  onAddProduct: () => void;
+  onAddVariant: (product: PurchasableProduct) => void;
+  /**
+   * Called when the user wants to create a brand-new product, not just a variant. Left out when
+   * they can't - creating a product is a Stocks action - so the button isn't offered at all.
+   */
+  onAddProduct?: () => void;
 }
 
 /**
@@ -64,9 +68,8 @@ export default function ProductPicker({
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
     return products
-      .filter((product) => product.status === "active")
       .map((product) => {
-        const variants = product.variants.filter((variant) => variant.status === "active");
+        const variants = product.variants;
         const productMatches = !q || product.name.toLowerCase().includes(q);
         const shown = productMatches
           ? variants
@@ -310,7 +313,7 @@ export default function ProductPicker({
             ) : null}
 
             {groups.map(({ product, variants }) => {
-              const activeVariants = product.variants.filter((v) => v.status === "active");
+              const activeVariants = product.variants;
 
               // A product with "has variants" off is still just one variant
               // underneath (createProduct's own shape: a sellable plus a
@@ -536,9 +539,11 @@ export default function ProductPicker({
         </div>
       ) : null}
       </div>
-      <Button type="button" variant="secondary" onClick={onAddProduct} style={{ whiteSpace: "nowrap" }}>
-        Add new product
-      </Button>
+      {onAddProduct ? (
+        <Button type="button" variant="secondary" onClick={onAddProduct} style={{ whiteSpace: "nowrap" }}>
+          Add new product
+        </Button>
+      ) : null}
     </div>
   );
 }

@@ -13,7 +13,7 @@ import {
   recordMovement,
 } from "../../lib/realStock";
 import { listPurchases, purchaseLinesForVariant, type Purchase } from "../purchases/purchases";
-import { listVendors, type Vendor } from "../vendors/vendors";
+import { lookupVendors, type VendorLookup } from "../../lib/lookups";
 import CurrentBatchesTab from "./CurrentBatchesTab";
 import PageHeader from "../../components/PageHeader";
 import PurchaseHistoryTab from "./PurchaseHistoryTab";
@@ -70,7 +70,7 @@ export default function CurrentStockView({
   const router = useRouter();
   const [products, setProducts] = useState<RealProduct[] | undefined>(undefined);
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
-  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [vendors, setVendors] = useState<VendorLookup[]>([]);
   const [allPurchases, setAllPurchases] = useState<Purchase[]>([]);
   const [realMovements, setRealMovements] = useState<Movement[]>([]);
   const [lastPurchaseDate, setLastPurchaseDate] = useState<string | null>(null);
@@ -88,7 +88,7 @@ export default function CurrentStockView({
   useEffect(() => {
     listRealProducts().then(setProducts);
     listCurrentStock().then(setStockMap);
-    listVendors().then(setVendors);
+    lookupVendors().then(setVendors);
     listPurchases().then(setAllPurchases);
   }, []);
 

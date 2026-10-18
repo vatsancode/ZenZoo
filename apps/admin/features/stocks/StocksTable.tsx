@@ -24,8 +24,9 @@ import {
 } from "../../lib/realProducts";
 import { listCurrentStock } from "../../lib/realStock";
 import { formatPrice, stockStatus } from "../../lib/stock-display";
-import { listCategoriesFlat, type CategoryResponse } from "../../lib/catalogue";
-import { listUnits, unitOptions, type Unit as RealUnit } from "../settings/units";
+import type { CategoryResponse } from "../../lib/catalogue";
+import { lookupCategories, lookupUnits } from "../../lib/lookups";
+import { unitOptions, type Unit as RealUnit } from "../settings/units";
 import AddStockSheet, { type StockFormInput } from "../../components/AddStockSheet";
 
 // A single price, or "low - high" when a product's variants are priced differently.
@@ -70,8 +71,8 @@ export default function StocksTable() {
   useEffect(() => {
     refresh();
     listCurrentStock().then(setStock);
-    listUnits().then(setUnits);
-    listCategoriesFlat().then(setCategories);
+    lookupUnits().then(setUnits);
+    lookupCategories().then(setCategories);
   }, []);
 
   useEffect(() => {

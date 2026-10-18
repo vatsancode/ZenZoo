@@ -15,11 +15,10 @@ import {
   salePaymentLabel,
   saleLineNet,
   saleProfitOf,
-  type Customer,
   type Sale,
 } from "./sales";
 import { formatDate, formatPrice } from "../../lib/stock-display";
-import { listCustomers } from "../../lib/customers";
+import { lookupCustomers, type CustomerLookup } from "../../lib/lookups";
 import {
   createSaleReturn,
   listSaleRefundOptions,
@@ -67,7 +66,7 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
   const { colors, radius, spacing } = useTheme();
   // undefined while loading, null when there is no such sale.
   const [sale, setSale] = useState<Sale | null | undefined>(undefined);
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customers, setCustomers] = useState<CustomerLookup[]>([]);
   const [hovered, setHovered] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [returnOpen, setReturnOpen] = useState(false);
@@ -92,8 +91,8 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
     listSaleRefundOptions()
       .then(setRefundOptions)
       .catch(() => setRefundOptions(null));
-    // Someone who can see sales may not have access to Customers - the sale keeps its name anyway.
-    listCustomers(true)
+    // Name and phone only, under sales access - the sale itself keeps the customer's name.
+    lookupCustomers()
       .then(setCustomers)
       .catch(() => setCustomers([]));
   }, [saleId]);

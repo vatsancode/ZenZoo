@@ -50,22 +50,40 @@ export async function hasPermission(
   actor: CapabilityActor,
   permission: Permission,
 ): Promise<boolean> {
-  const { area, level } = parsePermission(permission);
-  const requiredRank = ACCESS_LEVEL_RANK[level];
+  return hasAnyPermission(actor, [permission]);
+}
 
-  const grant = await runInTenantContext(actor, async (tx) => {
+/**
+ * True when the actor holds at least one of `permissions` - for a read that several areas'
+ * screens legitimately share (a vendor picker on both Expenses and Purchases). Same rules and
+ * same single database read as hasPermission; holding more than one still grants nothing extra.
+ */
+export async function hasAnyPermission(
+  actor: CapabilityActor,
+  permissions: readonly Permission[],
+): Promise<boolean> {
+  const required = permissions.map(parsePermission);
+  const areas = [...new Set(required.map((item) => item.area))];
+
+  const grants = await runInTenantContext(actor, async (tx) => {
     const membership = await tx.tenant_memberships.findFirst({
       where: { tenant_id: actor.tenantId, user_id: actor.userId, status: "active" },
       select: {
         roles: {
           select: {
-            role_permissions: { where: { area }, select: { access_level: true } },
+            role_permissions: {
+              where: { area: { in: areas } },
+              select: { area: true, access_level: true },
+            },
           },
         },
       },
     });
-    return (membership?.roles.role_permissions[0]?.access_level ?? "none") as AccessLevel;
+    return membership?.roles.role_permissions ?? [];
   });
 
-  return ACCESS_LEVEL_RANK[grant] >= requiredRank;
+  return required.some(({ area, level }) => {
+    const grant = (grants.find((row) => row.area === area)?.access_level ?? "none") as AccessLevel;
+    return ACCESS_LEVEL_RANK[grant] >= ACCESS_LEVEL_RANK[level];
+  });
 }
