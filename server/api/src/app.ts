@@ -18,6 +18,7 @@ import {
   lookupSuppliers,
   lookupUnits,
 } from "./capabilities/reads/lookups";
+import { getDashboard } from "./capabilities/reads/getDashboard";
 import { listCustomerSales } from "./capabilities/reads/listCustomerSales";
 import { lookupPurchasableProducts } from "./capabilities/reads/lookupPurchasableProducts";
 import { createPurchaseVariant } from "./capabilities/actions/createPurchaseVariant";
@@ -652,6 +653,16 @@ export function createApp(): Express {
       sellableId,
     });
     sendCapabilityResult(res, result, 201);
+  });
+
+  app.get("/dashboard", requireTenantUser, async (req, res) => {
+    const { storeId, from, to, timeZone } = req.query as Record<string, string | undefined>;
+    if (!storeId || !from || !to) {
+      res.status(400).json({ error: "storeId, from and to are required" });
+      return;
+    }
+    const result = await getDashboard.execute(getActor(req), { storeId, from, to, timeZone });
+    sendCapabilityResult(res, result);
   });
 
   app.get("/users", requireTenantUser, async (req, res) => {
