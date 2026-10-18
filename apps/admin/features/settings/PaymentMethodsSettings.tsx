@@ -174,7 +174,12 @@ export default function PaymentMethodsSettings() {
               marginTop: spacing[6],
             }}
           >
-            <Button type="button" variant="secondary" onClick={() => setAdding(false)} disabled={saving}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setAdding(false)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button type="submit" variant="primary" disabled={saving}>

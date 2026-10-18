@@ -1,7 +1,17 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Button, Card, DatePicker, Icon, Input, Modal, Notice, Select, textStyle } from "@zenzoo/ui-web";
+import {
+  Button,
+  Card,
+  DatePicker,
+  Icon,
+  Input,
+  Modal,
+  Notice,
+  Select,
+  textStyle,
+} from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
 import {
   addTransfer,
@@ -53,7 +63,8 @@ export default function TransfersSettings() {
 
   const movements = transferMovements(accounts, transfers);
   const balances = new Map(accounts.map((account) => [account.id, account.balance]));
-  const total = Math.round([...balances.values()].reduce((sum, value) => sum + value, 0) * 100) / 100;
+  const total =
+    Math.round([...balances.values()].reduce((sum, value) => sum + value, 0) * 100) / 100;
   const selected = accounts.find((account) => account.id === selectedId);
   const activity = movements.filter((movement) => movement.accountId === selectedId);
 
@@ -177,7 +188,14 @@ export default function TransfersSettings() {
                 cursor: "pointer",
               }}
             >
-              <span style={{ display: "flex", alignItems: "center", gap: spacing[3], color: colors.inkMuted }}>
+              <span
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: spacing[3],
+                  color: colors.inkMuted,
+                }}
+              >
                 <Icon name="bank" size={18} />
                 <span style={{ ...textStyle("callout") }}>
                   {account.name}
@@ -256,7 +274,9 @@ export default function TransfersSettings() {
               </div>
             ))}
             {activity.length > ACTIVITY_SHOWN ? (
-              <div style={{ ...textStyle("footnote"), color: colors.inkMuted, paddingTop: spacing[3] }}>
+              <div
+                style={{ ...textStyle("footnote"), color: colors.inkMuted, paddingTop: spacing[3] }}
+              >
                 Showing the latest {ACTIVITY_SHOWN} of {activity.length}.
               </div>
             ) : null}
@@ -287,7 +307,12 @@ export default function TransfersSettings() {
               marginTop: spacing[6],
             }}
           >
-            <FormField id="transfer-from" label="FROM" span={1} error={touched ? problems.from : null}>
+            <FormField
+              id="transfer-from"
+              label="FROM"
+              span={1}
+              error={touched ? problems.from : null}
+            >
               <Select
                 id="transfer-from"
                 options={options}
@@ -309,7 +334,12 @@ export default function TransfersSettings() {
                 onChange={setToId}
               />
             </FormField>
-            <FormField id="transfer-amount" label="AMOUNT (₹)" span={1} error={touched ? problems.amount : null}>
+            <FormField
+              id="transfer-amount"
+              label="AMOUNT (₹)"
+              span={1}
+              error={touched ? problems.amount : null}
+            >
               <Input
                 id="transfer-amount"
                 inputMode="decimal"
@@ -337,8 +367,19 @@ export default function TransfersSettings() {
                 </button>
               ) : null}
             </FormField>
-            <FormField id="transfer-date" label="DATE" span={1} error={touched ? problems.date : null}>
-              <DatePicker id="transfer-date" value={date} clearable={false} align="right" onChange={setDate} />
+            <FormField
+              id="transfer-date"
+              label="DATE"
+              span={1}
+              error={touched ? problems.date : null}
+            >
+              <DatePicker
+                id="transfer-date"
+                value={date}
+                clearable={false}
+                align="right"
+                onChange={setDate}
+              />
             </FormField>
             <FormField id="transfer-note" label="NOTE (OPTIONAL)" span={2}>
               <Input
@@ -367,8 +408,20 @@ export default function TransfersSettings() {
             </div>
           ) : null}
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: spacing[3], marginTop: spacing[6] }}>
-            <Button type="button" variant="secondary" onClick={() => setOpen(false)} disabled={saving}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: spacing[3],
+              marginTop: spacing[6],
+            }}
+          >
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setOpen(false)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button type="submit" variant="primary" disabled={saving}>

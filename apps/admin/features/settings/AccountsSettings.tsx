@@ -1,7 +1,18 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Badge, Button, Card, Icon, IconButton, Input, Modal, Notice, Switch, textStyle } from "@zenzoo/ui-web";
+import {
+  Badge,
+  Button,
+  Card,
+  Icon,
+  IconButton,
+  Input,
+  Modal,
+  Notice,
+  Switch,
+  textStyle,
+} from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
 import {
   addAccount,
@@ -65,7 +76,11 @@ export default function AccountsSettings() {
     }
     setSaving(true);
     const result =
-      editing === "new" ? await addAccount(name, amount) : editing ? await editAccount(editing.id, name, amount) : null;
+      editing === "new"
+        ? await addAccount(name, amount)
+        : editing
+          ? await editAccount(editing.id, name, amount)
+          : null;
     setSaving(false);
     if (typeof result === "string") {
       setError(result);
@@ -169,7 +184,11 @@ export default function AccountsSettings() {
                     });
                   }}
                 />
-                <IconButton icon="edit" label={`Edit ${account.name}`} onClick={() => openForm(account)} />
+                <IconButton
+                  icon="edit"
+                  label={`Edit ${account.name}`}
+                  onClick={() => openForm(account)}
+                />
               </div>
             </Card>
           );
@@ -187,7 +206,14 @@ export default function AccountsSettings() {
           <div style={{ ...textStyle("title3"), color: colors.ink }}>
             {editing === "new" ? "Add account" : "Edit account"}
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: spacing[6], marginTop: spacing[6] }}>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: spacing[6],
+              marginTop: spacing[6],
+            }}
+          >
             <FormField id="account-name" label="NAME" span={12}>
               <Input
                 id="account-name"
@@ -216,8 +242,8 @@ export default function AccountsSettings() {
                 }}
               />
               <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
-                What was in the account before it was tracked here. Sales, payments and transfers are
-                added to it.
+                What was in the account before it was tracked here. Sales, payments and transfers
+                are added to it.
               </span>
             </FormField>
             {error ? (
@@ -226,7 +252,14 @@ export default function AccountsSettings() {
               </div>
             ) : null}
           </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: spacing[3], marginTop: spacing[6] }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: spacing[3],
+              marginTop: spacing[6],
+            }}
+          >
             <Button type="button" variant="secondary" onClick={closeForm} disabled={saving}>
               Cancel
             </Button>

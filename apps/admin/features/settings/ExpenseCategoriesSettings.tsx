@@ -240,11 +240,7 @@ export default function ExpenseCategoriesSettings() {
             <Button type="button" variant="secondary" onClick={() => setDeleting(null)}>
               Keep it
             </Button>
-            <Button
-              type="button"
-              variant="danger"
-              onClick={() => void confirmDelete()}
-            >
+            <Button type="button" variant="danger" onClick={() => void confirmDelete()}>
               Delete
             </Button>
           </div>

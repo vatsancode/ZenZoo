@@ -123,7 +123,11 @@ export default function UsersSettings() {
   async function submitUser() {
     const input = { name, email, phone, roleId, password };
     const problem =
-      userForm === "new" ? await addUser(input) : userForm ? await editUser(userForm.id, input) : null;
+      userForm === "new"
+        ? await addUser(input)
+        : userForm
+          ? await editUser(userForm.id, input)
+          : null;
     if (problem) {
       setUserError(problem);
       return;
@@ -170,7 +174,11 @@ export default function UsersSettings() {
   async function submitRole() {
     const input = { name: roleName, description: roleNote, permissions };
     const problem =
-      roleForm === "new" ? await addRole(input) : roleForm ? await editRole(roleForm.id, input) : null;
+      roleForm === "new"
+        ? await addRole(input)
+        : roleForm
+          ? await editRole(roleForm.id, input)
+          : null;
     if (problem) {
       setRoleError(problem);
       return;
@@ -482,8 +490,8 @@ export default function UsersSettings() {
                   </Button>
                 </div>
                 <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
-                  There&apos;s no invite email - copy this and share it with {name.trim() || "them"} yourself.
-                  At least {MIN_PASSWORD_LENGTH} characters, with letters and a number.
+                  There&apos;s no invite email - copy this and share it with {name.trim() || "them"}{" "}
+                  yourself. At least {MIN_PASSWORD_LENGTH} characters, with letters and a number.
                 </span>
               </FormField>
             ) : null}
@@ -532,8 +540,8 @@ export default function UsersSettings() {
               }}
             >
               <p style={{ ...textStyle("body"), color: colors.inkMuted, margin: 0 }}>
-                {resetTarget?.name}&apos;s old password no longer works. Copy this one and share
-                it with them now - it won&apos;t be shown again.
+                {resetTarget?.name}&apos;s old password no longer works. Copy this one and share it
+                with them now - it won&apos;t be shown again.
               </p>
               <div style={{ display: "flex", gap: spacing[2] }}>
                 <Input

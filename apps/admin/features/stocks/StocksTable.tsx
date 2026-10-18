@@ -92,7 +92,9 @@ export default function StocksTable() {
   // rest stays on the variants page, same as the form itself already shows.
   // Unit is the one field that's genuinely product-wide: changing it bulk-
   // updates every variant, regardless of how many there are.
-  async function handleSubmit(input: StockFormInput): Promise<{ sku: string; error: string } | null> {
+  async function handleSubmit(
+    input: StockFormInput,
+  ): Promise<{ sku: string; error: string } | null> {
     if (editing) {
       const productResult = await updateProduct(editing.id, {
         name: input.name,
@@ -180,7 +182,7 @@ export default function StocksTable() {
       render: (product) => (
         <span style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>
           {product.variants.length === 1
-            ? product.variants[0]!.sku ?? "-"
+            ? (product.variants[0]!.sku ?? "-")
             : `${product.variants.length} variants`}
         </span>
       ),

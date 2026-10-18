@@ -41,7 +41,13 @@ import {
   type VendorLookup,
 } from "../../lib/lookups";
 import PageHeader from "../../components/PageHeader";
-import PaymentsModal, { countedRows, newPayRow, payRowProblems, rowsTotal, type PayRow } from "./PaymentsModal";
+import PaymentsModal, {
+  countedRows,
+  newPayRow,
+  payRowProblems,
+  rowsTotal,
+  type PayRow,
+} from "./PaymentsModal";
 import ReceiveSheet, { type DeliveryInput } from "./ReceiveSheet";
 import ReturnSheet from "../../components/ReturnSheet";
 import StatTile, { StatRow } from "../../components/StatTile";
@@ -56,22 +62,35 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   const { colors, spacing } = useTheme();
   return (
     <div style={{ minWidth: 0 }}>
-      <div style={{ ...textStyle("caption"), color: colors.inkMuted, textTransform: "uppercase" }}>{label}</div>
-      <div style={{ ...textStyle("body"), color: colors.ink, marginTop: spacing[1] }}>{children}</div>
+      <div style={{ ...textStyle("caption"), color: colors.inkMuted, textTransform: "uppercase" }}>
+        {label}
+      </div>
+      <div style={{ ...textStyle("body"), color: colors.ink, marginTop: spacing[1] }}>
+        {children}
+      </div>
     </div>
   );
 }
 
 function CardTitle({ children }: { children: ReactNode }) {
   const { colors, spacing } = useTheme();
-  return <div style={{ ...textStyle("headline"), color: colors.ink, marginBottom: spacing[5] }}>{children}</div>;
+  return (
+    <div style={{ ...textStyle("headline"), color: colors.ink, marginBottom: spacing[5] }}>
+      {children}
+    </div>
+  );
 }
 
 function Line({ label, value, strong }: { label: string; value: ReactNode; strong?: boolean }) {
   const { colors } = useTheme();
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-      <span style={{ ...textStyle(strong ? "bodyMedium" : "body"), color: strong ? colors.ink : colors.inkMuted }}>
+      <span
+        style={{
+          ...textStyle(strong ? "bodyMedium" : "body"),
+          color: strong ? colors.ink : colors.inkMuted,
+        }}
+      >
         {label}
       </span>
       <span style={{ ...textStyle(strong ? "title3" : "data"), color: colors.ink }}>{value}</span>
@@ -136,13 +155,19 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
   }, [notice]);
 
   if (purchase === undefined) {
-    return <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>Loading purchase...</div>;
+    return (
+      <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>Loading purchase...</div>
+    );
   }
 
   if (purchase === null) {
     return (
       <>
-        <PageHeader title="Purchase not found" backHref="/purchases" backLabel="Back to purchases" />
+        <PageHeader
+          title="Purchase not found"
+          backHref="/purchases"
+          backLabel="Back to purchases"
+        />
         <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>
           This purchase doesn&apos;t exist, or belongs to a different store.
         </div>
@@ -237,7 +262,15 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
     setPurchase(result);
   }
 
-  const columns = ["minmax(0, 1fr)", "90px", "150px", "90px", "110px", ...(hasDiscount ? ["100px"] : []), "120px"].join(" ");
+  const columns = [
+    "minmax(0, 1fr)",
+    "90px",
+    "150px",
+    "90px",
+    "110px",
+    ...(hasDiscount ? ["100px"] : []),
+    "120px",
+  ].join(" ");
   const fullHeight: CSSProperties = { display: "flex", flexDirection: "column" };
 
   return (
@@ -308,7 +341,11 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
 
       <Tabs aria-label="Purchase sections" tabs={TABS} value={tab} onChange={setTab} />
 
-      <div role="tabpanel" aria-labelledby={`tab-${tab}`} style={{ display: "flex", flexDirection: "column", gap: spacing[6] }}>
+      <div
+        role="tabpanel"
+        aria-labelledby={`tab-${tab}`}
+        style={{ display: "flex", flexDirection: "column", gap: spacing[6] }}
+      >
         {tab === "overview" ? (
           <>
             <StatRow>
@@ -320,17 +357,40 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
               <StatTile
                 label="Received"
                 value={`${received} / ${ordered}`}
-                hint={notExpected ? "Nothing expected" : pending <= 0 ? "Everything has arrived" : `${pending} still to come`}
+                hint={
+                  notExpected
+                    ? "Nothing expected"
+                    : pending <= 0
+                      ? "Everything has arrived"
+                      : `${pending} still to come`
+                }
               />
             </StatRow>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: spacing[6], alignItems: "stretch" }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+                gap: spacing[6],
+                alignItems: "stretch",
+              }}
+            >
               <Card style={fullHeight}>
                 <CardTitle>Details</CardTitle>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", columnGap: spacing[5], rowGap: spacing[6] }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                    columnGap: spacing[5],
+                    rowGap: spacing[6],
+                  }}
+                >
                   <Fact label="Vendor">
                     {vendor && canSeeVendors ? (
-                      <Link href={`/vendors/${encodeURIComponent(vendor.id)}`} style={{ color: colors.ink }}>
+                      <Link
+                        href={`/vendors/${encodeURIComponent(vendor.id)}`}
+                        style={{ color: colors.ink }}
+                      >
                         {vendor.name}
                       </Link>
                     ) : (
@@ -339,7 +399,9 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
                   </Fact>
                   <Fact label="Invoice number">{purchase.reference ?? "-"}</Fact>
                   <Fact label="Purchase date">{formatDate(purchase.date)}</Fact>
-                  {canSeeVendors ? <Fact label="Vendor phone">{vendorRecord?.phone ?? "-"}</Fact> : null}
+                  {canSeeVendors ? (
+                    <Fact label="Vendor phone">{vendorRecord?.phone ?? "-"}</Fact>
+                  ) : null}
                 </div>
               </Card>
 
@@ -347,10 +409,22 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
                 <CardTitle>Summary</CardTitle>
                 <div style={{ display: "flex", flexDirection: "column", gap: spacing[4] }}>
                   <Line label="Subtotal" value={formatPrice(purchase.subtotal)} />
-                  {purchase.discount ? <Line label="Extra discount" value={`- ${formatPrice(purchase.discount)}`} /> : null}
+                  {purchase.discount ? (
+                    <Line label="Extra discount" value={`- ${formatPrice(purchase.discount)}`} />
+                  ) : null}
                   {purchase.tax ? <Line label="Tax" value={formatPrice(purchase.tax)} /> : null}
-                  {purchase.adjustment ? <Line label="Adjustment" value={formatPrice(purchase.adjustment)} /> : null}
-                  <hr style={{ width: "100%", height: 0, margin: 0, border: "none", borderTop: `1px solid ${colors.border}` }} />
+                  {purchase.adjustment ? (
+                    <Line label="Adjustment" value={formatPrice(purchase.adjustment)} />
+                  ) : null}
+                  <hr
+                    style={{
+                      width: "100%",
+                      height: 0,
+                      margin: 0,
+                      border: "none",
+                      borderTop: `1px solid ${colors.border}`,
+                    }}
+                  />
                   <Line label="Total" value={formatPrice(purchase.total)} strong />
                 </div>
               </Card>
@@ -361,11 +435,20 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
         {tab === "items" ? (
           <>
             <Card>
-              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: spacing[4], marginBottom: spacing[5] }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  justifyContent: "space-between",
+                  gap: spacing[4],
+                  marginBottom: spacing[5],
+                }}
+              >
                 <div style={{ ...textStyle("headline"), color: colors.ink }}>Products</div>
                 {receiving ? (
                   <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
-                    {pending} still to come · use <strong>Receive stock</strong> when a delivery arrives
+                    {pending} still to come · use <strong>Receive stock</strong> when a delivery
+                    arrives
                   </span>
                 ) : null}
               </div>
@@ -392,12 +475,20 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
 
                 {items.map((item) => {
                   const complete = item.received >= item.quantity;
-                  const tone = notExpected ? colors.inkFaint : complete ? colors.success : item.received > 0 ? colors.warning : colors.inkMuted;
+                  const tone = notExpected
+                    ? colors.inkFaint
+                    : complete
+                      ? colors.success
+                      : item.received > 0
+                        ? colors.warning
+                        : colors.inkMuted;
                   return (
                     <div
                       key={item.id}
                       onMouseEnter={() => setHoveredRow(item.id)}
-                      onMouseLeave={() => setHoveredRow((current) => (current === item.id ? null : current))}
+                      onMouseLeave={() =>
+                        setHoveredRow((current) => (current === item.id ? null : current))
+                      }
                       style={{
                         display: "grid",
                         gridTemplateColumns: columns,
@@ -406,24 +497,51 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
                         minHeight: 72,
                         padding: `${spacing[3]}px ${spacing[4]}px`,
                         borderRadius: radius.lg,
-                        backgroundColor: hoveredRow === item.id ? `color-mix(in srgb, ${colors.ink} 5%, transparent)` : "transparent",
+                        backgroundColor:
+                          hoveredRow === item.id
+                            ? `color-mix(in srgb, ${colors.ink} 5%, transparent)`
+                            : "transparent",
                         transition: "background-color 120ms ease",
                       }}
                     >
                       <div style={{ minWidth: 0 }}>
                         <div style={{ ...textStyle("body"), color: colors.ink }}>{item.name}</div>
-                        {item.sku ? <div style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>{item.sku}</div> : null}
+                        {item.sku ? (
+                          <div style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>
+                            {item.sku}
+                          </div>
+                        ) : null}
                       </div>
                       <span style={textStyle("data")}>{item.quantity}</span>
                       <div>
                         <span style={{ ...textStyle("data"), color: tone }}>
                           {item.received} of {item.quantity}
                         </span>
-                        <div aria-hidden="true" style={{ height: 4, marginTop: spacing[2], borderRadius: radius.full, backgroundColor: colors.surfaceSunken, overflow: "hidden" }}>
-                          <div style={{ width: `${Math.min(100, (item.received / item.quantity) * 100)}%`, height: "100%", backgroundColor: tone }} />
+                        <div
+                          aria-hidden="true"
+                          style={{
+                            height: 4,
+                            marginTop: spacing[2],
+                            borderRadius: radius.full,
+                            backgroundColor: colors.surfaceSunken,
+                            overflow: "hidden",
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: `${Math.min(100, (item.received / item.quantity) * 100)}%`,
+                              height: "100%",
+                              backgroundColor: tone,
+                            }}
+                          />
                         </div>
                       </div>
-                      <span style={{ ...textStyle("data"), color: notExpected || complete ? colors.inkFaint : colors.ink }}>
+                      <span
+                        style={{
+                          ...textStyle("data"),
+                          color: notExpected || complete ? colors.inkFaint : colors.ink,
+                        }}
+                      >
                         {notExpected ? "-" : complete ? "Done" : item.pending}
                       </span>
                       <span style={textStyle("data")}>{formatPrice(item.unitCost)}</span>
@@ -432,7 +550,9 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
                           {item.discount ? formatPrice(item.discount) : "-"}
                         </span>
                       ) : null}
-                      <span style={{ ...textStyle("data"), color: colors.ink, textAlign: "right" }}>{formatPrice(item.lineTotal)}</span>
+                      <span style={{ ...textStyle("data"), color: colors.ink, textAlign: "right" }}>
+                        {formatPrice(item.lineTotal)}
+                      </span>
                     </div>
                   );
                 })}
@@ -463,16 +583,29 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
                         }}
                       >
                         <div>
-                          <div style={{ ...textStyle("bodyMedium"), color: colors.ink }}>{formatDate(delivery.date)}</div>
+                          <div style={{ ...textStyle("bodyMedium"), color: colors.ink }}>
+                            {formatDate(delivery.date)}
+                          </div>
                           <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
                             {units} {units === 1 ? "unit" : "units"}
                           </div>
                         </div>
                         <div style={{ display: "flex", flexDirection: "column", gap: spacing[2] }}>
                           {delivery.items.map((entry, entryIndex) => (
-                            <div key={entryIndex} style={{ display: "flex", justifyContent: "space-between", gap: spacing[4] }}>
-                              <span style={{ ...textStyle("body"), color: colors.ink }}>{entry.name}</span>
-                              <span style={{ ...textStyle("data"), color: colors.ink }}>+ {entry.quantity}</span>
+                            <div
+                              key={entryIndex}
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                gap: spacing[4],
+                              }}
+                            >
+                              <span style={{ ...textStyle("body"), color: colors.ink }}>
+                                {entry.name}
+                              </span>
+                              <span style={{ ...textStyle("data"), color: colors.ink }}>
+                                + {entry.quantity}
+                              </span>
                             </div>
                           ))}
                         </div>
@@ -530,7 +663,8 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
                       {methods.find((method) => method.id === payment.paymentMethodId)?.name ?? "-"}
                     </span>
                     <span style={{ ...textStyle("body"), color: colors.ink }}>
-                      {accounts.find((account) => account.id === payment.paymentAccountId)?.name ?? "-"}
+                      {accounts.find((account) => account.id === payment.paymentAccountId)?.name ??
+                        "-"}
                     </span>
                     <span style={{ ...textStyle("data"), color: colors.ink, textAlign: "right" }}>
                       {formatPrice(payment.amount)}
@@ -543,7 +677,12 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
         ) : null}
       </div>
 
-      <ReceiveSheet open={receiveOpen} purchase={purchase} onClose={() => setReceiveOpen(false)} onConfirm={(delivery) => void confirmDelivery(delivery)} />
+      <ReceiveSheet
+        open={receiveOpen}
+        purchase={purchase}
+        onClose={() => setReceiveOpen(false)}
+        onConfirm={(delivery) => void confirmDelivery(delivery)}
+      />
 
       <ReturnSheet
         open={returnOpen}
@@ -583,10 +722,20 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
       <Modal open={cancelOpen} onClose={() => setCancelOpen(false)}>
         <div style={{ width: 420, maxWidth: "100%" }}>
           <div style={{ ...textStyle("title3"), color: colors.ink }}>Cancel this purchase?</div>
-          <p style={{ ...textStyle("body"), color: colors.inkMuted, margin: `${spacing[3]}px 0 0` }}>
-            Nothing has arrived yet, so no stock changes. A cancelled purchase can&apos;t be reopened.
+          <p
+            style={{ ...textStyle("body"), color: colors.inkMuted, margin: `${spacing[3]}px 0 0` }}
+          >
+            Nothing has arrived yet, so no stock changes. A cancelled purchase can&apos;t be
+            reopened.
           </p>
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: spacing[3], marginTop: spacing[6] }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: spacing[3],
+              marginTop: spacing[6],
+            }}
+          >
             <Button type="button" variant="secondary" onClick={() => setCancelOpen(false)}>
               Keep it
             </Button>

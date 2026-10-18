@@ -20,7 +20,12 @@ import {
 } from "@zenzoo/ui-web";
 import { useEffect, useMemo, useState } from "react";
 import { accountLabel, rememberPaymentNames } from "../../lib/payment-options";
-import { lookupAccounts, lookupVendors, type AccountLookup, type VendorLookup } from "../../lib/lookups";
+import {
+  lookupAccounts,
+  lookupVendors,
+  type AccountLookup,
+  type VendorLookup,
+} from "../../lib/lookups";
 import { useAccess } from "../../lib/access";
 import { addVendor } from "../vendors/vendors";
 import {
@@ -264,8 +269,7 @@ export default function ExpensesTable() {
         : null;
   const problems = {
     date: date === "" ? "Choose the date." : null,
-    account:
-      status === "paid" && accountId === "" ? "Choose the account it was paid from." : null,
+    account: status === "paid" && accountId === "" ? "Choose the account it was paid from." : null,
     lines: lines.some((row) => lineProblem(row) !== null)
       ? "Every item needs a category and an amount."
       : null,
@@ -706,7 +710,11 @@ export default function ExpensesTable() {
                 onChange={(next) => setStatus(next === "pending" ? "pending" : "paid")}
               />
             </FormField>
-            <FormField id="expense-payee" label={status === "paid" ? "PAID TO" : "OWED TO"} span={1}>
+            <FormField
+              id="expense-payee"
+              label={status === "paid" ? "PAID TO" : "OWED TO"}
+              span={1}
+            >
               <Select
                 id="expense-payee"
                 options={[
@@ -920,11 +928,7 @@ export default function ExpensesTable() {
             <Button type="button" variant="secondary" onClick={() => setDeleting(null)}>
               Keep it
             </Button>
-            <Button
-              type="button"
-              variant="danger"
-              onClick={() => void confirmDelete()}
-            >
+            <Button type="button" variant="danger" onClick={() => void confirmDelete()}>
               Delete
             </Button>
           </div>

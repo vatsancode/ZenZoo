@@ -1,7 +1,15 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Badge, Button, IconButton, Input, Table, textStyle, type TableColumn } from "@zenzoo/ui-web";
+import {
+  Badge,
+  Button,
+  IconButton,
+  Input,
+  Table,
+  textStyle,
+  type TableColumn,
+} from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { formatPrice, stockStatus } from "../../lib/stock-display";

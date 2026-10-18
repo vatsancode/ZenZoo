@@ -4,7 +4,13 @@ import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Notice, Tabs, textStyle } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { NEW_BATCH_ID, type Batch, type Movement, type MovementType, type StockItem } from "./stock-history";
+import {
+  NEW_BATCH_ID,
+  type Batch,
+  type Movement,
+  type MovementType,
+  type StockItem,
+} from "./stock-history";
 import { createVariant, listRealProducts, type RealProduct } from "../../lib/realProducts";
 import {
   listCurrentStock,
@@ -153,7 +159,10 @@ export default function CurrentStockView({
         }
       : null;
 
-  const batchesWithStock = useMemo(() => localBatches.filter((batch) => batch.remaining > 0), [localBatches]);
+  const batchesWithStock = useMemo(
+    () => localBatches.filter((batch) => batch.remaining > 0),
+    [localBatches],
+  );
 
   async function handleRecord(input: MovementInput): Promise<string | null> {
     if (!variant) return null;
@@ -168,7 +177,9 @@ export default function CurrentStockView({
     if (error) return error;
 
     setRecording(false);
-    setNotice(isNewBatch ? `${input.quantity} ${item?.unit ?? ""} added as a new batch.` : "Stock updated.");
+    setNotice(
+      isNewBatch ? `${input.quantity} ${item?.unit ?? ""} added as a new batch.` : "Stock updated.",
+    );
     listCurrentStock().then(setStockMap);
     return null;
   }
@@ -243,7 +254,11 @@ export default function CurrentStockView({
           </div>
           <div role="tabpanel" aria-labelledby={`tab-${tab}`} style={{ marginTop: spacing[8] }}>
             {tab === "overview" ? (
-              <StockOverviewTab item={item} lastPurchaseDate={lastPurchaseDate} lastSaleDate={null} />
+              <StockOverviewTab
+                item={item}
+                lastPurchaseDate={lastPurchaseDate}
+                lastSaleDate={null}
+              />
             ) : null}
             {tab === "current" ? (
               <CurrentBatchesTab
@@ -253,7 +268,11 @@ export default function CurrentStockView({
               />
             ) : null}
             {tab === "purchases" ? (
-              <PurchaseHistoryTab item={item} purchases={purchaseLines} supplierName={supplierName} />
+              <PurchaseHistoryTab
+                item={item}
+                purchases={purchaseLines}
+                supplierName={supplierName}
+              />
             ) : null}
             {tab === "movements" ? (
               <StockMovementsTab item={item} movements={realMovements} />
