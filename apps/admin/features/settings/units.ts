@@ -38,9 +38,9 @@ async function parseError(response: Response): Promise<string> {
   }
 }
 
-/** Lists this tenant's units from the real API - requires at least "settings:view". */
+/** Lists this tenant's units from the real API - the lookup, which Stocks, Purchases and Settings roles can each read. */
 export async function listUnits(): Promise<Unit[]> {
-  const response = await fetch(`${API_URL}/units`, { credentials: "include" });
+  const response = await fetch(`${API_URL}/lookups/units`, { credentials: "include" });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
     throw new Error(await parseError(response));

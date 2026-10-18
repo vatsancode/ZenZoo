@@ -21,6 +21,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { accountLabel, rememberPaymentNames } from "../../lib/payment-options";
 import { lookupAccounts, lookupVendors, type AccountLookup, type VendorLookup } from "../../lib/lookups";
+import { useAccess } from "../../lib/access";
 import { addVendor } from "../vendors/vendors";
 import {
   addExpense,
@@ -68,6 +69,7 @@ export default function ExpensesTable() {
   const { colors, radius, spacing } = useTheme();
   const [expenses, setExpenses] = useState<Expense[] | null>(null);
   const [categories, setCategories] = useState<string[]>([]);
+  const canAddVendor = useAccess().can("vendors", "edit");
   const [vendors, setVendors] = useState<VendorLookup[]>([]);
   const [accounts, setAccounts] = useState<AccountLookup[]>([]);
   const [tab, setTab] = useState<StatusTab>("all");
@@ -365,6 +367,7 @@ export default function ExpensesTable() {
       setPayee(typed);
       return;
     }
+    if (!canAddVendor) return;
     const result = await addVendor({ name: typed, phone: "", email: "", taxId: "", mapUrl: "" });
     if (typeof result === "string") {
       setNotice(result);
@@ -715,7 +718,9 @@ export default function ExpensesTable() {
                 ]}
                 value={payee}
                 placeholder="Choose a vendor"
-                creatable
+                // Typing a new payee creates a vendor, which is a Vendors action - only offered
+                // to a role that has it (the API refuses it for anyone else regardless).
+                creatable={canAddVendor}
                 createLabel="Create new vendor"
                 aria-label="Paid to"
                 onChange={(next) => void pickPayee(next)}

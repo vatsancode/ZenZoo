@@ -40,10 +40,13 @@ async function parseError(response: Response): Promise<string> {
   }
 }
 
-/** Lists this store's categories from the real API - requires at least "catalogue:view". */
+/**
+ * Lists this store's categories from the real API - the lookup, which Stocks, Purchases, Catalogue
+ * and Settings roles can each read. Changing them is a separate permission (see the mutators below).
+ */
 export async function listCategories(): Promise<Category[]> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/categories?storeId=${storeId}`, {
+  const response = await fetch(`${API_URL}/lookups/categories?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -64,7 +67,7 @@ export async function listCategories(): Promise<Category[]> {
  */
 export async function listCategoriesFlat(): Promise<CategoryResponse[]> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/categories?storeId=${storeId}`, {
+  const response = await fetch(`${API_URL}/lookups/categories?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {

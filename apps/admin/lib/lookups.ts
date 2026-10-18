@@ -1,9 +1,9 @@
 import { redirectToSignInIfUnauthorized } from "./auth";
 import { ensureStoreId } from "./storeContext";
-import type { CategoryResponse } from "./catalogue";
+import { listCategoriesFlat, type CategoryResponse } from "./catalogue";
 import type { Account } from "../features/settings/accounts";
 import type { PaymentMethod } from "../features/settings/paymentMethods";
-import type { Unit } from "../features/settings/units";
+import { listUnits, type Unit } from "../features/settings/units";
 import type { Vendor } from "../features/vendors/vendors";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -77,13 +77,12 @@ export async function lookupPaymentMethods(): Promise<PaymentMethodLookup[]> {
 
 /** Units, under Stocks or Purchases access - same shape as the Settings list. */
 export function lookupUnits(): Promise<Unit[]> {
-  return get<Unit[]>("/lookups/units");
+  return listUnits();
 }
 
 /** This store's categories (flat, with real ids), under Stocks or Purchases access. */
-export async function lookupCategories(): Promise<CategoryResponse[]> {
-  const storeId = await ensureStoreId();
-  return get<CategoryResponse[]>(`/lookups/categories?storeId=${encodeURIComponent(storeId)}`);
+export function lookupCategories(): Promise<CategoryResponse[]> {
+  return listCategoriesFlat();
 }
 
 /** Customers by name and phone, archived ones included - for naming who a sale was for. */

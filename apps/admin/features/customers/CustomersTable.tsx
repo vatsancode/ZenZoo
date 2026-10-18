@@ -14,8 +14,15 @@ import {
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { customerSales, netSpent } from "./customer-insights";
-import { listSales, type Sale } from "../sales/sales";
-import { addCustomer, creditOf, listCustomers, owesOf, type Customer } from "../../lib/customers";
+import type { Sale } from "../sales/sales";
+import {
+  addCustomer,
+  creditOf,
+  listCustomers,
+  listCustomerSales,
+  owesOf,
+  type Customer,
+} from "../../lib/customers";
 import { formatDate, formatPrice } from "../../lib/stock-display";
 import CustomerSheet from "./CustomerSheet";
 
@@ -49,7 +56,7 @@ export default function CustomersTable() {
         setCustomers([]);
         setNotice(reason instanceof Error ? reason.message : "Couldn't load customers.");
       });
-    listSales()
+    listCustomerSales()
       .then(setSales)
       .catch(() => setSales([]));
   }, []);

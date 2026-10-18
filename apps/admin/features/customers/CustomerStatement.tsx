@@ -4,6 +4,7 @@ import { useTheme } from "@zenzoo/design-tokens";
 import { DatePicker, Pagination, Select, Table, textStyle, type TableColumn } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { useAccess } from "../../lib/access";
 import { listCustomerStatement, type StatementEntry } from "../../lib/customers";
 import { datePresets, isoDate } from "../../lib/date-ranges";
 import { formatPrice } from "../../lib/stock-display";
@@ -111,6 +112,7 @@ function describe(entry: StatementEntry): { title: string; detail: string } {
 export default function CustomerStatement({ customerId }: { customerId: string }) {
   const { colors, spacing } = useTheme();
   const router = useRouter();
+  const { can } = useAccess();
   const [entries, setEntries] = useState<StatementEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -392,9 +394,14 @@ export default function CustomerStatement({ customerId }: { customerId: string }
             columns={columns}
             rows={visible}
             getRowKey={(entry) => entry.id}
-            onRowClick={(entry) => {
-              if (entry.saleId) router.push(`/sales/${encodeURIComponent(entry.saleId)}`);
-            }}
+            // The sale itself is a Sales page, so only a role with Sales gets the link.
+            onRowClick={
+              can("sales", "view")
+                ? (entry) => {
+                    if (entry.saleId) router.push(`/sales/${encodeURIComponent(entry.saleId)}`);
+                  }
+                : undefined
+            }
           />
           <Pagination
             page={page}

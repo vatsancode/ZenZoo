@@ -15,10 +15,10 @@ import {
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { creditEntries, customerSales, netSpent, preferencesOf } from "./customer-insights";
+import { useAccess } from "../../lib/access";
 import { paymentMethodLabel } from "../../lib/payment-options";
 import {
   dueEntries,
-  listSales,
   SALE_STATUS_LABEL,
   salePaymentLabel,
   saleRefundTotal,
@@ -33,6 +33,7 @@ import {
   listCollections,
   listCustomerPaymentOptions,
   listCustomers,
+  listCustomerSales,
   owesOf,
   receivePayment,
   setCustomerArchived,
@@ -71,6 +72,7 @@ function CardTitle({ children, hint }: { children: ReactNode; hint?: string }) {
 export default function CustomerDetail({ customerId }: { customerId: string }) {
   const { colors, radius, spacing } = useTheme();
   const router = useRouter();
+  const { can } = useAccess();
   // undefined while loading, null when there is no such customer.
   const [customer, setCustomer] = useState<Customer | null | undefined>(undefined);
   const [sales, setSales] = useState<Sale[]>([]);
@@ -91,7 +93,7 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
     listCustomers(true)
       .then(setEveryone)
       .catch(() => setEveryone([]));
-    listSales({ customerId })
+    listCustomerSales(customerId)
       .then(setSales)
       .catch(() => setSales([]));
     listCollections(customerId)
@@ -631,7 +633,12 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
                   columns={historyColumns}
                   rows={visible}
                   getRowKey={(sale) => sale.id}
-                  onRowClick={(sale) => router.push(`/sales/${encodeURIComponent(sale.id)}`)}
+                  // The sale itself is a Sales page, so only a role with Sales gets the link.
+                  onRowClick={
+                    can("sales", "view")
+                      ? (sale) => router.push(`/sales/${encodeURIComponent(sale.id)}`)
+                      : undefined
+                  }
                 />
                 <Pagination
                   page={currentPage}

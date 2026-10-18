@@ -33,7 +33,8 @@ interface SaleDto {
     unitPrice: string;
     discount: string;
     billShare: string;
-    cost: string;
+    /** Left out of what the Customers screens get - cost is a Sales matter. */
+    cost?: string;
     lineTotal: string;
     returned: number;
   }[];
@@ -47,15 +48,15 @@ interface SaleDto {
     value: string;
     refundAmount: string;
     refundMethodCode: string | null;
-    refundAccountId: string | null;
-    refundAccountName: string | null;
+    refundAccountId?: string | null;
+    refundAccountName?: string | null;
     items: { saleItemId: string; quantity: number; value: string }[];
   }[];
   payments: {
     paymentMethodCode: string;
     paymentMethodName: string;
-    paymentAccountId: string | null;
-    paymentAccountName: string | null;
+    paymentAccountId?: string | null;
+    paymentAccountName?: string | null;
     amount: string;
   }[];
 }
@@ -173,7 +174,7 @@ export function toSale(dto: SaleDto): Sale {
       quantity: line.quantity,
       unitPrice: Number(line.unitPrice),
       discount: round(Number(line.discount) - Number(line.billShare)),
-      unitCost: Number(line.cost) / line.quantity,
+      unitCost: line.cost === undefined ? undefined : Number(line.cost) / line.quantity,
       service: line.service,
     })),
     subtotal: Number(dto.subtotal),

@@ -1,8 +1,9 @@
 import { redirectToSignInIfUnauthorized } from "./auth";
 import { rememberPaymentNames } from "./payment-options";
 import { ensureStoreId } from "./storeContext";
+import { toSale } from "./sales";
 import type { TillPaymentOptions } from "./till";
-import type { DueCollection } from "../features/sales/sales";
+import type { DueCollection, Sale } from "../features/sales/sales";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -111,6 +112,18 @@ export async function listCustomerPaymentOptions(): Promise<TillPaymentOptions> 
   const options = await read<TillPaymentOptions>(`/customers/payment-options?storeId=${storeId}`);
   rememberPaymentNames(options.methods, options.accounts);
   return options;
+}
+
+/**
+ * Customers' sales, newest first - requires "customers:view", not "sales:view". Without costs or
+ * accounts (only what a customer's page shows). One customer's, or everyone's when none is named.
+ */
+export async function listCustomerSales(customerId?: string): Promise<Sale[]> {
+  const storeId = await ensureStoreId();
+  const query = new URLSearchParams({ storeId });
+  if (customerId) query.set("customerId", customerId);
+  const rows = await read<Parameters<typeof toSale>[0][]>(`/customers/sales?${query}`);
+  return rows.map(toSale);
 }
 
 /** The server's CustomerPaymentDto (server/api/src/capabilities/customers/paymentDto.ts). */

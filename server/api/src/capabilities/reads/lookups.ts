@@ -113,8 +113,8 @@ export const lookupPaymentMethods = defineCapability<void, PaymentMethodLookup[]
 export const lookupUnits = defineCapability<void, UnitDto[]>({
   name: "lookupUnits",
   kind: "read",
-  // Stocks (product forms), Purchases (the "new product" sheet).
-  requiredPermission: ["stocks:view", "purchases:view"],
+  // Stocks (product forms), Purchases (the "new product" sheet), Settings (the Units page).
+  requiredPermission: ["stocks:view", "purchases:view", "settings:view"],
   async handler(actor) {
     return runInTenantContext(actor, (tx) => unitsInTx(tx, actor));
   },
@@ -124,8 +124,9 @@ export const lookupUnits = defineCapability<void, UnitDto[]>({
 export const lookupCategories = defineCapability<LookupStoreInput, CategoryDto[]>({
   name: "lookupCategories",
   kind: "read",
-  // Stocks (product forms), Purchases (the "new product" sheet).
-  requiredPermission: ["stocks:view", "purchases:view"],
+  // Stocks (product forms), Purchases (the "new product" sheet), Settings (the Categories page),
+  // Catalogue (the category on a made-to-order item).
+  requiredPermission: ["stocks:view", "purchases:view", "settings:view", "catalogue:view"],
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);
     return runInTenantContext(actor, (tx) => categoriesInTx(tx, actor, input.storeId));

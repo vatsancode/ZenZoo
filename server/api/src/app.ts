@@ -18,6 +18,7 @@ import {
   lookupSuppliers,
   lookupUnits,
 } from "./capabilities/reads/lookups";
+import { listCustomerSales } from "./capabilities/reads/listCustomerSales";
 import { lookupPurchasableProducts } from "./capabilities/reads/lookupPurchasableProducts";
 import { createPurchaseVariant } from "./capabilities/actions/createPurchaseVariant";
 import { listRoles } from "./capabilities/reads/listRoles";
@@ -448,6 +449,17 @@ export function createApp(): Express {
       return;
     }
     const result = await listCustomerPaymentOptions.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/customers/sales", requireTenantUser, async (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    if (!storeId) {
+      res.status(400).json({ error: "storeId is required" });
+      return;
+    }
+    const customerId = req.query.customerId as string | undefined;
+    const result = await listCustomerSales.execute(getActor(req), { storeId, customerId });
     sendCapabilityResult(res, result);
   });
 
