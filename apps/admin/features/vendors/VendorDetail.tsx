@@ -3,6 +3,7 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Badge, Button, Card, Notice, Switch, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState, type ReactNode } from "react";
+import { useAccess } from "../../lib/access";
 import { editVendor, getVendor, setVendorStatus, type Vendor, type VendorInput } from "./vendors";
 import PageHeader from "../../components/PageHeader";
 import StatTile, { StatRow } from "../../components/StatTile";
@@ -12,6 +13,7 @@ export default function VendorDetail({ vendorId }: { vendorId: string }) {
   const { colors, spacing } = useTheme();
   // undefined while loading, null when there is no such vendor.
   const [vendor, setVendor] = useState<Vendor | null | undefined>(undefined);
+  const canEdit = useAccess().can("vendors", "edit");
   const [editOpen, setEditOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -84,9 +86,11 @@ export default function VendorDetail({ vendorId }: { vendorId: string }) {
         backHref="/vendors"
         backLabel="Back to vendors"
         action={
-          <Button variant="primary" onClick={() => setEditOpen(true)}>
-            Edit vendor
-          </Button>
+          canEdit ? (
+            <Button variant="primary" onClick={() => setEditOpen(true)}>
+              Edit vendor
+            </Button>
+          ) : undefined
         }
       />
 
@@ -113,13 +117,17 @@ export default function VendorDetail({ vendorId }: { vendorId: string }) {
             <Badge tone={vendor.status === "active" ? "success" : "neutral"}>
               {vendor.status === "active" ? "Active" : "Archived"}
             </Badge>
-            <Switch
-              checked={vendor.status === "active"}
-              aria-label={
-                vendor.status === "active" ? `Archive ${vendor.name}` : `Reactivate ${vendor.name}`
-              }
-              onChange={(on) => void toggleArchived(!on)}
-            />
+            {canEdit ? (
+              <Switch
+                checked={vendor.status === "active"}
+                aria-label={
+                  vendor.status === "active"
+                    ? `Archive ${vendor.name}`
+                    : `Reactivate ${vendor.name}`
+                }
+                onChange={(on) => void toggleArchived(!on)}
+              />
+            ) : null}
           </div>
         </div>
         <div

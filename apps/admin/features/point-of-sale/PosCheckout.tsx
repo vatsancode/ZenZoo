@@ -3,6 +3,7 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Card, Chips, IconButton, Input, Select, Switch, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState, type ReactNode } from "react";
+import { useAccess } from "../../lib/access";
 import { ON_ACCOUNT } from "../../lib/payment-options";
 import type { TillPaymentOptions } from "../../lib/till";
 import {
@@ -93,6 +94,7 @@ export default function PosCheckout({
   onComplete,
 }: PosCheckoutProps) {
   const { colors, radius, spacing } = useTheme();
+  const canSell = useAccess().can("pos", "edit");
   const [customerId, setCustomerId] = useState(WALK_IN);
   // What was typed into "Add new customer" while the quick-add popup is open; null when closed.
   const [newCustomer, setNewCustomer] = useState<string | null>(null);
@@ -311,7 +313,7 @@ export default function PosCheckout({
             })),
           ]}
           value={customerId}
-          creatable
+          creatable={canSell}
           createLabel="Add new customer"
           aria-label="Customer"
           onChange={pickCustomer}
@@ -651,7 +653,7 @@ export default function PosCheckout({
         <Button
           type="button"
           variant="primary"
-          disabled={missing !== null || submitting}
+          disabled={missing !== null || submitting || !canSell}
           onClick={() => void complete()}
         >
           {submitting
@@ -670,7 +672,9 @@ export default function PosCheckout({
             minHeight: 18,
           }}
         >
-          {submitError ? (
+          {!canSell ? (
+            "Your role can look at the till but not complete sales."
+          ) : submitError ? (
             <span role="alert" style={{ color: colors.danger }}>
               {submitError}
             </span>

@@ -3,6 +3,7 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Card, Input, Modal, Notice, Switch, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
+import { useAccess } from "../../lib/access";
 import {
   addPaymentMethod,
   listPaymentMethods,
@@ -21,6 +22,7 @@ const NOTES: Record<string, string> = {
 /** Which ways of paying are offered at the till and in forms. Switching one off keeps its past sales. */
 export default function PaymentMethodsSettings() {
   const { colors, spacing } = useTheme();
+  const canEdit = useAccess().can("settings", "edit");
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -79,17 +81,19 @@ export default function PaymentMethodsSettings() {
         backHref="/settings"
         backLabel="Back to settings"
         action={
-          <Button
-            type="button"
-            variant="primary"
-            onClick={() => {
-              setNewName("");
-              setAddError(null);
-              setAdding(true);
-            }}
-          >
-            Add payment method
-          </Button>
+          canEdit ? (
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => {
+                setNewName("");
+                setAddError(null);
+                setAdding(true);
+              }}
+            >
+              Add payment method
+            </Button>
+          ) : undefined
         }
       />
 
@@ -123,6 +127,7 @@ export default function PaymentMethodsSettings() {
             </label>
             <Switch
               id={`method-${method.id}`}
+              disabled={!canEdit}
               checked={method.status === "active"}
               onChange={(next) => void toggle(method, next)}
             />

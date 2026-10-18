@@ -15,6 +15,7 @@ import {
   textStyle,
 } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
+import { useAccess } from "../../lib/access";
 import {
   MIN_PASSWORD_LENGTH,
   addUser,
@@ -54,6 +55,9 @@ const noAccess = (): Permissions =>
 /** Who can sign in, and what each role is allowed to see and do. */
 export default function UsersSettings() {
   const { colors, radius, spacing } = useTheme();
+  const { can } = useAccess();
+  const canEdit = can("users", "edit");
+  const canDelete = can("users", "delete");
   const [tab, setTab] = useState("users");
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -76,6 +80,8 @@ export default function UsersSettings() {
   const [resetCopied, setResetCopied] = useState(false);
 
   const [roleForm, setRoleForm] = useState<Role | "new" | null>(null);
+  // The fixed Owner role, and every role for someone who can only look, opens as read-only.
+  const roleReadOnly = roleForm !== "new" && (Boolean(roleForm?.locked) || !canEdit);
   const [roleName, setRoleName] = useState("");
   const [roleNote, setRoleNote] = useState("");
   const [permissions, setPermissions] = useState<Permissions>(noAccess());
@@ -201,7 +207,7 @@ export default function UsersSettings() {
         backHref="/settings"
         backLabel="Back to settings"
         action={
-          tab === "users" ? (
+          !canEdit ? undefined : tab === "users" ? (
             <Button type="button" variant="primary" onClick={() => openUser("new")}>
               Add user
             </Button>
@@ -290,6 +296,7 @@ export default function UsersSettings() {
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
                     <Switch
+                      disabled={!canEdit}
                       checked={user.status === "active"}
                       aria-label={
                         user.status === "active" ? `Turn ${user.name} off` : `Turn ${user.name} on`
@@ -307,16 +314,20 @@ export default function UsersSettings() {
                         }
                       }}
                     />
-                    <IconButton
-                      icon="lock"
-                      label={`Reset ${user.name}'s password`}
-                      onClick={() => openReset(user)}
-                    />
-                    <IconButton
-                      icon="edit"
-                      label={`Edit ${user.name}`}
-                      onClick={() => openUser(user)}
-                    />
+                    {canEdit ? (
+                      <>
+                        <IconButton
+                          icon="lock"
+                          label={`Reset ${user.name}'s password`}
+                          onClick={() => openReset(user)}
+                        />
+                        <IconButton
+                          icon="edit"
+                          label={`Edit ${user.name}`}
+                          onClick={() => openUser(user)}
+                        />
+                      </>
+                    ) : null}
                   </div>
                 </Card>
               );
@@ -364,10 +375,14 @@ export default function UsersSettings() {
                   <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
                     <IconButton
                       icon="edit"
-                      label={role.locked ? `See what ${role.name} can do` : `Edit ${role.name}`}
+                      label={
+                        role.locked || !canEdit
+                          ? `See what ${role.name} can do`
+                          : `Edit ${role.name}`
+                      }
                       onClick={() => openRole(role)}
                     />
-                    {!role.locked ? (
+                    {!role.locked && canDelete ? (
                       <IconButton
                         icon="close"
                         label={`Remove ${role.name}`}
@@ -635,7 +650,7 @@ export default function UsersSettings() {
           style={{ width: 560, maxWidth: "100%" }}
           onSubmit={(event) => {
             event.preventDefault();
-            if (roleForm !== "new" && roleForm?.locked) setRoleForm(null);
+            if (roleReadOnly) setRoleForm(null);
             else submitRole();
           }}
         >
@@ -646,7 +661,7 @@ export default function UsersSettings() {
                 ? `${roleForm.name} role`
                 : "Edit role"}
           </div>
-          {roleForm !== "new" && roleForm?.locked ? (
+          {roleReadOnly ? (
             <div
               style={{ ...textStyle("footnote"), color: colors.inkMuted, marginTop: spacing[1] }}
             >
@@ -668,7 +683,7 @@ export default function UsersSettings() {
                 autoComplete="off"
                 placeholder="e.g. Store helper"
                 value={roleName}
-                disabled={roleForm !== "new" && roleForm?.locked}
+                disabled={roleReadOnly}
                 onChange={(event) => {
                   setRoleName(event.target.value);
                   setRoleError(null);
@@ -680,7 +695,7 @@ export default function UsersSettings() {
                 id="role-note"
                 autoComplete="off"
                 value={roleNote}
-                disabled={roleForm !== "new" && roleForm?.locked}
+                disabled={roleReadOnly}
                 onChange={(event) => setRoleNote(event.target.value)}
               />
             </FormField>
@@ -725,7 +740,7 @@ export default function UsersSettings() {
                       options={ACCESS_OPTIONS}
                       value={permissions[area.id]}
                       searchable={false}
-                      disabled={roleForm !== "new" && roleForm?.locked}
+                      disabled={roleReadOnly}
                       aria-label={`${area.label} access`}
                       onChange={(next) =>
                         setPermissions((current) => ({
@@ -754,9 +769,9 @@ export default function UsersSettings() {
             }}
           >
             <Button type="button" variant="secondary" onClick={() => setRoleForm(null)}>
-              {roleForm !== "new" && roleForm?.locked ? "Close" : "Cancel"}
+              {roleReadOnly ? "Close" : "Cancel"}
             </Button>
-            {roleForm === "new" || (roleForm && !roleForm.locked) ? (
+            {roleForm && !roleReadOnly ? (
               <Button type="submit" variant="primary">
                 {roleForm === "new" ? "Add role" : "Save changes"}
               </Button>

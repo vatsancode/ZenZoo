@@ -12,6 +12,7 @@ import {
 } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { useAccess } from "../../lib/access";
 import { formatPrice, stockStatus } from "../../lib/stock-display";
 import {
   createVariant,
@@ -39,6 +40,7 @@ function toSheetVariant(variant: RealVariant, stock: Record<string, number> | nu
 
 export default function VariantsTable({ productId }: { productId: string }) {
   const { colors, spacing } = useTheme();
+  const canEdit = useAccess().can("stocks", "edit");
   const router = useRouter();
   const [products, setProducts] = useState<RealProduct[] | undefined>(undefined);
   // null while loading - distinct from an empty {}, so a row with real
@@ -192,9 +194,11 @@ export default function VariantsTable({ productId }: { productId: string }) {
               aria-label="Search variants"
             />
           </div>
-          <Button variant="primary" onClick={() => setAdding(true)}>
-            Add new variant
-          </Button>
+          {canEdit ? (
+            <Button variant="primary" onClick={() => setAdding(true)}>
+              Add new variant
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -208,7 +212,7 @@ export default function VariantsTable({ productId }: { productId: string }) {
         </div>
       ) : product ? (
         <Table
-          columns={columns}
+          columns={canEdit ? columns : columns.filter((column) => column.key !== "actions")}
           rows={filtered}
           getRowKey={(variant) => variant.id}
           onRowClick={(variant) =>

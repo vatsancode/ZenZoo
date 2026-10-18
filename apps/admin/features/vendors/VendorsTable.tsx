@@ -14,6 +14,7 @@ import {
 } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { useAccess } from "../../lib/access";
 import { addVendor, editVendor, listVendors, type Vendor, type VendorInput } from "./vendors";
 import VendorSheet from "./VendorSheet";
 
@@ -24,6 +25,7 @@ export default function VendorsTable() {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const canEdit = useAccess().can("vendors", "edit");
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<Vendor | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -143,9 +145,11 @@ export default function VendorsTable() {
             aria-label="Search vendors"
           />
         </div>
-        <Button variant="primary" onClick={() => setAddOpen(true)}>
-          Add vendor
-        </Button>
+        {canEdit ? (
+          <Button variant="primary" onClick={() => setAddOpen(true)}>
+            Add vendor
+          </Button>
+        ) : null}
       </div>
 
       {notice ? <Notice style={{ marginBottom: spacing[4] }}>{notice}</Notice> : null}
@@ -157,7 +161,7 @@ export default function VendorsTable() {
       ) : (
         <>
           <Table
-            columns={columns}
+            columns={canEdit ? columns : columns.filter((column) => column.key !== "actions")}
             rows={visible}
             getRowKey={(vendor) => vendor.id}
             onRowClick={(vendor) => router.push(`/vendors/${encodeURIComponent(vendor.id)}`)}

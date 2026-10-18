@@ -14,6 +14,7 @@ import {
   textStyle,
 } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
+import { useAccess } from "../../lib/access";
 import {
   addAccount,
   editAccount,
@@ -31,6 +32,7 @@ import PageHeader from "../../components/PageHeader";
 /** The places money is received into and paid from: add, rename, correct the opening balance, switch on/off. */
 export default function AccountsSettings() {
   const { colors, radius, spacing } = useTheme();
+  const canEdit = useAccess().can("settings", "edit");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   // null = closed; an Account = editing it; "new" = adding.
@@ -103,9 +105,11 @@ export default function AccountsSettings() {
         backHref="/settings"
         backLabel="Back to settings"
         action={
-          <Button type="button" variant="primary" onClick={() => openForm("new")}>
-            Add account
-          </Button>
+          canEdit ? (
+            <Button type="button" variant="primary" onClick={() => openForm("new")}>
+              Add account
+            </Button>
+          ) : undefined
         }
       />
 
@@ -168,6 +172,7 @@ export default function AccountsSettings() {
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
                 <Switch
+                  disabled={!canEdit}
                   checked={!disabled}
                   aria-label={disabled ? `Turn ${account.name} on` : `Turn ${account.name} off`}
                   onChange={(on) => {
@@ -184,11 +189,13 @@ export default function AccountsSettings() {
                     });
                   }}
                 />
-                <IconButton
-                  icon="edit"
-                  label={`Edit ${account.name}`}
-                  onClick={() => openForm(account)}
-                />
+                {canEdit ? (
+                  <IconButton
+                    icon="edit"
+                    label={`Edit ${account.name}`}
+                    onClick={() => openForm(account)}
+                  />
+                ) : null}
               </div>
             </Card>
           );

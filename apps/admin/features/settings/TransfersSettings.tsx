@@ -13,6 +13,7 @@ import {
   textStyle,
 } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
+import { useAccess } from "../../lib/access";
 import {
   addTransfer,
   listAccounts,
@@ -31,6 +32,7 @@ const ACTIVITY_SHOWN = 12;
 /** What is in each account, what has moved through the selected one, and a way to move money between them. */
 export default function TransfersSettings() {
   const { colors, radius, spacing, elevation } = useTheme();
+  const canEdit = useAccess().can("settings", "edit");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -138,14 +140,16 @@ export default function TransfersSettings() {
         backHref="/settings"
         backLabel="Back to settings"
         action={
-          <Button
-            type="button"
-            variant="primary"
-            disabled={accounts.length < 2}
-            onClick={() => openForm(selectedId ?? undefined)}
-          >
-            Transfer money
-          </Button>
+          canEdit ? (
+            <Button
+              type="button"
+              variant="primary"
+              disabled={accounts.length < 2}
+              onClick={() => openForm(selectedId ?? undefined)}
+            >
+              Transfer money
+            </Button>
+          ) : undefined
         }
       />
 

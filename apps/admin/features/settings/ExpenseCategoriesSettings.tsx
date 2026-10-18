@@ -3,6 +3,7 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Card, IconButton, Input, Modal, Notice, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
+import { useAccess } from "../../lib/access";
 import {
   addExpenseCategory,
   deleteExpenseCategory,
@@ -16,6 +17,9 @@ import PageHeader from "../../components/PageHeader";
 /** The headings expenses are filed under: add, rename (expenses follow), and remove the unused ones. */
 export default function ExpenseCategoriesSettings() {
   const { colors, spacing } = useTheme();
+  const { can } = useAccess();
+  const canEdit = can("expenses", "edit");
+  const canDelete = can("expenses", "delete");
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
   const [newName, setNewName] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
@@ -82,35 +86,37 @@ export default function ExpenseCategoriesSettings() {
 
       {notice ? <Notice>{notice}</Notice> : null}
 
-      <div style={{ display: "flex", alignItems: "flex-start", gap: spacing[3], maxWidth: 520 }}>
-        <div style={{ flex: 1 }}>
-          <Input
-            autoComplete="off"
-            placeholder="New category, e.g. Insurance"
-            aria-label="New expense category"
-            aria-invalid={addError ? true : undefined}
-            value={newName}
-            onChange={(event) => {
-              setNewName(event.target.value);
-              setAddError(null);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void create();
-            }}
-          />
-          {addError ? (
-            <div
-              role="alert"
-              style={{ ...textStyle("footnote"), color: colors.danger, marginTop: spacing[2] }}
-            >
-              {addError}
-            </div>
-          ) : null}
+      {canEdit ? (
+        <div style={{ display: "flex", alignItems: "flex-start", gap: spacing[3], maxWidth: 520 }}>
+          <div style={{ flex: 1 }}>
+            <Input
+              autoComplete="off"
+              placeholder="New category, e.g. Insurance"
+              aria-label="New expense category"
+              aria-invalid={addError ? true : undefined}
+              value={newName}
+              onChange={(event) => {
+                setNewName(event.target.value);
+                setAddError(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void create();
+              }}
+            />
+            {addError ? (
+              <div
+                role="alert"
+                style={{ ...textStyle("footnote"), color: colors.danger, marginTop: spacing[2] }}
+              >
+                {addError}
+              </div>
+            ) : null}
+          </div>
+          <Button type="button" variant="primary" onClick={() => void create()}>
+            Add category
+          </Button>
         </div>
-        <Button type="button" variant="primary" onClick={() => void create()}>
-          Add category
-        </Button>
-      </div>
+      ) : null}
 
       <Card style={{ padding: `${spacing[2]}px ${spacing[6]}px` }}>
         {categories.map((category, index) => {
@@ -187,7 +193,7 @@ export default function ExpenseCategoriesSettings() {
                       {locked ? " · catch-all, always kept" : ""}
                     </div>
                   </div>
-                  {!locked ? (
+                  {!locked && canEdit ? (
                     <div style={{ display: "flex", gap: spacing[1] }}>
                       <IconButton
                         icon="edit"
@@ -197,21 +203,23 @@ export default function ExpenseCategoriesSettings() {
                           setRenameError(null);
                         }}
                       />
-                      <IconButton
-                        icon="close"
-                        label={
-                          usage.items > 0
-                            ? `${name} is in use and can't be deleted`
-                            : `Delete ${name}`
-                        }
-                        onClick={() =>
-                          usage.items > 0
-                            ? setNotice(
-                                `${name} is used on ${usage.bills} bills, so it can't be deleted. Rename it instead.`,
-                              )
-                            : setDeleting(category)
-                        }
-                      />
+                      {canDelete ? (
+                        <IconButton
+                          icon="close"
+                          label={
+                            usage.items > 0
+                              ? `${name} is in use and can't be deleted`
+                              : `Delete ${name}`
+                          }
+                          onClick={() =>
+                            usage.items > 0
+                              ? setNotice(
+                                  `${name} is used on ${usage.bills} bills, so it can't be deleted. Rename it instead.`,
+                                )
+                              : setDeleting(category)
+                          }
+                        />
+                      ) : null}
                     </div>
                   ) : null}
                 </>

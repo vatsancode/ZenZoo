@@ -4,6 +4,7 @@ import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Notice, Tabs, textStyle } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { useAccess } from "../../lib/access";
 import {
   NEW_BATCH_ID,
   type Batch,
@@ -74,6 +75,7 @@ export default function CurrentStockView({
 }) {
   const { colors, spacing } = useTheme();
   const router = useRouter();
+  const canEdit = useAccess().can("stocks", "edit");
   const [products, setProducts] = useState<RealProduct[] | undefined>(undefined);
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
   const [vendors, setVendors] = useState<VendorLookup[]>([]);
@@ -229,7 +231,7 @@ export default function CurrentStockView({
         backHref={backHref}
         backLabel={product && product.variants.length > 1 ? "Back to variants" : "Back to stocks"}
         action={
-          item ? (
+          item && canEdit ? (
             <div style={{ display: "flex", gap: spacing[3] }}>
               <Button variant="secondary" onClick={() => setAddingVariant(true)}>
                 Add variant

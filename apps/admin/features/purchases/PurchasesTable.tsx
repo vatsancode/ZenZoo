@@ -14,11 +14,13 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { displayStatusLabel, displayStatusTone, listPurchases, type Purchase } from "./purchases";
 import { formatDate, formatPrice } from "../../lib/stock-display";
+import { useAccess } from "../../lib/access";
 import { lookupVendors, type VendorLookup } from "../../lib/lookups";
 
 export default function PurchasesTable() {
   const { colors, spacing } = useTheme();
   const router = useRouter();
+  const canEdit = useAccess().can("purchases", "edit");
   const [purchases, setPurchases] = useState<Purchase[] | null>(null);
   const [vendors, setVendors] = useState<VendorLookup[]>([]);
   const [query, setQuery] = useState("");
@@ -113,9 +115,11 @@ export default function PurchasesTable() {
             aria-label="Search purchases"
           />
         </div>
-        <Button variant="primary" onClick={() => router.push("/purchases/new")}>
-          Add purchase
-        </Button>
+        {canEdit ? (
+          <Button variant="primary" onClick={() => router.push("/purchases/new")}>
+            Add purchase
+          </Button>
+        ) : null}
       </div>
 
       {purchases === null ? (

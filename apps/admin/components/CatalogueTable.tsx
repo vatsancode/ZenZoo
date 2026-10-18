@@ -18,6 +18,7 @@ import {
   type TableColumn,
 } from "@zenzoo/ui-web";
 import { useEffect, useMemo, useState } from "react";
+import { useAccess } from "../lib/access";
 import {
   addCatalogueItem,
   deleteCatalogueItem,
@@ -58,6 +59,9 @@ function categoryLabel(row: CategoryResponse, rows: CategoryResponse[]): string 
  * edited here, and inventory products imported from Stocks, edited there.
  */
 export default function CatalogueTable() {
+  const { can } = useAccess();
+  const canEdit = can("catalogue", "edit");
+  const canDelete = can("catalogue", "delete");
   const { colors, spacing } = useTheme();
   const [items, setItems] = useState<CatalogueItem[] | null>(null);
   const [categories, setCategories] = useState<CategoryResponse[]>([]);
@@ -258,18 +262,21 @@ export default function CatalogueTable() {
               }}
             />
           ) : null}
-          <IconButton
-            icon="close"
-            label={
-              item.kind === "product"
-                ? `Remove ${item.name} from the catalogue`
-                : `Delete ${item.name}`
-            }
-            onClick={(event) => {
-              event.stopPropagation();
-              setDeleting(item);
-            }}
-          />
+          {/* Removing a product from the catalogue is an edit; deleting a made-to-order item is a delete. */}
+          {item.kind === "product" || canDelete ? (
+            <IconButton
+              icon="close"
+              label={
+                item.kind === "product"
+                  ? `Remove ${item.name} from the catalogue`
+                  : `Delete ${item.name}`
+              }
+              onClick={(event) => {
+                event.stopPropagation();
+                setDeleting(item);
+              }}
+            />
+          ) : null}
         </span>
       ),
     },
@@ -283,7 +290,9 @@ export default function CatalogueTable() {
     { id: "product", label: `${KIND_LABEL.product} (${count("product")})` },
   ];
   // The Type column only tells rows apart on "All" - each other tab is one type already.
-  const shownColumns = kind === "all" ? columns : columns.filter((column) => column.key !== "kind");
+  const shownColumns = columns.filter(
+    (column) => (kind === "all" || column.key !== "kind") && (canEdit || column.key !== "actions"),
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: spacing[6] }}>
@@ -332,12 +341,16 @@ export default function CatalogueTable() {
           </div>
         </div>
         <div style={{ display: "flex", gap: spacing[3], flexShrink: 0 }}>
-          <Button type="button" variant="secondary" onClick={() => setImporting(true)}>
-            Import from inventory
-          </Button>
-          <Button type="button" variant="primary" onClick={() => openForm("new")}>
-            Add item
-          </Button>
+          {canEdit ? (
+            <>
+              <Button type="button" variant="secondary" onClick={() => setImporting(true)}>
+                Import from inventory
+              </Button>
+              <Button type="button" variant="primary" onClick={() => openForm("new")}>
+                Add item
+              </Button>
+            </>
+          ) : null}
         </div>
       </div>
 
@@ -363,7 +376,8 @@ export default function CatalogueTable() {
             columns={shownColumns}
             rows={visible}
             getRowKey={(item) => item.id}
-            onRowClick={openForm}
+            // The form is for changing an item, so a role that can only view gets no row action.
+            onRowClick={canEdit ? openForm : undefined}
           />
           <Pagination
             page={currentPage}

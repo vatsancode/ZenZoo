@@ -3,6 +3,7 @@
 import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Card, Icon, IconButton, Input, Modal, Notice, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
+import { useAccess } from "../../lib/access";
 import {
   addCategory,
   addSubcategory,
@@ -22,6 +23,10 @@ import StoreSwitcher from "../../components/StoreSwitcher";
 /** Categories and their subcategories: add, rename, remove, and see how many products use each. */
 export default function CategoriesSettings() {
   const { colors, radius, spacing } = useTheme();
+  // Categories belong to Stocks on the server, so changing them takes Stocks access.
+  const { can } = useAccess();
+  const canEdit = can("stocks", "edit");
+  const canDelete = can("stocks", "delete");
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [newName, setNewName] = useState("");
@@ -126,35 +131,37 @@ export default function CategoriesSettings() {
 
       {notice ? <Notice>{notice}</Notice> : null}
 
-      <div style={{ display: "flex", alignItems: "flex-start", gap: spacing[3], maxWidth: 520 }}>
-        <div style={{ flex: 1 }}>
-          <Input
-            autoComplete="off"
-            placeholder="New category, e.g. Kids wear"
-            aria-label="New category name"
-            aria-invalid={error && !renaming && !addingSubTo ? true : undefined}
-            value={newName}
-            onChange={(event) => {
-              setNewName(event.target.value);
-              setError(null);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void create();
-            }}
-          />
-          {error && !renaming && !addingSubTo ? (
-            <div
-              role="alert"
-              style={{ ...textStyle("footnote"), color: colors.danger, marginTop: spacing[2] }}
-            >
-              {error}
-            </div>
-          ) : null}
+      {canEdit ? (
+        <div style={{ display: "flex", alignItems: "flex-start", gap: spacing[3], maxWidth: 520 }}>
+          <div style={{ flex: 1 }}>
+            <Input
+              autoComplete="off"
+              placeholder="New category, e.g. Kids wear"
+              aria-label="New category name"
+              aria-invalid={error && !renaming && !addingSubTo ? true : undefined}
+              value={newName}
+              onChange={(event) => {
+                setNewName(event.target.value);
+                setError(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void create();
+              }}
+            />
+            {error && !renaming && !addingSubTo ? (
+              <div
+                role="alert"
+                style={{ ...textStyle("footnote"), color: colors.danger, marginTop: spacing[2] }}
+              >
+                {error}
+              </div>
+            ) : null}
+          </div>
+          <Button type="button" variant="primary" onClick={() => void create()}>
+            Add category
+          </Button>
         </div>
-        <Button type="button" variant="primary" onClick={() => void create()}>
-          Add category
-        </Button>
-      </div>
+      ) : null}
 
       {categories.map((category) => {
         const used = productsInCategory(products, category.name);
@@ -220,29 +227,33 @@ export default function CategoriesSettings() {
               )}
               {!isRenaming ? (
                 <div style={{ display: "flex", gap: spacing[1] }}>
-                  <IconButton
-                    icon="edit"
-                    label={`Rename ${category.name}`}
-                    onClick={() => {
-                      setRenaming({ id: category.id, name: category.name });
-                      setError(null);
-                    }}
-                  />
-                  <IconButton
-                    icon="close"
-                    label={
-                      used > 0
-                        ? `${category.name} is in use and can't be deleted`
-                        : `Delete ${category.name}`
-                    }
-                    onClick={() =>
-                      used > 0
-                        ? setNotice(
-                            `${category.name} has ${used} products. Move them to another category first.`,
-                          )
-                        : setDeleting(category)
-                    }
-                  />
+                  {canEdit ? (
+                    <IconButton
+                      icon="edit"
+                      label={`Rename ${category.name}`}
+                      onClick={() => {
+                        setRenaming({ id: category.id, name: category.name });
+                        setError(null);
+                      }}
+                    />
+                  ) : null}
+                  {canDelete ? (
+                    <IconButton
+                      icon="close"
+                      label={
+                        used > 0
+                          ? `${category.name} is in use and can't be deleted`
+                          : `Delete ${category.name}`
+                      }
+                      onClick={() =>
+                        used > 0
+                          ? setNotice(
+                              `${category.name} has ${used} products. Move them to another category first.`,
+                            )
+                          : setDeleting(category)
+                      }
+                    />
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -263,7 +274,7 @@ export default function CategoriesSettings() {
                     <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
                       {count}
                     </span>
-                    {count === 0 ? (
+                    {count === 0 && canDelete ? (
                       <button
                         type="button"
                         aria-label={`Remove ${name}`}
@@ -328,7 +339,7 @@ export default function CategoriesSettings() {
                     Cancel
                   </Button>
                 </span>
-              ) : (
+              ) : canEdit ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -348,7 +359,7 @@ export default function CategoriesSettings() {
                 >
                   + Add subcategory
                 </button>
-              )}
+              ) : null}
             </div>
             {isAdding && error ? (
               <div role="alert" style={{ ...textStyle("footnote"), color: colors.danger }}>

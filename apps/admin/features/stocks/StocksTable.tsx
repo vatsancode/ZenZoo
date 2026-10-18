@@ -14,6 +14,7 @@ import {
 } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { useAccess } from "../../lib/access";
 import {
   createProduct,
   listRealProducts,
@@ -50,6 +51,7 @@ function productHref(product: RealProduct): string {
 
 export default function StocksTable() {
   const { colors, spacing } = useTheme();
+  const canEdit = useAccess().can("stocks", "edit");
   const [products, setProducts] = useState<RealProduct[] | null>(null);
   // null while loading - distinct from an empty {}, so a row with real
   // stock can't flash "Out of stock" before the real count has arrived.
@@ -249,9 +251,11 @@ export default function StocksTable() {
             aria-label="Search products"
           />
         </div>
-        <Button variant="primary" onClick={() => setAddOpen(true)}>
-          Add new product
-        </Button>
+        {canEdit ? (
+          <Button variant="primary" onClick={() => setAddOpen(true)}>
+            Add new product
+          </Button>
+        ) : null}
       </div>
 
       {notice ? <Notice style={{ marginBottom: spacing[4] }}>{notice}</Notice> : null}
@@ -263,7 +267,7 @@ export default function StocksTable() {
       ) : (
         <>
           <Table
-            columns={columns}
+            columns={canEdit ? columns : columns.filter((column) => column.key !== "actions")}
             rows={visible}
             getRowKey={(product) => product.id}
             onRowClick={(product) => router.push(productHref(product))}

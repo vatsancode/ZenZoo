@@ -12,6 +12,7 @@ import {
   type TableColumn,
 } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
+import { useAccess } from "../../lib/access";
 import { addUnit, listUnits, setUnitEnabled, type Unit } from "./units";
 import FormField from "../../components/FormField";
 import PageHeader from "../../components/PageHeader";
@@ -19,6 +20,7 @@ import PageHeader from "../../components/PageHeader";
 /** The units quantities are counted in. Switching one off keeps its history but stops offering it on new products. */
 export default function UnitsSettings() {
   const { colors, spacing } = useTheme();
+  const canEdit = useAccess().can("settings", "edit");
   const [units, setUnits] = useState<Unit[]>([]);
   const [open, setOpen] = useState(false);
   const [code, setCode] = useState("");
@@ -110,6 +112,7 @@ export default function UnitsSettings() {
       width: "80px",
       render: (unit) => (
         <Switch
+          disabled={!canEdit}
           checked={unit.status === "active"}
           aria-label={unit.status === "active" ? `Turn ${unit.name} off` : `Turn ${unit.name} on`}
           onChange={(next) => void toggle(unit, next)}
@@ -126,9 +129,11 @@ export default function UnitsSettings() {
         backHref="/settings"
         backLabel="Back to settings"
         action={
-          <Button type="button" variant="primary" onClick={() => setOpen(true)}>
-            Add unit
-          </Button>
+          canEdit ? (
+            <Button type="button" variant="primary" onClick={() => setOpen(true)}>
+              Add unit
+            </Button>
+          ) : undefined
         }
       />
 

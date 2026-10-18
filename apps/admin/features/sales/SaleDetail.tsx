@@ -18,6 +18,7 @@ import {
   type Sale,
 } from "./sales";
 import { formatDate, formatPrice } from "../../lib/stock-display";
+import { useAccess } from "../../lib/access";
 import { lookupCustomers, type CustomerLookup } from "../../lib/lookups";
 import {
   createSaleReturn,
@@ -64,6 +65,7 @@ function Line({ label, value, strong }: { label: string; value: ReactNode; stron
 /** One sale in full: what was sold and at what price, the discounts, who bought it and how it was paid. */
 export default function SaleDetail({ saleId }: { saleId: string }) {
   const { colors, radius, spacing } = useTheme();
+  const { can } = useAccess();
   // undefined while loading, null when there is no such sale.
   const [sale, setSale] = useState<Sale | null | undefined>(undefined);
   const [customers, setCustomers] = useState<CustomerLookup[]>([]);
@@ -174,7 +176,7 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
             >
               {SALE_STATUS_LABEL[status]}
             </Badge>
-            {canReturnSale(sale) ? (
+            {canReturnSale(sale) && can("sales", "edit") ? (
               <Button
                 type="button"
                 variant="primary"
@@ -186,7 +188,7 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
                 Return items
               </Button>
             ) : null}
-            {!sale.voided && (sale.returns ?? []).length === 0 ? (
+            {!sale.voided && (sale.returns ?? []).length === 0 && can("sales", "delete") ? (
               <Button
                 type="button"
                 variant="secondary"

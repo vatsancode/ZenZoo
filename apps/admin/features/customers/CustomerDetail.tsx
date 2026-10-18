@@ -278,26 +278,32 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
             {customer.status === "archived" ? <Badge tone="neutral">Archived</Badge> : null}
             {owed > 0 ? <Badge tone="warning">{formatPrice(owed)} due</Badge> : null}
             {balance > 0 ? <Badge tone="success">{formatPrice(balance)} store credit</Badge> : null}
-            <Button type="button" variant="primary" onClick={() => setPaymentOpen(true)}>
-              Record payment
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setEditOpen(true)}
-              style={{ backgroundColor: "transparent", border: `1px solid ${colors.border}` }}
-            >
-              Edit customer
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={archiving}
-              onClick={() => void toggleArchived()}
-              style={{ backgroundColor: "transparent", border: `1px solid ${colors.border}` }}
-            >
-              {customer.status === "archived" ? "Restore" : "Archive"}
-            </Button>
+            {can("customers", "edit") ? (
+              <Button type="button" variant="primary" onClick={() => setPaymentOpen(true)}>
+                Record payment
+              </Button>
+            ) : null}
+            {can("customers", "edit") ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setEditOpen(true)}
+                style={{ backgroundColor: "transparent", border: `1px solid ${colors.border}` }}
+              >
+                Edit customer
+              </Button>
+            ) : null}
+            {can("customers", "delete") ? (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={archiving}
+                onClick={() => void toggleArchived()}
+                style={{ backgroundColor: "transparent", border: `1px solid ${colors.border}` }}
+              >
+                {customer.status === "archived" ? "Restore" : "Archive"}
+              </Button>
+            ) : null}
           </div>
         }
       />
@@ -494,7 +500,11 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
             </div>
 
             {dues.length > 0 || owed > 0 ? (
-              <CustomerDues entries={dues} owed={owed} onRecord={() => setPaymentOpen(true)} />
+              <CustomerDues
+                entries={dues}
+                owed={owed}
+                onRecord={can("customers", "edit") ? () => setPaymentOpen(true) : undefined}
+              />
             ) : null}
 
             <Card>

@@ -74,7 +74,10 @@ export default function ExpensesTable() {
   const { colors, radius, spacing } = useTheme();
   const [expenses, setExpenses] = useState<Expense[] | null>(null);
   const [categories, setCategories] = useState<string[]>([]);
-  const canAddVendor = useAccess().can("vendors", "edit");
+  const { can } = useAccess();
+  const canAddVendor = can("vendors", "edit");
+  const canEdit = can("expenses", "edit");
+  const canDelete = can("expenses", "delete");
   const [vendors, setVendors] = useState<VendorLookup[]>([]);
   const [accounts, setAccounts] = useState<AccountLookup[]>([]);
   const [tab, setTab] = useState<StatusTab>("all");
@@ -471,7 +474,7 @@ export default function ExpensesTable() {
         <span style={{ display: "inline-flex", alignItems: "center", gap: spacing[1] }}>
           {/* A fixed slot, so the edit and delete icons line up on paid and unpaid rows alike. */}
           <span style={{ display: "inline-flex", justifyContent: "flex-end", width: 112 }}>
-            {expense.status === "pending" ? (
+            {expense.status === "pending" && canEdit ? (
               <Button
                 type="button"
                 variant="secondary"
@@ -500,14 +503,16 @@ export default function ExpensesTable() {
               openForm(expense);
             }}
           />
-          <IconButton
-            icon="close"
-            label={`Delete expense of ${formatPrice(expense.total)}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              setDeleting(expense);
-            }}
-          />
+          {canDelete ? (
+            <IconButton
+              icon="close"
+              label={`Delete expense of ${formatPrice(expense.total)}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                setDeleting(expense);
+              }}
+            />
+          ) : null}
         </span>
       ),
     },
@@ -545,9 +550,11 @@ export default function ExpensesTable() {
           >
             Filters{groups.length > 0 ? ` · ${groups.length}` : ""}
           </Button>
-          <Button type="button" variant="primary" onClick={() => openForm("new")}>
-            Add expense
-          </Button>
+          {canEdit ? (
+            <Button type="button" variant="primary" onClick={() => openForm("new")}>
+              Add expense
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -606,10 +613,11 @@ export default function ExpensesTable() {
       ) : (
         <div>
           <Table
-            columns={columns}
+            columns={canEdit ? columns : columns.filter((column) => column.key !== "actions")}
             rows={visible}
             getRowKey={(expense) => expense.id}
-            onRowClick={openForm}
+            // The form is for changing an expense, so a role that can only view gets no row action.
+            onRowClick={canEdit ? openForm : undefined}
           />
           <Pagination
             page={currentPage}

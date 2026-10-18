@@ -24,10 +24,14 @@ interface PageRule {
   path: string;
   /** Matches only this exact path; otherwise it also covers everything beneath it. */
   exact?: boolean;
-  /** Every one of these areas is needed (at "view" or better). */
+  /** Every one of these areas is needed (at `level`, or better). */
   all?: PermissionArea[];
   /** At least one of these areas is needed. */
   any?: PermissionArea[];
+  /** The level needed in those areas; "view" when left out. */
+  level?: AccessLevel;
+  /** Match with this instead of the path prefix (for a page under an id, like /purchases/<id>/edit). */
+  pattern?: RegExp;
 }
 
 /**
@@ -47,6 +51,9 @@ const RULES: PageRule[] = [
   { path: "/settings", exact: true, any: ["settings", "users"] },
   { path: "/settings", all: ["settings"] },
   { path: "/vendors", all: ["vendors"] },
+  // Writing a purchase takes more than looking at one.
+  { path: "/purchases/new", exact: true, all: ["purchases"], level: "edit" },
+  { path: "/purchases", pattern: /^\/purchases\/[^/]+\/edit$/, all: ["purchases"], level: "edit" },
   { path: "/purchases", all: ["purchases"] },
   { path: "/stocks", all: ["stocks"] },
   { path: "/expenses", all: ["expenses"] },
@@ -59,6 +66,7 @@ const RULES: PageRule[] = [
 export type CanFn = (area: PermissionArea, level: AccessLevel) => boolean;
 
 function matches(rule: PageRule, pathname: string): boolean {
+  if (rule.pattern) return rule.pattern.test(pathname);
   if (rule.exact) return pathname === rule.path;
   return pathname === rule.path || pathname.startsWith(`${rule.path}/`);
 }
@@ -67,8 +75,9 @@ function matches(rule: PageRule, pathname: string): boolean {
 export function pageAllowed(pathname: string, can: CanFn): boolean {
   const rule = RULES.find((item) => matches(item, pathname));
   if (!rule) return true;
-  if (rule.all && !rule.all.every((area) => can(area, "view"))) return false;
-  if (rule.any && !rule.any.some((area) => can(area, "view"))) return false;
+  const level = rule.level ?? "view";
+  if (rule.all && !rule.all.every((area) => can(area, level))) return false;
+  if (rule.any && !rule.any.some((area) => can(area, level))) return false;
   return true;
 }
 

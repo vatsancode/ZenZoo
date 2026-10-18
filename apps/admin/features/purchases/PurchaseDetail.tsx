@@ -111,6 +111,8 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
   const [purchase, setPurchase] = useState<Purchase | null | undefined>(undefined);
   const { can } = useAccess();
   const canSeeVendors = can("vendors", "view");
+  // Every action on a purchase - editing, receiving, paying, returning, cancelling - is a change.
+  const canEdit = can("purchases", "edit");
   const [vendors, setVendors] = useState<VendorLookup[]>([]);
   // The vendor's contact details come from the Vendors area, so only a role that has it asks.
   const [vendorRecords, setVendorRecords] = useState<Vendor[]>([]);
@@ -184,7 +186,7 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
   const received = receivedUnits(purchase);
   const pending = pendingUnits(purchase);
   const hasDiscount = items.some((item) => item.discount > 0);
-  const receiving = canReceive(purchase);
+  const receiving = canEdit && canReceive(purchase);
   const notExpected = purchase.status === "draft" || purchase.status === "cancelled";
 
   async function confirmDelivery({ date, arrived }: DeliveryInput) {
@@ -283,7 +285,7 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
         action={
           <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
             <Badge tone={displayStatusTone(purchase)}>{displayStatusLabel(purchase)}</Badge>
-            {canReturn(purchase) ? (
+            {canEdit && canReturn(purchase) ? (
               <Button
                 type="button"
                 variant="secondary"
@@ -293,7 +295,7 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
                 Return items
               </Button>
             ) : null}
-            {canCancel(purchase) ? (
+            {canEdit && canCancel(purchase) ? (
               <Button
                 type="button"
                 variant="secondary"
@@ -303,7 +305,7 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
                 Cancel purchase
               </Button>
             ) : null}
-            {purchase.status === "draft" ? (
+            {canEdit && purchase.status === "draft" ? (
               <Button
                 type="button"
                 variant="secondary"
@@ -313,7 +315,7 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
                 Edit
               </Button>
             ) : null}
-            {purchase.status === "draft" ? (
+            {canEdit && purchase.status === "draft" ? (
               <Button type="button" variant="primary" onClick={() => void handlePlaceOrder()}>
                 Place order
               </Button>
@@ -323,7 +325,7 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
                 Receive stock
               </Button>
             ) : null}
-            {canPay(purchase) ? (
+            {canEdit && canPay(purchase) ? (
               <Button
                 type="button"
                 variant="secondary"

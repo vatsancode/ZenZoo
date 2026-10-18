@@ -14,8 +14,8 @@ export default function CustomerDues({
   entries: DueEntry[];
   /** What they owe, from the server's ledger balance. */
   owed: number;
-  /** Opens the Record payment window. */
-  onRecord: () => void;
+  /** Opens the Record payment window. Left out when the role can't record payments. */
+  onRecord?: () => void;
 }) {
   const { colors, spacing } = useTheme();
 
@@ -36,7 +36,7 @@ export default function CustomerDues({
             Sales left on account, less what has been paid since.
           </div>
         </div>
-        {owed > 0 ? (
+        {owed > 0 && onRecord ? (
           <Button type="button" variant="primary" onClick={onRecord}>
             Collect payment
           </Button>

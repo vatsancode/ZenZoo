@@ -13,6 +13,7 @@ import {
 } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { useAccess } from "../../lib/access";
 import { customerSales, netSpent } from "./customer-insights";
 import type { Sale } from "../sales/sales";
 import {
@@ -46,6 +47,7 @@ export default function CustomersTable() {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const canEdit = useAccess().can("customers", "edit");
   const [addOpen, setAddOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -202,9 +204,11 @@ export default function CustomersTable() {
             }}
           />
         </div>
-        <Button type="button" variant="primary" onClick={() => setAddOpen(true)}>
-          Add customer
-        </Button>
+        {canEdit ? (
+          <Button type="button" variant="primary" onClick={() => setAddOpen(true)}>
+            Add customer
+          </Button>
+        ) : null}
       </div>
 
       {notice ? <Notice style={{ marginBottom: spacing[4] }}>{notice}</Notice> : null}
