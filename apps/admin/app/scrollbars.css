@@ -1,0 +1,21 @@
+/* A very thin scrollbar that only appears while the pointer is over the area. */
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.thin-scroll:hover {
+  scrollbar-color: rgba(128, 128, 128, 0.4) transparent;
+}
+.thin-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.thin-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+.thin-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.4);
+}

@@ -21,6 +21,7 @@ import {
 } from "../../lib/realStock";
 import { listPurchases, purchaseLinesForVariant, type Purchase } from "../purchases/purchases";
 import { lookupVendors, type VendorLookup } from "../../lib/lookups";
+import { localDay } from "../../lib/stock-display";
 import CurrentBatchesTab from "./CurrentBatchesTab";
 import PageHeader from "../../components/PageHeader";
 import PurchaseHistoryTab from "./PurchaseHistoryTab";
@@ -38,17 +39,18 @@ const TABS = [
 ];
 
 // The real ledger's own movement_type values to this UI's display type -
-// every real type this screen can currently show; anything else (SOLD,
-// DAMAGED, ...) has no real write path yet, so isn't listed here rather
-// than guessed at. ADJUSTMENT_IN/OUT cover every hand-recorded change
-// (add, remove, and both directions of a count correction) - the database
-// only distinguishes the direction, not which of the three Record Movement
-// actions produced it.
+// every type something writes today. ADJUSTMENT_IN/OUT cover every
+// hand-recorded change (add, remove, and both directions of a count
+// correction). A voided sale (SOLD_REVERSAL) puts the stock back, so it
+// shows as a return.
 const MOVEMENT_TYPE_LABEL: Record<string, MovementType> = {
   PURCHASED: "Purchased",
   OPENING_STOCK: "Opening stock",
   ADJUSTMENT_IN: "Added",
   ADJUSTMENT_OUT: "Used/out",
+  SOLD: "Sale",
+  SALE_RETURN: "Return",
+  SOLD_REVERSAL: "Return",
 };
 
 // Mirrors the database's stock_movement_sign() - stock_movements only ever
@@ -58,6 +60,9 @@ const MOVEMENT_SIGN: Record<string, 1 | -1> = {
   OPENING_STOCK: 1,
   ADJUSTMENT_IN: 1,
   ADJUSTMENT_OUT: -1,
+  SOLD: -1,
+  SALE_RETURN: 1,
+  SOLD_REVERSAL: 1,
 };
 
 /**
@@ -82,6 +87,7 @@ export default function CurrentStockView({
   const [allPurchases, setAllPurchases] = useState<Purchase[]>([]);
   const [realMovements, setRealMovements] = useState<Movement[]>([]);
   const [lastPurchaseDate, setLastPurchaseDate] = useState<string | null>(null);
+  const [lastSaleDate, setLastSaleDate] = useState<string | null>(null);
 
   const [tab, setTab] = useState("current");
   const [recording, setRecording] = useState(false);
@@ -117,9 +123,9 @@ export default function CurrentStockView({
       setLocalBatches(
         batches.map((batch) => ({
           id: batch.id,
-          batchNo: `B${batch.receivedAt.slice(2, 10).replaceAll("-", "")}`,
+          batchNo: `B${localDay(batch.receivedAt).slice(2).replaceAll("-", "")}`,
           barcode: batch.barcode,
-          receivedOn: batch.receivedAt.slice(0, 10),
+          receivedOn: localDay(batch.receivedAt),
           received: batch.receivedQuantity,
           remaining: batch.availableQuantity,
           unitCost: Number(batch.unitCost),
@@ -130,14 +136,20 @@ export default function CurrentStockView({
       setRealMovements(
         movements.map((movement) => ({
           id: movement.id,
-          date: movement.occurredAt.slice(0, 10),
+          date: localDay(movement.occurredAt),
           type: MOVEMENT_TYPE_LABEL[movement.movementType] ?? "Purchased",
           reference: movement.reason ?? movement.referenceType ?? "-",
           quantity: (MOVEMENT_SIGN[movement.movementType] ?? 1) * movement.quantity,
           amount: null,
         })),
       );
-      setLastPurchaseDate(movements[0]?.occurredAt.slice(0, 10) ?? null);
+      // Newest first, so the first of each type is the latest.
+      const latest = (type: string) => {
+        const found = movements.find((movement) => movement.movementType === type);
+        return found ? localDay(found.occurredAt) : null;
+      };
+      setLastPurchaseDate(latest("PURCHASED"));
+      setLastSaleDate(latest("SOLD"));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variant?.id, stockMap]);
@@ -259,7 +271,7 @@ export default function CurrentStockView({
               <StockOverviewTab
                 item={item}
                 lastPurchaseDate={lastPurchaseDate}
-                lastSaleDate={null}
+                lastSaleDate={lastSaleDate}
               />
             ) : null}
             {tab === "current" ? (

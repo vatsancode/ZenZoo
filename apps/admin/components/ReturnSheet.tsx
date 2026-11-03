@@ -14,6 +14,7 @@ import {
   type RefundMode,
 } from "../features/purchases/purchases";
 import { formatPrice } from "../lib/stock-display";
+import { wholeNumbersOnly } from "../lib/unitRules";
 import FormField from "./FormField";
 import InfoTip from "./InfoTip";
 import QuantityPill from "./QuantityPill";
@@ -106,7 +107,9 @@ export default function ReturnSheet({
     const quantity = number(typed);
     if (typed.trim() === "") return null;
     if (Number.isNaN(quantity) || quantity < 0) return "Enter a number.";
-    if (item.unit === "pcs" && !Number.isInteger(quantity)) return "Pieces must be a whole number.";
+    if (wholeNumbersOnly(item.unit) && !Number.isInteger(quantity)) {
+      return `${item.unit} is counted in whole numbers.`;
+    }
     if (quantity > returnableOf(item))
       return `Only ${returnableOf(item)} ${item.unit} can go back.`;
     return null;

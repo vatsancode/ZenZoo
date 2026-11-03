@@ -1,4 +1,5 @@
 import { redirectToSignInIfUnauthorized } from "./auth";
+import { apiFetch } from "./apiFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 const STORAGE_KEY = "zenzoo.currentStoreId";
@@ -21,7 +22,7 @@ let storesCache: Store[] | null = null;
 
 export async function listMyStores(): Promise<Store[]> {
   if (storesCache) return storesCache;
-  const response = await fetch(`${API_URL}/stores`, { credentials: "include" });
+  const response = await apiFetch(`${API_URL}/stores`, { credentials: "include" });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
     throw new Error("Couldn't load stores.");

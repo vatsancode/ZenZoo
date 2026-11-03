@@ -1,5 +1,7 @@
 import { redirectToSignInIfUnauthorized } from "../../lib/auth";
 import { ensureStoreId } from "../../lib/storeContext";
+import { apiFetch } from "../../lib/apiFetch";
+import { learnUnit } from "../../lib/unitRules";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -48,11 +50,7 @@ export interface PurchaseItem {
   pending: number;
   /** One per delivery that touched this line, oldest first - see deliveriesOf. */
   batches: { quantity: number; receivedAt: string }[];
-  /**
-   * Always "pcs" for now - the real schema has no per-line unit (purchase
-   * quantities are plain integers in Phase 1). Kept only for ReturnSheet.tsx
-   * (restored, currently unused), which displays it.
-   */
+  /** The variant's unit code - kg, pcs... Whether it takes decimals is in lib/unitRules. */
   unit: string;
   /**
    * Always 0 - there is no real purchase_returns capability yet, so
@@ -92,7 +90,10 @@ export interface PurchaseInput {
   supplierId: string;
   reference: string;
   date: string;
+  /** Added to the total after line discounts - an extra discount on the whole bill is negative. */
   adjustment: number;
+  /** One tax amount for the whole bill; the server spreads it across the lines. */
+  tax: number;
   items: PurchaseLineInput[];
 }
 
@@ -106,6 +107,8 @@ interface PurchaseItemResponse {
   variantId: string;
   name: string;
   sku: string | null;
+  unit: string;
+  unitAllowsDecimals: boolean;
   quantity: number;
   unitCost: string;
   discountAmount: string;
@@ -150,22 +153,28 @@ function toPurchase(response: PurchaseResponse): Purchase {
     adjustment: Number(response.adjustmentAmount),
     total: Number(response.totalAmount),
     receivedAt: response.receivedAt ? dateOnly(response.receivedAt) : null,
-    items: response.items.map((item) => ({
-      id: item.id,
-      variantId: item.variantId,
-      name: item.name,
-      sku: item.sku,
-      quantity: item.quantity,
-      unitCost: Number(item.unitCost),
-      discount: Number(item.discountAmount),
-      tax: Number(item.taxAmount),
-      lineTotal: Number(item.lineTotal),
-      received: item.receivedQuantity,
-      pending: item.pendingQuantity,
-      batches: item.batches.map((batch) => ({ ...batch, receivedAt: dateOnly(batch.receivedAt) })),
-      unit: "pcs",
-      returned: 0,
-    })),
+    items: response.items.map((item) => {
+      learnUnit(item.unit, item.unitAllowsDecimals);
+      return {
+        id: item.id,
+        variantId: item.variantId,
+        name: item.name,
+        sku: item.sku,
+        quantity: item.quantity,
+        unitCost: Number(item.unitCost),
+        discount: Number(item.discountAmount),
+        tax: Number(item.taxAmount),
+        lineTotal: Number(item.lineTotal),
+        received: item.receivedQuantity,
+        pending: item.pendingQuantity,
+        batches: item.batches.map((batch) => ({
+          ...batch,
+          receivedAt: dateOnly(batch.receivedAt),
+        })),
+        unit: item.unit,
+        returned: 0,
+      };
+    }),
   };
 }
 
@@ -181,7 +190,7 @@ async function parseError(response: Response): Promise<string> {
 /** Lists this store's purchases from the real API - requires at least "purchases:view". */
 export async function listPurchases(): Promise<Purchase[]> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/purchases?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/purchases?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -201,7 +210,7 @@ export async function getPurchase(id: string): Promise<Purchase | null> {
 /** Creates a draft - requires "purchases:edit". Returns the new purchase, or an error message. */
 export async function createPurchase(input: PurchaseInput): Promise<Purchase | string> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/purchases`, {
+  const response = await apiFetch(`${API_URL}/purchases`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -211,6 +220,7 @@ export async function createPurchase(input: PurchaseInput): Promise<Purchase | s
       referenceNumber: input.reference,
       purchaseDate: input.date,
       adjustmentAmount: input.adjustment,
+      taxAmount: input.tax,
       items: input.items.map((item) => ({
         variantId: item.variantId,
         quantity: item.quantity,
@@ -234,7 +244,7 @@ export async function createPurchase(input: PurchaseInput): Promise<Purchase | s
  */
 export async function recordReceivedPurchase(input: PurchaseInput): Promise<Purchase | string> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/purchases/received`, {
+  const response = await apiFetch(`${API_URL}/purchases/received`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -244,6 +254,7 @@ export async function recordReceivedPurchase(input: PurchaseInput): Promise<Purc
       referenceNumber: input.reference,
       purchaseDate: input.date,
       adjustmentAmount: input.adjustment,
+      taxAmount: input.tax,
       items: input.items.map((item) => ({
         variantId: item.variantId,
         quantity: item.quantity,
@@ -262,7 +273,7 @@ export async function recordReceivedPurchase(input: PurchaseInput): Promise<Purc
 
 /** Rewrites a draft wholesale - only while still draft. Returns the updated purchase, or an error message. */
 export async function updatePurchase(id: string, input: PurchaseInput): Promise<Purchase | string> {
-  const response = await fetch(`${API_URL}/purchases/${id}`, {
+  const response = await apiFetch(`${API_URL}/purchases/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -271,6 +282,7 @@ export async function updatePurchase(id: string, input: PurchaseInput): Promise<
       referenceNumber: input.reference,
       purchaseDate: input.date,
       adjustmentAmount: input.adjustment,
+      taxAmount: input.tax,
       items: input.items.map((item) => ({
         variantId: item.variantId,
         quantity: item.quantity,
@@ -288,7 +300,7 @@ export async function updatePurchase(id: string, input: PurchaseInput): Promise<
 }
 
 async function setStatus(id: string, status: "ordered" | "cancelled"): Promise<Purchase | string> {
-  const response = await fetch(`${API_URL}/purchases/${id}/status`, {
+  const response = await apiFetch(`${API_URL}/purchases/${id}/status`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -312,7 +324,7 @@ export async function receiveDelivery(
   deliveryDate: string,
   lines: { purchaseItemId: string; quantity: number }[],
 ): Promise<Purchase | string> {
-  const response = await fetch(`${API_URL}/purchases/${id}/receive`, {
+  const response = await apiFetch(`${API_URL}/purchases/${id}/receive`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -359,7 +371,9 @@ function toPurchasePayment(response: PurchasePaymentResponse): PurchasePayment {
 
 /** Payments already recorded against this purchase - requires at least "purchases:view". */
 export async function listPurchasePayments(id: string): Promise<PurchasePayment[]> {
-  const response = await fetch(`${API_URL}/purchases/${id}/payments`, { credentials: "include" });
+  const response = await apiFetch(`${API_URL}/purchases/${id}/payments`, {
+    credentials: "include",
+  });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
     throw new Error(await parseError(response));
@@ -387,7 +401,7 @@ export async function createPurchasePayment(
   id: string,
   input: PurchasePaymentInput,
 ): Promise<PurchasePayment | string> {
-  const response = await fetch(`${API_URL}/purchases/${id}/payments`, {
+  const response = await apiFetch(`${API_URL}/purchases/${id}/payments`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -425,7 +439,9 @@ export function referenceClash(
 
 /** A purchase can take delivery once ordered, and until every line is complete. */
 export function canReceive(purchase: Purchase): boolean {
-  return purchase.status === "ordered" || (purchase.status === "received" && !purchase.fullyReceived);
+  return (
+    purchase.status === "ordered" || (purchase.status === "received" && !purchase.fullyReceived)
+  );
 }
 
 /** Nothing has arrived yet, so the order can still be dropped (received is terminal). */
@@ -441,7 +457,9 @@ export function displayStatusLabel(purchase: Purchase): string {
   return PURCHASE_STATUS_LABEL[purchase.status];
 }
 
-export function displayStatusTone(purchase: Purchase): "neutral" | "warning" | "success" | "danger" {
+export function displayStatusTone(
+  purchase: Purchase,
+): "neutral" | "warning" | "success" | "danger" {
   if (purchase.status === "received" && purchase.fullyReceived === false) return "warning";
   return PURCHASE_STATUS_TONE[purchase.status];
 }
@@ -464,7 +482,10 @@ export function receivedUnits(purchase: Purchase): number {
  * backend, see docs/db-design.md's receiving model.
  */
 export function deliveriesOf(purchase: Purchase): Delivery[] {
-  const byDate = new Map<string, Map<string, { name: string; sku: string | null; quantity: number }>>();
+  const byDate = new Map<
+    string,
+    Map<string, { name: string; sku: string | null; quantity: number }>
+  >();
   for (const item of purchase.items) {
     for (const batch of item.batches) {
       const day = batch.receivedAt.slice(0, 10);
@@ -557,7 +578,10 @@ export interface VariantPurchaseLine {
 }
 
 /** Every line, across every purchase, that ordered this variant - the real PurchaseHistoryTab's data source. */
-export function purchaseLinesForVariant(purchases: Purchase[], variantId: string): VariantPurchaseLine[] {
+export function purchaseLinesForVariant(
+  purchases: Purchase[],
+  variantId: string,
+): VariantPurchaseLine[] {
   return purchases
     .flatMap((purchase) =>
       purchase.items

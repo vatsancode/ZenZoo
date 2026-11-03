@@ -1,15 +1,12 @@
-import { spacing } from "@zenzoo/design-tokens";
 import type { Metadata } from "next";
-import ProfileScreen from "../../../components/ProfileScreen";
+import { notFound } from "next/navigation";
 
 export const metadata: Metadata = {
   title: "My profile - ZenZoo Admin",
 };
 
+// Switched off for now. To bring the page back, render <ProfileScreen /> here
+// (components/ProfileScreen.tsx is untouched) and relink it in components/Sidebar.tsx.
 export default function ProfilePage() {
-  return (
-    <main style={{ padding: spacing[10] }}>
-      <ProfileScreen />
-    </main>
-  );
+  notFound();
 }

@@ -9,6 +9,7 @@ import {
   toRupees,
   type PriceLineInput,
 } from "./pricing";
+import { addQuantities, quantityIssue, roundQuantity, subtractQuantity } from "./quantity";
 
 const line = (
   rupees: number,
@@ -216,6 +217,40 @@ describe("returnValue", () => {
     assert.throws(() => returnValue(10000, 3, 2, 2), PricingError);
     assert.throws(() => returnValue(10000, 3, 0, -1), PricingError);
     assert.throws(() => returnValue(-1, 3, 0, 1), PricingError);
-    assert.throws(() => returnValue(10000, 3.5, 0, 1), PricingError);
+    // Finer than the 3 places a quantity is kept to.
+    assert.throws(() => returnValue(10000, 3.0005, 0, 1), PricingError);
+  });
+
+  it("shares a part-quantity line the same way: 1.5 kg back from 2.5 kg", () => {
+    assert.equal(returnValue(25000, 2.5, 0, 1.5), 15000);
+    // 0.1 + 0.2 kg must add up to exactly 0.3 kg's worth, float noise or not.
+    const parts = returnValue(10000, 0.3, 0, 0.1) + returnValue(10000, 0.3, 0.1, 0.2);
+    assert.equal(parts, 10000);
+  });
+});
+
+describe("priceCart with part-quantities", () => {
+  it("rounds quantity × price to the paisa", () => {
+    // 1.255 kg at 99.99 = 125.48745 -> 125.49
+    assert.equal(priceCart({ lines: [{ unitPrice: 9999, quantity: 1.255 }] }).total, 12549);
+    // 0.1 kg at 30.00 = 3.00 exactly, not 3.0000000000000004
+    assert.equal(priceCart({ lines: [{ unitPrice: 3000, quantity: 0.1 }] }).total, 300);
+  });
+});
+
+describe("quantities", () => {
+  it("adds and subtracts without float noise", () => {
+    assert.equal(addQuantities(0.1, 0.2), 0.3);
+    assert.equal(subtractQuantity(1, 0.9), 0.1);
+    assert.equal(roundQuantity(1.23456), 1.235);
+  });
+
+  it("follows the unit's own rule", () => {
+    assert.equal(quantityIssue(1.5, true), null);
+    assert.equal(quantityIssue(1.5, false, { unit: "pcs" }), "pcs is counted in whole numbers.");
+    assert.equal(quantityIssue(1.2345, true), "Use at most 3 decimal places.");
+    assert.equal(quantityIssue(0, true), "Enter a quantity above 0.");
+    assert.equal(quantityIssue(0, true, { allowZero: true }), null);
+    assert.equal(quantityIssue(Number.NaN, true), "Enter a quantity.");
   });
 });

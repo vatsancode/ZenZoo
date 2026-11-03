@@ -5,6 +5,8 @@ export interface AccountDto {
   status: "active" | "disabled";
   openingBalance: string;
   balance: string;
+  /** True once money has moved in or out - the opening balance can no longer change. */
+  openingLocked: boolean;
 }
 
 interface AccountRow {
@@ -14,6 +16,7 @@ interface AccountRow {
   status: string;
   opening_balance: { toString(): string };
   balance: { toString(): string };
+  opening_locked: boolean;
 }
 
 export function toAccountDto(row: AccountRow): AccountDto {
@@ -24,6 +27,7 @@ export function toAccountDto(row: AccountRow): AccountDto {
     status: row.status === "disabled" ? "disabled" : "active",
     openingBalance: row.opening_balance.toString(),
     balance: row.balance.toString(),
+    openingLocked: row.opening_locked,
   };
 }
 
@@ -34,6 +38,7 @@ export const ACCOUNT_SELECT = {
   status: true,
   opening_balance: true,
   balance: true,
+  opening_locked: true,
 } as const;
 
 export interface TransferDto {

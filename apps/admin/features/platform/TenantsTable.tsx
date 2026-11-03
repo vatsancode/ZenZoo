@@ -5,7 +5,9 @@ import {
   Badge,
   Button,
   Input,
+  LoadError,
   Pagination,
+  SkeletonTable,
   Table,
   textStyle,
   type TableColumn,
@@ -100,9 +102,9 @@ export default function TenantsTable() {
       </div>
 
       {error ? (
-        message(error)
+        <LoadError message={error} onRetry={refresh} />
       ) : tenants === null ? (
-        message("Loading tenants...")
+        <SkeletonTable columns={columns} rows={5} />
       ) : tenants.length === 0 ? (
         message("No tenants match your search.")
       ) : (

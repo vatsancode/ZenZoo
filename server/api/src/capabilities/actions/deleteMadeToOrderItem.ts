@@ -31,6 +31,12 @@ export const deleteMadeToOrderItem = defineCapability<DeleteMadeToOrderItemInput
         data: { status: "archived" },
       });
       if (count === 0) throw new Error("That item doesn't exist.");
+      // Its price row goes too, so nothing that reads variants directly can still offer it.
+      await tx.variants.updateMany({
+        where: { sellable_id: input.id, tenant_id: actor.tenantId },
+        // variants use "deactivated" where sellables use "archived" (variants_status_check).
+        data: { status: "deactivated" },
+      });
     });
   },
 });

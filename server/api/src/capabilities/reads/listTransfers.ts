@@ -10,7 +10,7 @@ export interface ListTransfersInput {
 export const listTransfers = defineCapability<ListTransfersInput, TransferDto[]>({
   name: "listTransfers",
   kind: "read",
-  requiredPermission: "settings:view",
+  requiredPermission: "accounts:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);
 

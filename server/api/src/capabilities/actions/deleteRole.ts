@@ -31,7 +31,7 @@ export const deleteRole = defineCapability<DeleteRoleInput, { id: string }>({
       }
 
       // role_permissions_role_fk's ON DELETE CASCADE (docs/db-design.md)
-      // cleans up the eleven permission rows in the same statement.
+      // cleans up the permission rows in the same statement.
       await tx.roles.delete({ where: { id: input.id } });
       return { id: input.id };
     });

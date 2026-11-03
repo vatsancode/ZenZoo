@@ -3,6 +3,7 @@ import type { CapabilityActor } from "@zenzoo/types";
 import { runInTenantContext, type TenantTx } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
 import { money, priceSale, type SalePricingInput } from "../sales/pricing";
+import { toQuantity } from "../../shared/quantity";
 
 export type PreviewSaleInput = SalePricingInput;
 
@@ -45,7 +46,9 @@ export async function previewSaleInTx(
     where: { tenant_id: actor.tenantId, store_id: input.storeId, variant_id: { in: stockedIds } },
     _sum: { available_quantity: true },
   });
-  const onHand = new Map(stock.map((row) => [row.variant_id, row._sum.available_quantity ?? 0]));
+  const onHand = new Map(
+    stock.map((row) => [row.variant_id, toQuantity(row._sum.available_quantity)]),
+  );
 
   return {
     lines: lines.map((line, index) => {

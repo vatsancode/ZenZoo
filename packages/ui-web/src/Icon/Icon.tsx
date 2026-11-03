@@ -6,6 +6,10 @@ export type IconName =
   | "check"
   | "print"
   | "close"
+  | "trash"
+  | "grip"
+  | "chevronUp"
+  | "chevronDown"
   | "back"
   | "calendar"
   | "info"
@@ -21,7 +25,10 @@ export type IconName =
   | "lock"
   | "user"
   | "eye"
-  | "eyeOff";
+  | "eyeOff"
+  | "settings"
+  | "plus"
+  | "layout";
 
 // Outline icons on a 24px grid, drawn in the current text colour.
 const SHAPES: Record<IconName, ReactNode> = {
@@ -41,6 +48,25 @@ const SHAPES: Record<IconName, ReactNode> = {
     </>
   ),
   close: <path d="M6 6l12 12M18 6L6 18" />,
+  trash: (
+    <>
+      <path d="M4 7h16M9 7V4.5h6V7" />
+      <path d="M6 7l1 13h10l1-13" />
+      <path d="M10 11v5M14 11v5" />
+    </>
+  ),
+  grip: (
+    <>
+      <circle cx="9" cy="6" r="1" />
+      <circle cx="15" cy="6" r="1" />
+      <circle cx="9" cy="12" r="1" />
+      <circle cx="15" cy="12" r="1" />
+      <circle cx="9" cy="18" r="1" />
+      <circle cx="15" cy="18" r="1" />
+    </>
+  ),
+  chevronUp: <path d="M6 15l6-6 6 6" />,
+  chevronDown: <path d="M6 9l6 6 6-6" />,
   back: <path d="M15 6l-6 6 6 6" />,
   tag: (
     <>
@@ -52,6 +78,12 @@ const SHAPES: Record<IconName, ReactNode> = {
     <>
       <rect x="3" y="8" width="18" height="8" rx="1.5" />
       <path d="M7 8v3M11 8v4M15 8v3M19 8v4" />
+    </>
+  ),
+  layout: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2.5" />
+      <path d="M3 9.5h18M9.5 9.5V20" />
     </>
   ),
   theme: <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" />,
@@ -114,6 +146,13 @@ const SHAPES: Record<IconName, ReactNode> = {
     <>
       <rect x="4" y="5" width="16" height="15" rx="2" />
       <path d="M4 10h16M8 3v4M16 3v4" />
+    </>
+  ),
+  plus: <path d="M12 5v14M5 12h14" />,
+  settings: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </>
   ),
   eye: (

@@ -2,6 +2,7 @@ import type { CapabilityActor } from "@zenzoo/types";
 import { defineCapability } from "../capability";
 import { runInTenantContext, type TenantTx } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
+import { sortByPlacement } from "../../shared/placement";
 
 export interface ListTillPaymentOptionsInput {
   storeId: string;
@@ -20,11 +21,10 @@ export async function paymentOptionsInTx(
   actor: CapabilityActor,
   storeId: string,
 ): Promise<TillPaymentOptionsDto> {
-  const [methods, accounts] = await Promise.all([
+  const [methodRows, accounts] = await Promise.all([
     tx.payment_methods.findMany({
       where: { tenant_id: actor.tenantId, status: "active", is_customer_credit: false },
-      orderBy: { created_at: "asc" },
-      select: { id: true, code: true, name: true },
+      select: { id: true, code: true, name: true, sort_order: true },
     }),
     tx.payment_accounts.findMany({
       where: { tenant_id: actor.tenantId, store_id: storeId, status: "active" },
@@ -32,6 +32,7 @@ export async function paymentOptionsInTx(
       select: { id: true, code: true, name: true },
     }),
   ]);
+  const methods = sortByPlacement(methodRows).map(({ id, code, name }) => ({ id, code, name }));
   return { methods, accounts };
 }
 

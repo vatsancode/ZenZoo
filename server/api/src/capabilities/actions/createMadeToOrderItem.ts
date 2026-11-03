@@ -14,7 +14,7 @@ export type CreateMadeToOrderItemInput = MadeToOrderInput;
  * Adds something sold that isn't counted as stock - a service today, a cafe
  * recipe later. Stored like a product (a sellable plus one variant) because
  * sale_items always point at a variant, so the till needs no special case.
- * The variant's unit is the tenant's "pcs": a made-to-order item is always
+ * The variant's unit is the tenant's Pieces unit (marked by system_key, not by its code): a made-to-order item is always
  * sold one at a time, so the form never asks.
  */
 export const createMadeToOrderItem = defineCapability<CreateMadeToOrderItemInput, CatalogueItemDto>(
@@ -30,10 +30,10 @@ export const createMadeToOrderItem = defineCapability<CreateMadeToOrderItemInput
         await assertMadeToOrderWritable(tx, actor, input.storeId, fields);
 
         const unit = await tx.units.findFirst({
-          where: { tenant_id: actor.tenantId, code: "pcs" },
+          where: { tenant_id: actor.tenantId, system_key: "pieces" },
           select: { id: true },
         });
-        if (!unit) throw new Error('The "pcs" unit is missing - add it in Settings > Units.');
+        if (!unit) throw new Error("The Pieces unit is missing - add it in Settings > Units.");
 
         const sellable = await tx.sellables.create({
           data: {

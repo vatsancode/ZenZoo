@@ -6,6 +6,7 @@ import {
   type Discount,
   type Paise,
   type PricedCart,
+  quantityIssue,
 } from "@zenzoo/pricing";
 import type { CapabilityActor } from "@zenzoo/types";
 import type { TenantTx } from "../../shared/tenantContext";
@@ -120,6 +121,7 @@ export async function priceSale(
           variants: { where: { status: "active" }, select: { id: true } },
         },
       },
+      units: { select: { code: true, allow_decimals: true } },
     },
   });
   const byId = new Map(variants.map((variant) => [variant.id, variant]));
@@ -135,9 +137,11 @@ export async function priceSale(
     if (!sellable.is_sellable || sellable.status !== "active" || variant.status !== "active") {
       throw new Error(`${label} isn't available to sell.`);
     }
-    if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > MAX_QUANTITY) {
-      throw new Error(`Enter a whole quantity of 1 or more for ${label}.`);
-    }
+    const quantityProblem = quantityIssue(line.quantity, variant.units.allow_decimals, {
+      unit: variant.units.code,
+    });
+    if (quantityProblem) throw new Error(`${label}: ${quantityProblem}`);
+    if (line.quantity > MAX_QUANTITY) throw new Error(`That is too many of ${label} for one sale.`);
 
     let unitPrice: Paise;
     if (sellable.pricing_mode === "custom") {

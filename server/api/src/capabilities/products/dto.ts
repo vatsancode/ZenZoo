@@ -6,6 +6,8 @@ export interface VariantDto {
   unitId: string;
   /** The unit's code, resolved via the real join - for display, never typed freely. */
   unit: string;
+  /** The unit's own rule: whether its quantities may have decimals (kg, L). */
+  unitAllowsDecimals: boolean;
   status: "active" | "deactivated";
 }
 
@@ -27,7 +29,7 @@ interface VariantRow {
   sku: string | null;
   base_price: { toString(): string };
   unit_id: string;
-  units: { code: string };
+  units: { code: string; allow_decimals: boolean };
   status: string;
 }
 
@@ -48,6 +50,7 @@ export function toVariantDto(row: VariantRow): VariantDto {
     basePrice: row.base_price.toString(),
     unitId: row.unit_id,
     unit: row.units.code,
+    unitAllowsDecimals: row.units.allow_decimals,
     status: row.status === "active" ? "active" : "deactivated",
   };
 }
@@ -75,7 +78,7 @@ export const VARIANT_SELECT = {
   sku: true,
   base_price: true,
   unit_id: true,
-  units: { select: { code: true } },
+  units: { select: { code: true, allow_decimals: true } },
   status: true,
 } as const;
 

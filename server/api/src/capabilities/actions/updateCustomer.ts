@@ -10,6 +10,7 @@ import {
   type CustomerInput,
 } from "../customers/dto";
 import { customerBalance } from "../customers/ledger";
+import { customerSpend } from "../customers/spend";
 
 export interface UpdateCustomerInput extends CustomerInput {
   id: string;
@@ -38,7 +39,11 @@ export const updateCustomer = defineCapability<UpdateCustomerInput, CustomerDto>
           data: fields,
           select: CUSTOMER_SELECT,
         });
-        return toCustomerDto(updated, await customerBalance(tx, actor.tenantId, updated.id));
+        return toCustomerDto(
+          updated,
+          await customerBalance(tx, actor.tenantId, updated.id),
+          await customerSpend(tx, actor.tenantId, updated.id),
+        );
       });
     } catch (error) {
       rethrowPhoneTaken(error);

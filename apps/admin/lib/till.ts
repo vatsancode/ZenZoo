@@ -1,5 +1,7 @@
 import { redirectToSignInIfUnauthorized } from "./auth";
 import { ensureStoreId } from "./storeContext";
+import { apiFetch } from "./apiFetch";
+import { learnUnit } from "./unitRules";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -14,6 +16,7 @@ export interface TillItem {
   price: string;
   customPrice: boolean;
   unit: string;
+  unitAllowsDecimals: boolean;
   /** null for made-to-order items, which aren't counted. */
   onHand: number | null;
   nextUnitCost: string | null;
@@ -22,7 +25,7 @@ export interface TillItem {
 /** The real catalogue, one row per variant, with stock on hand - requires "pos:view". */
 export async function listTillItems(): Promise<TillItem[]> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/till/items?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/till/items?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -35,7 +38,9 @@ export async function listTillItems(): Promise<TillItem[]> {
     }
     throw new Error(message);
   }
-  return (await response.json()) as TillItem[];
+  const items = (await response.json()) as TillItem[];
+  for (const item of items) learnUnit(item.unit, item.unitAllowsDecimals);
+  return items;
 }
 
 /** What the till offers at checkout - the server's TillPaymentOptionsDto. */
@@ -49,7 +54,7 @@ export interface TillPaymentOptions {
 /** The active payment methods and accounts the till can use - requires "pos:view", not Settings access. */
 export async function listTillPaymentOptions(): Promise<TillPaymentOptions> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/till/payment-options?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/till/payment-options?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {

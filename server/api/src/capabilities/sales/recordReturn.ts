@@ -1,4 +1,4 @@
-import { PricingError, returnValue, toPaise, type Paise } from "@zenzoo/pricing";
+import { PricingError, quantityIssue, returnValue, toPaise, type Paise } from "@zenzoo/pricing";
 import type { CapabilityActor } from "@zenzoo/types";
 import type { TenantTx } from "../../shared/tenantContext";
 import { ConflictError } from "../capability";
@@ -7,6 +7,7 @@ import { generateBarcode } from "../purchases/barcode";
 import type { SaleDto } from "./dto";
 import { money } from "./pricing";
 import { findSale } from "./recordSale";
+import { addQuantities, subtractQuantity, toQuantity } from "../../shared/quantity";
 
 export type RefundMode = "money" | "credit" | "none";
 
@@ -60,7 +61,7 @@ export async function recordReturn(
   input: RecordReturnInput,
 ): Promise<SaleDto> {
   if (typeof input.id !== "string" || !UUID.test(input.id))
-    throw new Error("The return needs an id.");
+    throw new Error("We couldn't save this return. Please try again.");
 
   // A retry of a return that already went through: hand back the sale as it is now.
   const existing = await tx.sale_returns.findFirst({
@@ -99,7 +100,13 @@ export async function recordReturn(
       variant_id: true,
       quantity: true,
       line_total: true,
-      variants: { select: { name: true, sellables: { select: { name: true } } } },
+      variants: {
+        select: {
+          name: true,
+          sellables: { select: { name: true } },
+          units: { select: { allow_decimals: true } },
+        },
+      },
       sale_item_batches: {
         orderBy: { id: "asc" },
         select: {
@@ -131,16 +138,18 @@ export async function recordReturn(
   for (const request of input.items) {
     const line = lineById.get(request.saleItemId);
     if (!line) throw new Error("One of the items isn't on this sale.");
-    if (seen.has(line.id)) throw new Error("An item is listed twice.");
+    if (seen.has(line.id)) {
+      const name = line.variants.sellables.name;
+      throw new Error(`${name} is listed twice. Combine them into one line.`);
+    }
     seen.add(line.id);
 
     const label =
       line.variants.name === line.variants.sellables.name
         ? line.variants.name
         : `${line.variants.sellables.name} - ${line.variants.name}`;
-    if (!Number.isInteger(request.quantity) || request.quantity < 1) {
-      throw new Error(`Enter a whole number of ${label} to return.`);
-    }
+    const quantityProblem = quantityIssue(request.quantity, line.variants.units.allow_decimals);
+    if (quantityProblem) throw new Error(`${label}: ${quantityProblem}`);
     // Made-to-order items have no stock to put back (and the return tables work per stock batch).
     if (line.sale_item_batches.length === 0) {
       throw new Error(
@@ -148,12 +157,13 @@ export async function recordReturn(
       );
     }
 
-    const returnedBefore = line.sale_item_batches.reduce(
-      (sum, batch) =>
-        sum + batch.sale_return_items.reduce((inner, item) => inner + item.quantity, 0),
-      0,
+    const lineQuantity = toQuantity(line.quantity);
+    const returnedBefore = addQuantities(
+      ...line.sale_item_batches.flatMap((batch) =>
+        batch.sale_return_items.map((item) => toQuantity(item.quantity)),
+      ),
     );
-    const left = line.quantity - returnedBefore;
+    const left = subtractQuantity(lineQuantity, returnedBefore);
     if (request.quantity > left) {
       throw new ConflictError(
         left === 0
@@ -166,7 +176,7 @@ export async function recordReturn(
     try {
       lineValue = returnValue(
         toPaise(line.line_total.toString()),
-        line.quantity,
+        lineQuantity,
         returnedBefore,
         request.quantity,
       );
@@ -180,11 +190,18 @@ export async function recordReturn(
     let valueGiven = 0;
     for (const batch of line.sale_item_batches) {
       if (toTake === 0) break;
-      const back = batch.sale_return_items.reduce((sum, item) => sum + item.quantity, 0);
-      const take = Math.min(batch.quantity - back, toTake);
+      const back = addQuantities(
+        ...batch.sale_return_items.map((item) => toQuantity(item.quantity)),
+      );
+      const take = Math.min(subtractQuantity(toQuantity(batch.quantity), back), toTake);
       if (take <= 0) continue;
       // Spread the line's value over its pieces so they add up to it exactly.
-      const value = returnValue(lineValue, request.quantity, request.quantity - toTake, take);
+      const value = returnValue(
+        lineValue,
+        request.quantity,
+        subtractQuantity(request.quantity, toTake),
+        take,
+      );
       pieces.push({
         saleItemId: line.id,
         variantId: line.variant_id,
@@ -194,7 +211,7 @@ export async function recordReturn(
         value,
       });
       valueGiven += value;
-      toTake -= take;
+      toTake = subtractQuantity(toTake, take);
     }
     if (toTake > 0) throw new ConflictError(`Not enough of ${label} left to return.`);
     totalValue += valueGiven;

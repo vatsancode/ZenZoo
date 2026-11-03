@@ -4,26 +4,20 @@ import { useTheme } from "@zenzoo/design-tokens";
 import {
   Button,
   Input,
+  LoadError,
   Notice,
   Pagination,
+  SkeletonTable,
   Table,
   Tabs,
   textStyle,
   type TableColumn,
 } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccess } from "../../lib/access";
-import { customerSales, netSpent } from "./customer-insights";
-import type { Sale } from "../sales/sales";
-import {
-  addCustomer,
-  creditOf,
-  listCustomers,
-  listCustomerSales,
-  owesOf,
-  type Customer,
-} from "../../lib/customers";
+import { useSingleFlight } from "../../lib/useSingleFlight";
+import { addCustomer, creditOf, listCustomers, owesOf, type Customer } from "../../lib/customers";
 import { formatDate, formatPrice } from "../../lib/stock-display";
 import CustomerSheet from "./CustomerSheet";
 
@@ -43,25 +37,32 @@ export default function CustomersTable() {
   // Active and archived together - the tab only filters, so switching is instant.
   const [customers, setCustomers] = useState<Customer[] | null>(null);
   const [status, setStatus] = useState<"active" | "archived">("active");
-  const [sales, setSales] = useState<Sale[]>([]);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const canEdit = useAccess().can("customers", "edit");
   const [addOpen, setAddOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const { busy: loading, run: runLoad } = useSingleFlight();
+
+  const load = useCallback(
+    () =>
+      runLoad(async () => {
+        setLoadFailed(false);
+        try {
+          setCustomers(await listCustomers(true));
+        } catch {
+          // Not an empty list - say it failed, so nobody reads it as "no customers yet".
+          setLoadFailed(true);
+        }
+      }),
+    [runLoad],
+  );
 
   useEffect(() => {
-    listCustomers(true)
-      .then(setCustomers)
-      .catch((reason: unknown) => {
-        setCustomers([]);
-        setNotice(reason instanceof Error ? reason.message : "Couldn't load customers.");
-      });
-    listCustomerSales()
-      .then(setSales)
-      .catch(() => setSales([]));
-  }, []);
+    void load();
+  }, [load]);
 
   useEffect(() => {
     if (!notice) return;
@@ -74,18 +75,17 @@ export default function CustomersTable() {
       (customers ?? [])
         .filter((customer) => customer.status === status)
         .map((customer) => {
-          const mine = customerSales(sales, customer.id);
           return {
             customer,
-            purchases: mine.length,
-            spent: netSpent(mine),
-            lastPurchase: mine[0]?.date,
+            purchases: customer.purchases,
+            spent: Number(customer.spent),
+            lastPurchase: customer.lastPurchase ?? undefined,
             // From the server's ledger total, so it always agrees with the till.
             credit: creditOf(customer),
             owes: owesOf(customer),
           };
         }),
-    [customers, sales, status],
+    [customers, status],
   );
 
   const filtered = useMemo(() => {
@@ -213,10 +213,14 @@ export default function CustomersTable() {
 
       {notice ? <Notice style={{ marginBottom: spacing[4] }}>{notice}</Notice> : null}
 
-      {customers === null ? (
-        <div style={{ ...textStyle("callout"), color: colors.inkMuted, padding: spacing[6] }}>
-          Loading customers...
-        </div>
+      {customers === null && loadFailed ? (
+        <LoadError
+          message="Couldn't load the customers."
+          onRetry={() => void load()}
+          retrying={loading}
+        />
+      ) : customers === null ? (
+        <SkeletonTable columns={columns} rows={5} />
       ) : filtered.length === 0 ? (
         <div style={{ ...textStyle("callout"), color: colors.inkMuted, padding: spacing[6] }}>
           {query.trim()

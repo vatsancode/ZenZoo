@@ -1,6 +1,7 @@
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { MEMBERSHIP_SELECT, toUserDto, type UserDto } from "../users/dto";
+import { getOwnerUserId, OWNER_CANT_DISABLE } from "../users/ownerRules";
 
 export interface SetUserStatusInput {
   id: string;
@@ -27,6 +28,9 @@ export const setUserStatus = defineCapability<SetUserStatusInput, UserDto>({
       if (!membership) throw new Error("That user no longer exists.");
       if (input.disabled && membership.user_id === actor.userId) {
         throw new Error("You can't turn off your own access.");
+      }
+      if (input.disabled && membership.user_id === (await getOwnerUserId(tx, actor.tenantId))) {
+        throw new Error(OWNER_CANT_DISABLE);
       }
 
       try {
@@ -55,7 +59,7 @@ export const setUserStatus = defineCapability<SetUserStatusInput, UserDto>({
         where: { id: membership.id },
         select: MEMBERSHIP_SELECT,
       });
-      return toUserDto(row, actor.userId);
+      return toUserDto(row, actor.userId, await getOwnerUserId(tx, actor.tenantId));
     });
   },
 });

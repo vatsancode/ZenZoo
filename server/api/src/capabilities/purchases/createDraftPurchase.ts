@@ -1,6 +1,7 @@
 import type { CapabilityActor } from "@zenzoo/types";
 import type { TenantTx } from "../../shared/tenantContext";
 import { computeTotals, type PurchaseLineInput } from "./totals";
+import { assertVariantQuantities } from "../../shared/quantity";
 
 export interface CreateDraftPurchaseInput {
   storeId: string;
@@ -8,6 +9,8 @@ export interface CreateDraftPurchaseInput {
   referenceNumber?: string;
   purchaseDate: string;
   adjustmentAmount?: number;
+  /** One tax amount for the whole bill - spread across the lines, see computeTotals. */
+  taxAmount?: number;
   items: PurchaseLineInput[];
 }
 
@@ -29,8 +32,9 @@ export async function createDraftPurchase(
     if (item.quantity <= 0) throw new Error("Quantity must be more than zero.");
     if (item.unitCost < 0) throw new Error("Cost can't be negative.");
   }
+  await assertVariantQuantities(tx, input.items);
 
-  const totals = computeTotals(input.items, input.adjustmentAmount ?? 0);
+  const totals = computeTotals(input.items, input.adjustmentAmount ?? 0, input.taxAmount ?? 0);
 
   const supplier = await tx.suppliers.findFirst({
     where: { id: input.supplierId, tenant_id: actor.tenantId },

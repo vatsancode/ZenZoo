@@ -3,6 +3,8 @@ import { rememberPaymentNames } from "./payment-options";
 import { ensureStoreId } from "./storeContext";
 import type { TillPaymentOptions } from "./till";
 import type { Sale, SaleReturn } from "../features/sales/sales";
+import { apiFetch } from "./apiFetch";
+import { learnUnit } from "./unitRules";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -28,6 +30,7 @@ interface SaleDto {
     categoryName: string;
     sku: string | null;
     unit: string;
+    unitAllowsDecimals: boolean;
     service: boolean;
     quantity: number;
     unitPrice: string;
@@ -81,6 +84,7 @@ function localDay(iso: string): string {
  * `sku` is the variant's id, a key that is always unique, with the SKU people see in `code`.
  */
 export function toSale(dto: SaleDto): Sale {
+  for (const line of dto.lines) learnUnit(line.unit, line.unitAllowsDecimals);
   rememberPaymentNames(
     dto.payments.map((payment) => ({
       code: payment.paymentMethodCode,
@@ -222,7 +226,7 @@ export async function listSales(options: ListSalesOptions = {}): Promise<Sale[]>
   const storeId = await ensureStoreId();
   const query = new URLSearchParams({ storeId });
   for (const [key, value] of Object.entries(options)) if (value) query.set(key, String(value));
-  const response = await fetch(`${API_URL}/sales?${query}`, { credentials: "include" });
+  const response = await apiFetch(`${API_URL}/sales?${query}`, { credentials: "include" });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
     throw new Error(await parseError(response));
@@ -233,7 +237,7 @@ export async function listSales(options: ListSalesOptions = {}): Promise<Sale[]>
 /** One sale - requires "sales:view". Resolves to null when there is no such sale. */
 export async function getSale(id: string): Promise<Sale | null> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/sales/${encodeURIComponent(id)}?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/sales/${encodeURIComponent(id)}?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -281,7 +285,7 @@ export async function createSale(input: CreateSaleInput): Promise<CreateSaleResu
   const storeId = await ensureStoreId();
   let response: Response;
   try {
-    response = await fetch(`${API_URL}/sales`, {
+    response = await apiFetch(`${API_URL}/sales`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -311,7 +315,7 @@ export async function createSale(input: CreateSaleInput): Promise<CreateSaleResu
 /** The active methods and accounts a refund can be paid back by - requires "sales:edit". */
 export async function listSaleRefundOptions(): Promise<TillPaymentOptions> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/sales/payment-options?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/sales/payment-options?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -345,7 +349,7 @@ async function changeSale(path: string, body: unknown): Promise<SaleChangeResult
   const storeId = await ensureStoreId();
   let response: Response;
   try {
-    response = await fetch(`${API_URL}${path}`, {
+    response = await apiFetch(`${API_URL}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",

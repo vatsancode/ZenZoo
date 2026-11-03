@@ -1,5 +1,7 @@
 import { redirectToSignInIfUnauthorized } from "./auth";
 import { ensureStoreId } from "./storeContext";
+import { apiFetch } from "./apiFetch";
+import { learnUnit } from "./unitRules";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -11,6 +13,7 @@ export interface RealVariant {
   unitId: string;
   /** The unit's code, resolved server-side - for display, never typed freely. */
   unit: string;
+  unitAllowsDecimals: boolean;
   status: "active" | "deactivated";
 }
 
@@ -33,14 +36,18 @@ export interface RealProduct {
  */
 export async function listRealProducts(): Promise<RealProduct[]> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/products?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/products?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
     throw new Error("Couldn't load products.");
   }
-  return (await response.json()) as RealProduct[];
+  const products = (await response.json()) as RealProduct[];
+  for (const variant of products.flatMap((product) => product.variants)) {
+    learnUnit(variant.unit, variant.unitAllowsDecimals);
+  }
+  return products;
 }
 
 export interface CreateVariantInput {
@@ -67,7 +74,7 @@ export async function createVariant(
   sellableId: string,
   input: CreateVariantInput,
 ): Promise<RealProduct | string> {
-  const response = await fetch(`${API_URL}/products/${sellableId}/variants`, {
+  const response = await apiFetch(`${API_URL}/products/${sellableId}/variants`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -102,7 +109,7 @@ export interface CreateProductInput {
  */
 export async function createProduct(input: CreateProductInput): Promise<RealProduct | string> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/products`, {
+  const response = await apiFetch(`${API_URL}/products`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -139,7 +146,7 @@ export async function updateProduct(
   id: string,
   input: UpdateProductInput,
 ): Promise<RealProduct | string> {
-  const response = await fetch(`${API_URL}/products/${id}`, {
+  const response = await apiFetch(`${API_URL}/products/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -163,7 +170,7 @@ export async function updateVariant(
   id: string,
   input: UpdateVariantInput,
 ): Promise<RealProduct | string> {
-  const response = await fetch(`${API_URL}/variants/${id}`, {
+  const response = await apiFetch(`${API_URL}/variants/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -178,7 +185,7 @@ export async function updateVariant(
 
 /** Sets every variant of a product to the same unit in one go - requires "stocks:edit". Returns the updated product, or an error message. */
 export async function updateProductUnit(id: string, unitId: string): Promise<RealProduct | string> {
-  const response = await fetch(`${API_URL}/products/${id}/unit`, {
+  const response = await apiFetch(`${API_URL}/products/${id}/unit`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",

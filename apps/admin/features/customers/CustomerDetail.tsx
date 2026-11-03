@@ -13,8 +13,10 @@ import {
   type TableColumn,
 } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { creditEntries, customerSales, netSpent, preferencesOf } from "./customer-insights";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useSingleFlight } from "../../lib/useSingleFlight";
+import DetailPageLoading from "../../components/DetailPageLoading";
+import { creditEntries, customerSales, preferencesOf } from "./customer-insights";
 import { useAccess } from "../../lib/access";
 import { paymentMethodLabel } from "../../lib/payment-options";
 import {
@@ -86,9 +88,26 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [loadFailed, setLoadFailed] = useState(false);
+  // Bumped when something changes the customer's account, so the statement tab loads it again.
+  const [statementVersion, setStatementVersion] = useState(0);
+  const { busy: loading, run: runLoad } = useSingleFlight();
+
+  const loadCustomer = useCallback(
+    () =>
+      runLoad(async () => {
+        setLoadFailed(false);
+        try {
+          setCustomer(await getCustomer(customerId));
+        } catch {
+          setLoadFailed(true);
+        }
+      }),
+    [runLoad, customerId],
+  );
 
   useEffect(() => {
-    getCustomer(customerId).then(setCustomer);
+    void loadCustomer();
     // Only to point at whoever holds a phone number that's already taken, so failing is fine.
     listCustomers(true)
       .then(setEveryone)
@@ -103,7 +122,7 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
     listCustomerPaymentOptions()
       .then(setPaymentOptions)
       .catch(() => setPaymentOptions(null));
-  }, [customerId]);
+  }, [customerId, loadCustomer]);
 
   const mine = useMemo(() => customerSales(sales, customerId), [sales, customerId]);
   const entries = useMemo(() => creditEntries(mine), [mine]);
@@ -132,7 +151,15 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
 
   if (customer === undefined) {
     return (
-      <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>Loading customer...</div>
+      <DetailPageLoading
+        backHref="/customers"
+        backLabel="Back to customers"
+        failed={loadFailed}
+        failedTitle="Customer"
+        failedMessage="Couldn't load this customer."
+        onRetry={() => void loadCustomer()}
+        retrying={loading}
+      />
     );
   }
 
@@ -151,7 +178,8 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
     );
   }
 
-  const spent = netSpent(mine);
+  // What they spent, from the server's own total - not added up from the sales listed here.
+  const spent = Number(customer.spent);
   // What they owe, or the store credit they hold, comes from the server's ledger total.
   const balance = creditOf(customer);
   const owed = owesOf(customer);
@@ -161,7 +189,7 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
   const spentCredit = entries
     .filter((entry) => entry.amount < 0)
     .reduce((sum, entry) => sum - entry.amount, 0);
-  const average = mine.length > 0 ? Math.round(spent / mine.length) : 0;
+  const average = customer.purchases > 0 ? Math.round(spent / customer.purchases) : 0;
   const pageCount = Math.max(1, Math.ceil(mine.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const visible = mine.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -323,16 +351,16 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
               <StatTile
                 label="Total spent"
                 value={formatPrice(spent)}
-                hint={mine.length > 0 ? "After returns" : "No purchases yet"}
+                hint={customer.purchases > 0 ? "After returns" : "No purchases yet"}
               />
               <StatTile
                 label="Purchases"
-                value={String(mine.length)}
+                value={String(customer.purchases)}
                 hint={mine[0] ? `Last on ${formatDate(mine[0].date)}` : "-"}
               />
               <StatTile
                 label="Average bill"
-                value={mine.length > 0 ? formatPrice(average) : "-"}
+                value={customer.purchases > 0 ? formatPrice(average) : "-"}
                 hint={
                   preferences.discountPercent > 0
                     ? `${preferences.discountPercent}% usually off`
@@ -631,7 +659,7 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
             </Card>
           </>
         ) : tab === "statement" ? (
-          <CustomerStatement customerId={customerId} />
+          <CustomerStatement customerId={customerId} refreshKey={statementVersion} />
         ) : (
           <Card>
             <CardTitle>Purchase history</CardTitle>
@@ -687,6 +715,7 @@ export default function CustomerDetail({ customerId }: { customerId: string }) {
           listCollections(customerId)
             .then(setCollections)
             .catch(() => undefined);
+          setStatementVersion((version) => version + 1);
           setPaymentOpen(false);
           setNotice(
             result.keptAsCredit > 0

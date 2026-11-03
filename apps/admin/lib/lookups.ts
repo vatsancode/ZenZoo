@@ -5,6 +5,7 @@ import type { Account } from "../features/settings/accounts";
 import type { PaymentMethod } from "../features/settings/paymentMethods";
 import { listUnits, type Unit } from "../features/settings/units";
 import type { Vendor } from "../features/vendors/vendors";
+import { apiFetch } from "./apiFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -26,7 +27,7 @@ async function errorMessage(response: Response): Promise<string> {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, { credentials: "include" });
+  const response = await apiFetch(`${API_URL}${path}`, { credentials: "include" });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
     throw new Error(await errorMessage(response));
@@ -123,7 +124,7 @@ export async function createPurchaseVariant(
   productId: string,
   input: PurchaseVariantInput,
 ): Promise<PurchasableProduct | string> {
-  const response = await fetch(`${API_URL}/purchase-products/${encodeURIComponent(productId)}/variants`, {
+  const response = await apiFetch(`${API_URL}/purchase-products/${encodeURIComponent(productId)}/variants`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",

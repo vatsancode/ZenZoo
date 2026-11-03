@@ -1,3 +1,5 @@
+import { addQuantities, toQuantity, toThousandths } from "../../shared/quantity";
+
 export interface SaleLineDto {
   id: string;
   variantId: string;
@@ -8,6 +10,7 @@ export interface SaleLineDto {
   categoryName: string;
   sku: string | null;
   unit: string;
+  unitAllowsDecimals: boolean;
   /** A made-to-order item (a service) rather than counted stock. */
   service: boolean;
   quantity: number;
@@ -83,6 +86,9 @@ export interface SaleDto {
   returns: SaleReturnDto[];
 }
 
+/** A numeric(12,3) quantity as Prisma returns it. */
+type Quantity = { toString(): string };
+
 /** A Prisma Decimal (or anything shaped like one). */
 interface Money {
   toFixed(decimalPlaces: number): string;
@@ -121,12 +127,12 @@ interface SaleRow {
     refund_account_id: string | null;
     payment_methods: { code: string } | null;
     payment_accounts: { name: string } | null;
-    sale_return_items: { sale_item_id: string; quantity: number; value_amount: Money }[];
+    sale_return_items: { sale_item_id: string; quantity: Quantity; value_amount: Money }[];
   }[];
   sale_items: {
     id: string;
     variant_id: string;
-    quantity: number;
+    quantity: Quantity;
     unit_price: Money;
     discount_amount: Money;
     bill_discount_share: Money;
@@ -136,10 +142,10 @@ interface SaleRow {
     variants: {
       name: string;
       sku: string | null;
-      units: { code: string };
+      units: { code: string; allow_decimals: boolean };
       sellables: { id: string; name: string; kind: string; categories: { name: string } };
     };
-    sale_item_batches: { quantity: number; inventory_batches: { unit_cost: Money } }[];
+    sale_item_batches: { quantity: Quantity; inventory_batches: { unit_cost: Money } }[];
   }[];
   sale_payments: {
     id: string;
@@ -162,7 +168,7 @@ export function toSaleDto(row: SaleRow): SaleDto {
     for (const item of ret.sale_return_items) {
       returnedByItem.set(
         item.sale_item_id,
-        (returnedByItem.get(item.sale_item_id) ?? 0) + item.quantity,
+        addQuantities(returnedByItem.get(item.sale_item_id) ?? 0, toQuantity(item.quantity)),
       );
     }
   }
@@ -185,9 +191,15 @@ export function toSaleDto(row: SaleRow): SaleDto {
     total: rupees(row.total_amount),
     lines: row.sale_items.map((item) => {
       // Cost in paise so summing several batches stays exact (unit_cost has two decimals).
+      // A part of a unit (0.25 kg) costs a part of a paisa, so each batch's share is rounded.
       const costPaise = item.sale_item_batches.reduce(
         (sum, part) =>
-          sum + part.quantity * Math.round(part.inventory_batches.unit_cost.toNumber() * 100),
+          sum +
+          Math.round(
+            (toThousandths(toQuantity(part.quantity)) *
+              Math.round(part.inventory_batches.unit_cost.toNumber() * 100)) /
+              1000,
+          ),
         0,
       );
       return {
@@ -199,8 +211,9 @@ export function toSaleDto(row: SaleRow): SaleDto {
         categoryName: item.variants.sellables.categories.name,
         sku: item.variants.sku,
         unit: item.variants.units.code,
+        unitAllowsDecimals: item.variants.units.allow_decimals,
         service: item.variants.sellables.kind === "made_to_order",
-        quantity: item.quantity,
+        quantity: toQuantity(item.quantity),
         unitPrice: rupees(item.unit_price),
         lineDiscountType: kind(item.line_discount_type),
         lineDiscountValue: item.line_discount_value ? rupees(item.line_discount_value) : null,
@@ -243,7 +256,7 @@ export function toSaleDto(row: SaleRow): SaleDto {
         refundAccountName: ret.payment_accounts?.name ?? null,
         items: ret.sale_return_items.map((item) => ({
           saleItemId: item.sale_item_id,
-          quantity: item.quantity,
+          quantity: toQuantity(item.quantity),
           value: rupees(item.value_amount),
         })),
       })),
@@ -307,7 +320,7 @@ export const SALE_SELECT = {
         select: {
           name: true,
           sku: true,
-          units: { select: { code: true } },
+          units: { select: { code: true, allow_decimals: true } },
           sellables: {
             select: { id: true, name: true, kind: true, categories: { select: { name: true } } },
           },

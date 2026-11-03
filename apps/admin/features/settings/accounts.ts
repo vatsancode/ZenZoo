@@ -3,6 +3,7 @@ import { ensureStoreId } from "../../lib/storeContext";
 import { slugify } from "../../lib/slug";
 import { logAudit } from "../../lib/audit";
 import { formatPrice } from "../../lib/stock-display";
+import { apiFetch } from "../../lib/apiFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -15,6 +16,8 @@ export interface Account {
   openingBalance: number;
   /** The live, running balance - kept correct by the database itself, never recalculated here. */
   balance: number;
+  /** True once money has moved in or out - the opening balance can no longer change. */
+  openingLocked: boolean;
 }
 
 export interface Transfer {
@@ -34,6 +37,7 @@ interface AccountResponse {
   status: "active" | "disabled";
   openingBalance: string;
   balance: string;
+  openingLocked?: boolean;
 }
 
 interface TransferResponse {
@@ -53,6 +57,7 @@ function toAccount(response: AccountResponse): Account {
     status: response.status,
     openingBalance: Number(response.openingBalance),
     balance: Number(response.balance),
+    openingLocked: response.openingLocked ?? false,
   };
 }
 
@@ -76,10 +81,10 @@ async function parseError(response: Response): Promise<string> {
   }
 }
 
-/** Lists this store's accounts from the real API - requires at least "settings:view". */
+/** Lists this store's accounts from the real API - requires at least "accounts:view". */
 export async function listAccounts(): Promise<Account[]> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/accounts?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/accounts?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -90,10 +95,10 @@ export async function listAccounts(): Promise<Account[]> {
   return data.map(toAccount);
 }
 
-/** Adds an account - requires "settings:edit". Returns the new account, or an error message. */
+/** Adds an account - requires "accounts:edit". Returns the new account, or an error message. */
 export async function addAccount(name: string, openingBalance: number): Promise<Account | string> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/accounts`, {
+  const response = await apiFetch(`${API_URL}/accounts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -115,13 +120,13 @@ export async function addAccount(name: string, openingBalance: number): Promise<
   return account;
 }
 
-/** Renames an account and/or corrects its opening balance - requires "settings:edit". */
+/** Renames an account and/or corrects its opening balance - requires "accounts:edit". */
 export async function editAccount(
   id: string,
   name: string,
   openingBalance: number,
 ): Promise<Account | string> {
-  const response = await fetch(`${API_URL}/accounts/${id}`, {
+  const response = await apiFetch(`${API_URL}/accounts/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -143,9 +148,9 @@ export async function editAccount(
   return account;
 }
 
-/** Turns an account on or off - requires "settings:edit". At least one account has to stay on. */
+/** Turns an account on or off - requires "accounts:edit". At least one account has to stay on. */
 export async function setAccountDisabled(id: string, disabled: boolean): Promise<string | null> {
-  const response = await fetch(`${API_URL}/accounts/${id}/status`, {
+  const response = await apiFetch(`${API_URL}/accounts/${id}/status`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -167,10 +172,10 @@ export async function setAccountDisabled(id: string, disabled: boolean): Promise
   return null;
 }
 
-/** Lists this store's transfer history - requires at least "settings:view". */
+/** Lists this store's transfer history - requires at least "accounts:view". */
 export async function listTransfers(): Promise<Transfer[]> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/account-transfers?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/account-transfers?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -182,7 +187,9 @@ export async function listTransfers(): Promise<Transfer[]> {
 }
 
 /** The active accounts, shaped for a Select. */
-export function accountOptions(accounts: Pick<Account, "id" | "name" | "status">[]): { value: string; label: string }[] {
+export function accountOptions(
+  accounts: Pick<Account, "id" | "name" | "status">[],
+): { value: string; label: string }[] {
   return accounts
     .filter((account) => account.status === "active")
     .map((account) => ({ value: account.id, label: account.name }));
@@ -198,13 +205,13 @@ export interface TransferInput {
 
 /**
  * Moves money between two of this store's own accounts - requires
- * "settings:edit". The database rejects it outright if the source account
+ * "accounts:edit". The database rejects it outright if the source account
  * doesn't have enough balance (see account_transfers' own trigger); this
  * never pre-checks that itself. Returns the new transfer, or an error message.
  */
 export async function addTransfer(input: TransferInput): Promise<Transfer | string> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/account-transfers`, {
+  const response = await apiFetch(`${API_URL}/account-transfers`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",

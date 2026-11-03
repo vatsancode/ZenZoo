@@ -1,6 +1,12 @@
 import type { CapabilityActor } from "@zenzoo/types";
 import type { TenantTx } from "../../shared/tenantContext";
 import { generateBarcode } from "./barcode";
+import {
+  addQuantities,
+  assertVariantQuantities,
+  subtractQuantity,
+  toQuantity,
+} from "../../shared/quantity";
 
 export interface ReceiveLineInput {
   purchaseItemId: string;
@@ -56,12 +62,12 @@ export async function receiveLines(
       },
     });
     if (!item) throw new Error("One of these lines doesn't belong to this purchase.");
+    await assertVariantQuantities(tx, [{ variantId: item.variant_id, quantity: line.quantity }]);
 
-    const alreadyReceived = item.inventory_batches.reduce(
-      (sum, batch) => sum + batch.received_quantity,
-      0,
+    const alreadyReceived = addQuantities(
+      ...item.inventory_batches.map((batch) => toQuantity(batch.received_quantity)),
     );
-    const pending = item.quantity - alreadyReceived;
+    const pending = subtractQuantity(toQuantity(item.quantity), alreadyReceived);
     if (line.quantity > pending) {
       throw new Error(`Only ${pending} still to come on one of these lines.`);
     }

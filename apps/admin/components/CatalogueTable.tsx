@@ -4,7 +4,6 @@ import { useTheme } from "@zenzoo/design-tokens";
 import {
   Badge,
   Button,
-  Chips,
   IconButton,
   Input,
   Modal,
@@ -29,15 +28,24 @@ import {
   type CatalogueKind,
   type PricingMode,
 } from "../lib/catalogue-items";
-import { createCategoryRow, listCategoriesFlat, type CategoryResponse } from "../lib/catalogue";
+import { listCategoriesFlat, type CategoryResponse } from "../lib/catalogue";
 import { formatPrice } from "../lib/stock-display";
+import { listEmployees, type Employee } from "../features/employees/employees";
+import ServiceSetupFields from "../features/slots/ServiceSetupFields";
+import {
+  EMPTY_SETUP_FORM,
+  formFromSetup,
+  itemTerms,
+  getServiceSetup,
+  saveServiceSetup,
+  setupFromForm,
+  setupProblem,
+  type SetupForm,
+} from "../features/slots/serviceSetup";
+import CategoryPicker from "./CategoryPicker";
 import FormField from "./FormField";
 import ImportFromInventoryModal from "./ImportFromInventoryModal";
-
-const PRICING_OPTIONS = [
-  { value: "fixed", label: "Fixed price" },
-  { value: "custom", label: "Custom per order" },
-];
+import { useSingleFlight } from "../lib/useSingleFlight";
 
 const ALL = "";
 
@@ -62,13 +70,19 @@ export default function CatalogueTable() {
   const { can } = useAccess();
   const canEdit = can("catalogue", "edit");
   const canDelete = can("catalogue", "delete");
+  // Adding a category is a Settings write, not a Catalogue one.
+  const canCreateCategory = can("settings", "edit");
   const { colors, spacing } = useTheme();
   const [items, setItems] = useState<CatalogueItem[] | null>(null);
   const [categories, setCategories] = useState<CategoryResponse[]>([]);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState(ALL);
   const [kind, setKind] = useState<KindTab>("all");
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run: runSave } = useSingleFlight();
+  const { busy: removing, run: runRemove } = useSingleFlight();
+  // Opening the form waits for fresh categories; one open at a time, and the row being opened shows it.
+  const { busy: opening, run: runOpen } = useSingleFlight();
+  const [openingId, setOpeningId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   // null = closed; an item = editing it; "new" = adding.
@@ -79,11 +93,14 @@ export default function CatalogueTable() {
 
   // The form's fields.
   const [name, setName] = useState("");
-  // Each holds a real category id, or the text typed into "Add new..." until saved.
+  // Real category ids - a new category is saved by the picker as soon as it is named.
   const [formCategory, setFormCategory] = useState("");
   const [formSubcategory, setFormSubcategory] = useState("");
   const [pricing, setPricing] = useState<PricingMode>("fixed");
   const [price, setPrice] = useState("");
+  // How long it takes and who does it, at what price and time - kept apart from the item itself.
+  const [providers, setProviders] = useState<Employee[]>([]);
+  const [setupForm, setSetupForm] = useState<SetupForm>(EMPTY_SETUP_FORM);
   const [touched, setTouched] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -95,21 +112,24 @@ export default function CatalogueTable() {
       ]);
       setItems(nextItems);
       setCategories(nextCategories);
+      return nextItems;
     } catch (reason) {
       setItems([]);
       setNotice(reason instanceof Error ? reason.message : "Couldn't load the catalogue.");
+      return null;
     }
   }
 
-  const isCategoryId = (value: string) => categories.some((row) => row.id === value);
-  const topLevelOptions = categories
-    .filter((row) => row.parentId === null)
-    .map((row) => ({ value: row.id, label: row.name }))
-    .sort((a, b) => a.label.localeCompare(b.label));
-  const subcategoryOptions = categories
-    .filter((row) => row.parentId !== null && row.parentId === formCategory)
-    .map((row) => ({ value: row.id, label: row.name }))
-    .sort((a, b) => a.label.localeCompare(b.label));
+  /** Re-reads the categories - Settings can change them while this page is open. Null if it couldn't. */
+  async function refreshCategories(): Promise<CategoryResponse[] | null> {
+    try {
+      const fresh = await listCategoriesFlat();
+      setCategories(fresh);
+      return fresh;
+    } catch {
+      return null;
+    }
+  }
 
   const categoryOptions = useMemo(
     () =>
@@ -129,14 +149,30 @@ export default function CatalogueTable() {
     return () => clearTimeout(timer);
   }, [notice]);
 
+  // The search runs a moment after typing stops, so each letter doesn't re-filter the whole list.
+  const [searchText, setSearchText] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setSearchText(query), 250);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  // What each item's Category cell and search show ("Sarees › Silk"), worked out once per list.
+  const labelByCategoryId = useMemo(
+    () => new Map(categories.map((row) => [row.id, categoryLabel(row, categories)])),
+    [categories],
+  );
+
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = searchText.trim().toLowerCase();
     return (items ?? []).filter((item) => {
       if (category !== ALL && item.categoryId !== category) return false;
       if (kind !== "all" && item.kind !== kind) return false;
-      return !q || item.name.toLowerCase().includes(q) || item.category.toLowerCase().includes(q);
+      if (!q) return true;
+      // Match the label the table shows ("Sarees › Silk"), so the parent category finds it too.
+      const label = labelByCategoryId.get(item.categoryId) ?? item.category;
+      return item.name.toLowerCase().includes(q) || label.toLowerCase().includes(q);
     });
-  }, [items, query, category, kind]);
+  }, [items, labelByCategoryId, searchText, category, kind]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, pageCount);
@@ -145,15 +181,35 @@ export default function CatalogueTable() {
   function openForm(target: CatalogueItem | "new") {
     // An imported product is edited on the Stocks side - its price and name live there.
     if (target !== "new" && target.kind === "product") return;
+    return runOpen(async () => {
+      setOpeningId(target === "new" ? "new" : target.id);
+      try {
+        await fillForm(target);
+      } finally {
+        setOpeningId(null);
+      }
+    });
+  }
+
+  async function fillForm(target: CatalogueItem | "new") {
+    // Fill the form from the categories as they are now, not as they were when the page opened.
+    const rows = (await refreshCategories()) ?? categories;
     setEditing(target);
     setName(target === "new" ? "" : target.name);
     // An item filed under a subcategory opens with its parent in Category and itself in Subcategory.
-    const current =
-      target === "new" ? undefined : categories.find((row) => row.id === target.categoryId);
+    const current = target === "new" ? undefined : rows.find((row) => row.id === target.categoryId);
     setFormCategory(current?.parentId ?? current?.id ?? "");
     setFormSubcategory(current?.parentId ? current.id : "");
     setPricing(target === "new" ? "fixed" : target.pricing);
     setPrice(target === "new" || target.price === undefined ? "" : String(target.price));
+    // Only the active employees can be offered; the employees list is a separate area, so a role
+    // without access to it simply sees no providers to pick.
+    const [staff, setup] = await Promise.all([
+      listEmployees().catch(() => [] as Employee[]),
+      target === "new" ? null : getServiceSetup(target.id),
+    ]);
+    setProviders(staff.filter((employee) => employee.status === "active"));
+    setSetupForm(formFromSetup(setup));
     setTouched(false);
     setSaveError(null);
   }
@@ -162,56 +218,85 @@ export default function CatalogueTable() {
   const problems = {
     name: name.trim() === "" ? "Enter a name." : null,
     category: formCategory.trim() === "" ? "Choose or type a category." : null,
-    price: pricing === "fixed" && (Number.isNaN(value) || value <= 0) ? "Enter the price." : null,
+    price:
+      !setupForm.customised && pricing === "fixed" && (Number.isNaN(value) || value <= 0)
+        ? "Enter the price."
+        : null,
+    setup: setupProblem(setupForm),
   };
   const valid = Object.values(problems).every((item) => item === null);
 
-  async function submit() {
-    setTouched(true);
-    if (!valid || !editing || saving) return;
-    setSaving(true);
-    setSaveError(null);
+  function submit() {
+    return runSave(async () => {
+      setTouched(true);
+      if (!valid || !editing) return;
+      setSaveError(null);
 
-    // Typed-in names (from "Add new...") aren't ids yet - create them first, parent before child.
-    let categoryId = formCategory;
-    if (!isCategoryId(categoryId)) {
-      const created = await createCategoryRow(categoryId.trim());
-      if (!created) return failSave("Couldn't create that category.");
-      categoryId = created.id;
-    }
-    let subcategoryId = formSubcategory;
-    if (subcategoryId && !isCategoryId(subcategoryId)) {
-      const created = await createCategoryRow(subcategoryId.trim(), categoryId);
-      if (!created) return failSave("Couldn't create that subcategory.");
-      subcategoryId = created.id;
-    }
-
-    const input = {
-      name: name.trim(),
-      categoryId: subcategoryId || categoryId,
-      pricing,
-      price: value,
-    };
-    const message =
-      editing === "new"
-        ? await addCatalogueItem(input)
-        : await editCatalogueItem(editing.id, input);
-    setSaving(false);
-    if (message) {
-      setSaveError(message);
-      return;
-    }
-    setNotice(
-      editing === "new" ? `${name.trim()} added to the catalogue.` : `${name.trim()} updated.`,
-    );
-    if (editing === "new") setPage(1);
-    setEditing(null);
-    void reload();
+      const input = {
+        name: name.trim(),
+        categoryId: formSubcategory || formCategory,
+        ...itemTerms(setupForm, pricing, value),
+      };
+      const message =
+        editing === "new"
+          ? await addCatalogueItem(input)
+          : await editCatalogueItem(editing.id, input);
+      if (message) {
+        setSaveError(message);
+        // The failure may be a category deleted meanwhile - refresh, and drop a pick that is gone.
+        const fresh = await refreshCategories();
+        if (fresh) {
+          const gone = (id: string) => id !== "" && !fresh.some((row) => row.id === id);
+          if (gone(formCategory)) {
+            setFormCategory("");
+            setFormSubcategory("");
+          } else if (gone(formSubcategory)) {
+            setFormSubcategory("");
+          }
+        }
+        return;
+      }
+      setNotice(
+        editing === "new" ? `${name.trim()} added to the catalogue.` : `${name.trim()} updated.`,
+      );
+      const added = editing === "new" ? name.trim().toLowerCase() : null;
+      setEditing(null);
+      const fresh = await reload();
+      // A new item's id is only known once it is in the list, so look it up by its name.
+      const savedId =
+        editing === "new"
+          ? fresh?.find(
+              (item) => item.kind === "made_to_order" && item.name.trim().toLowerCase() === added,
+            )?.id
+          : editing.id;
+      if (savedId) await saveServiceSetup(savedId, setupFromForm(setupForm));
+      if (added && fresh) {
+        // The list is A-Z, so the new item may be on any page: clear the filters and go to its page.
+        const index = fresh.findIndex((item) => item.name.trim().toLowerCase() === added);
+        setQuery("");
+        setCategory(ALL);
+        setKind("all");
+        setPage(index < 0 ? 1 : Math.floor(index / pageSize) + 1);
+      }
+    });
   }
 
-  function failSave(message: string) {
-    setSaving(false);
-    setSaveError(message);
+  function confirmDelete() {
+    return runRemove(async () => {
+      if (!deleting) return;
+      const failure =
+        deleting.kind === "product"
+          ? await removeFromCatalogue(deleting.id)
+          : await deleteCatalogueItem(deleting.id);
+      setNotice(
+        failure ??
+          (deleting.kind === "product"
+            ? `${deleting.name} removed from the catalogue.`
+            : `${deleting.name} deleted.`),
+      );
+      setDeleting(null);
+      void reload();
+    });
   }
 
   const columns: TableColumn<CatalogueItem>[] = [
@@ -224,10 +309,7 @@ export default function CatalogueTable() {
     {
       key: "category",
       header: "Category",
-      render: (item) => {
-        const row = categories.find((other) => other.id === item.categoryId);
-        return row ? categoryLabel(row, categories) : item.category;
-      },
+      render: (item) => labelByCategoryId.get(item.categoryId) ?? item.category,
     },
     {
       key: "pricing",
@@ -255,10 +337,13 @@ export default function CatalogueTable() {
           {item.kind === "made_to_order" ? (
             <IconButton
               icon="edit"
-              label={`Edit ${item.name}`}
+              label={
+                opening && openingId === item.id ? `Opening ${item.name}...` : `Edit ${item.name}`
+              }
+              disabled={opening}
               onClick={(event) => {
                 event.stopPropagation();
-                openForm(item);
+                void openForm(item);
               }}
             />
           ) : null}
@@ -282,8 +367,12 @@ export default function CatalogueTable() {
     },
   ];
 
-  const count = (which: CatalogueKind) =>
-    (items ?? []).filter((item) => item.kind === which).length;
+  const counts = useMemo(() => {
+    const result: Record<CatalogueKind, number> = { made_to_order: 0, product: 0 };
+    for (const item of items ?? []) result[item.kind] += 1;
+    return result;
+  }, [items]);
+  const count = (which: CatalogueKind) => counts[which];
   const kindTabs = [
     { id: "all", label: `All (${items?.length ?? 0})` },
     { id: "made_to_order", label: `${KIND_LABEL.made_to_order} (${count("made_to_order")})` },
@@ -346,7 +435,13 @@ export default function CatalogueTable() {
               <Button type="button" variant="secondary" onClick={() => setImporting(true)}>
                 Import from inventory
               </Button>
-              <Button type="button" variant="primary" onClick={() => openForm("new")}>
+              <Button
+                type="button"
+                variant="primary"
+                loading={opening && openingId === "new"}
+                disabled={opening}
+                onClick={() => void openForm("new")}
+              >
                 Add item
               </Button>
             </>
@@ -377,7 +472,7 @@ export default function CatalogueTable() {
             rows={visible}
             getRowKey={(item) => item.id}
             // The form is for changing an item, so a role that can only view gets no row action.
-            onRowClick={canEdit ? openForm : undefined}
+            onRowClick={canEdit ? (item) => void openForm(item) : undefined}
           />
           <Pagination
             page={currentPage}
@@ -397,7 +492,7 @@ export default function CatalogueTable() {
         open={editing !== null}
         onClose={() => setEditing(null)}
         title={editing === "new" ? "Add made-to-order item" : "Edit made-to-order item"}
-        width={480}
+        width={600}
         footer={
           <div style={{ display: "flex", gap: spacing[3] }}>
             <Button
@@ -432,13 +527,14 @@ export default function CatalogueTable() {
             id="catalogue-name"
             label="NAME"
             span={12}
-            error={touched ? (problems.name ?? saveError) : null}
+            error={touched ? problems.name : null}
           >
             <Input
               id="catalogue-name"
               autoFocus
               autoComplete="off"
               placeholder="e.g. Blouse stitching"
+              maxLength={200}
               value={name}
               aria-invalid={touched && problems.name ? true : undefined}
               onChange={(event) => {
@@ -447,70 +543,45 @@ export default function CatalogueTable() {
               }}
             />
           </FormField>
-          <FormField
-            id="catalogue-category"
-            label="CATEGORY"
-            span={12}
-            error={touched ? problems.category : null}
+          {/* The picker's two fields place themselves on a 12-column grid: half a row each. */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(12, minmax(0, 1fr))",
+              columnGap: spacing[3],
+              alignItems: "start",
+            }}
           >
-            <Select
-              id="catalogue-category"
-              options={topLevelOptions}
-              value={formCategory}
-              placeholder="e.g. Services"
-              creatable
-              createLabel="Add new category"
-              aria-invalid={touched && problems.category ? true : undefined}
+            <CategoryPicker
+              idPrefix="catalogue"
+              span={6}
+              categories={categories}
+              categoryId={formCategory}
+              subcategoryId={formSubcategory}
+              canCreate={canCreateCategory}
+              error={touched ? problems.category : null}
+              onCreated={(row) => setCategories((current) => [...current, row])}
               onChange={(next) => {
-                setFormCategory(next);
-                setFormSubcategory("");
+                setFormCategory(next.categoryId);
+                setFormSubcategory(next.subcategoryId);
               }}
             />
-          </FormField>
-          <FormField id="catalogue-subcategory" label="SUBCATEGORY (OPTIONAL)" span={12}>
-            <Select
-              id="catalogue-subcategory"
-              options={[{ value: "", label: "None" }, ...subcategoryOptions]}
-              value={formSubcategory}
-              placeholder={formCategory ? "None" : "Choose a category first"}
-              creatable
-              createLabel="Add new subcategory"
-              disabled={formCategory === ""}
-              onChange={setFormSubcategory}
-            />
-          </FormField>
-          <div style={{ display: "flex", flexDirection: "column", gap: spacing[3] }}>
-            <div style={{ ...textStyle("caption"), color: colors.inkMuted }}>PRICING</div>
-            <Chips
-              aria-label="How it is priced"
-              options={PRICING_OPTIONS}
-              value={pricing}
-              columns={2}
-              onChange={(next) => setPricing(next as PricingMode)}
-            />
-            <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
-              {pricing === "fixed"
-                ? "The same price every time it is sold."
-                : "The price is entered at the till for each order."}
-            </div>
           </div>
-          {pricing === "fixed" ? (
-            <FormField
-              id="catalogue-price"
-              label="PRICE (₹)"
-              span={12}
-              error={touched ? problems.price : null}
-            >
-              <Input
-                id="catalogue-price"
-                inputMode="decimal"
-                autoComplete="off"
-                placeholder="0.00"
-                value={price}
-                aria-invalid={touched && problems.price ? true : undefined}
-                onChange={(event) => setPrice(event.target.value)}
-              />
-            </FormField>
+          <ServiceSetupFields
+            employees={providers}
+            value={setupForm}
+            onChange={setSetupForm}
+            pricing={pricing}
+            onPricingChange={setPricing}
+            price={price}
+            onPriceChange={setPrice}
+            priceError={touched ? problems.price : null}
+            error={touched ? problems.setup : null}
+          />
+          {saveError ? (
+            <div role="alert" style={{ ...textStyle("footnote"), color: colors.danger }}>
+              {saveError}
+            </div>
           ) : null}
         </form>
       </Sheet>
@@ -529,7 +600,10 @@ export default function CatalogueTable() {
         }}
       />
 
-      <Modal open={deleting !== null} onClose={() => setDeleting(null)}>
+      <Modal
+        open={deleting !== null}
+        onClose={removing ? () => undefined : () => setDeleting(null)}
+      >
         <div style={{ width: 420, maxWidth: "100%" }}>
           <div style={{ ...textStyle("title3"), color: colors.ink }}>
             {deleting?.kind === "product" ? "Remove" : "Delete"} {deleting?.name}?
@@ -549,29 +623,27 @@ export default function CatalogueTable() {
               marginTop: spacing[6],
             }}
           >
-            <Button type="button" variant="secondary" onClick={() => setDeleting(null)}>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={removing}
+              onClick={() => setDeleting(null)}
+            >
               Keep it
             </Button>
             <Button
               type="button"
               variant="danger"
-              onClick={async () => {
-                if (!deleting) return;
-                const failure =
-                  deleting.kind === "product"
-                    ? await removeFromCatalogue(deleting.id)
-                    : await deleteCatalogueItem(deleting.id);
-                setNotice(
-                  failure ??
-                    (deleting.kind === "product"
-                      ? `${deleting.name} removed from the catalogue.`
-                      : `${deleting.name} deleted.`),
-                );
-                setDeleting(null);
-                void reload();
-              }}
+              disabled={removing}
+              onClick={() => void confirmDelete()}
             >
-              {deleting?.kind === "product" ? "Remove" : "Delete"}
+              {removing
+                ? deleting?.kind === "product"
+                  ? "Removing..."
+                  : "Deleting..."
+                : deleting?.kind === "product"
+                  ? "Remove"
+                  : "Delete"}
             </Button>
           </div>
         </div>

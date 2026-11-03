@@ -12,6 +12,8 @@ export * from "./Pagination";
 export * from "./Icon";
 export * from "./IconButton";
 export * from "./Notice";
+export * from "./Skeleton";
+export * from "./LoadError";
 export * from "./Card";
 export * from "./Table";
 export * from "./Badge";

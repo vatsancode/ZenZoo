@@ -1,6 +1,7 @@
 import type { CapabilityActor } from "@zenzoo/types";
 import type { TenantTx } from "../../shared/tenantContext";
 import { CATEGORY_SELECT, toCategoryDto, type CategoryDto } from "../categories/dto";
+import { sortByPlacement } from "../../shared/placement";
 import { UNIT_SELECT, toUnitDto, type UnitDto } from "../units/dto";
 
 /**
@@ -13,10 +14,9 @@ import { UNIT_SELECT, toUnitDto, type UnitDto } from "../units/dto";
 export async function unitsInTx(tx: TenantTx, actor: CapabilityActor): Promise<UnitDto[]> {
   const rows = await tx.units.findMany({
     where: { tenant_id: actor.tenantId },
-    orderBy: { created_at: "asc" },
     select: UNIT_SELECT,
   });
-  return rows.map(toUnitDto);
+  return sortByPlacement(rows).map(toUnitDto);
 }
 
 /** Flat, parents before children by name - the screens build the tree themselves. */

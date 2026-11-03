@@ -8,6 +8,8 @@ import { MOVEMENT_ACTIONS, NEW_BATCH_ID, type Batch, type MovementAction } from 
 import { priceProblem, quantityProblem, toPrice } from "./stock-validation";
 import type { Unit } from "./stocks";
 import FormField from "../../components/FormField";
+import { useSingleFlight } from "../../lib/useSingleFlight";
+import { addQuantities, subtractQuantity } from "@zenzoo/pricing";
 
 export interface MovementInput {
   batchId: string;
@@ -75,7 +77,7 @@ export default function RecordMovementSheet({
   const [note, setNote] = useState("");
   const [touched, setTouched] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const { busy: submitting, run: runRecord } = useSingleFlight();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -87,7 +89,6 @@ export default function RecordMovementSheet({
       setNote("");
       setTouched(false);
       setConfirming(false);
-      setSubmitting(false);
       setSubmitError(null);
     }
   }, [open]);
@@ -154,7 +155,7 @@ export default function RecordMovementSheet({
         ? -quantityNumber
         : action === "add"
           ? quantityNumber
-          : quantityNumber - before
+          : subtractQuantity(quantityNumber, before)
       : null;
   const value = unitCost !== undefined && delta !== null ? delta * unitCost : null;
   const isLarge =
@@ -175,19 +176,19 @@ export default function RecordMovementSheet({
 
   // Runs the actual write - called directly for an ordinary change, or from
   // the confirmation popup once a large one has been double-checked.
-  async function record() {
-    if (!action || submitting) return;
-    setSubmitting(true);
-    const error = await onSubmit({
-      batchId,
-      action,
-      quantity: quantityNumber,
-      unitCost: newBatchChosen ? unitCost : undefined,
-      note,
+  function record() {
+    if (!action) return;
+    return runRecord(async () => {
+      const error = await onSubmit({
+        batchId,
+        action,
+        quantity: quantityNumber,
+        unitCost: newBatchChosen ? unitCost : undefined,
+        note,
+      });
+      setConfirming(false);
+      if (error) setSubmitError(error);
     });
-    setSubmitting(false);
-    setConfirming(false);
-    if (error) setSubmitError(error);
   }
 
   // The result of what's about to be recorded, shown above the buttons once it can be worked out.
@@ -214,7 +215,7 @@ export default function RecordMovementSheet({
             <span aria-hidden="true" style={{ color: colors.inkMuted }}>
               {" → "}
             </span>
-            {before + delta} {unit}
+            {addQuantities(before, delta)} {unit}
           </div>
         </div>
         <div
@@ -239,187 +240,217 @@ export default function RecordMovementSheet({
 
   return (
     <>
-    <Sheet
-      open={open}
-      onClose={onClose}
-      title="Record movement"
-      width={560}
-      footer={
-        <div>
-          {submitError ? (
-            <div
-              role="alert"
-              style={{
-                ...textStyle("footnote"),
-                color: colors.danger,
-                marginBottom: spacing[3],
-              }}
-            >
-              {submitError}
-            </div>
-          ) : null}
-          {summary}
-          <div style={{ display: "flex", gap: spacing[3] }}>
-            <Button type="button" variant="secondary" onClick={onClose} disabled={submitting} style={{ flex: 1 }}>
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              form="record-movement-form"
-              variant="primary"
-              disabled={submitting}
-              style={{ flex: 2 }}
-            >
-              {submitting ? "Recording..." : "Record movement"}
-            </Button>
-          </div>
-        </div>
-      }
-    >
-      <form
-        id="record-movement-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: spacing[8] }}>
-          {/* What do you want to do */}
-          <div style={{ display: "flex", flexDirection: "column", gap: spacing[6] }}>
-            <Group label="WHAT DO YOU WANT TO DO?" error={touched ? actionError : null}>
-              <Chips
-                aria-label="What do you want to do"
-                columns={3}
-                options={actionOptions}
-                value={action}
-                onChange={(next) => {
-                  setAction(next as MovementAction);
-                  setBatchId(defaultBatchFor(next as MovementAction));
-                  setQuantity("");
-                  setPurchasePrice("");
+      <Sheet
+        open={open}
+        onClose={onClose}
+        title="Record movement"
+        width={560}
+        footer={
+          <div>
+            {submitError ? (
+              <div
+                role="alert"
+                style={{
+                  ...textStyle("footnote"),
+                  color: colors.danger,
+                  marginBottom: spacing[3],
                 }}
-              />
-              {actionInfo ? (
-                <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
-                  {actionInfo.hint}
-                </div>
-              ) : null}
-            </Group>
-          </div>
-
-          {/* Which batch - after the action, since adding can start a new one */}
-          {action ? (
-            <FormField
-              id="movement-batch"
-              label="BATCH"
-              span={12}
-              error={touched ? batchError : null}
-            >
-              <Select
-                id="movement-batch"
-                options={batchOptions}
-                value={batchId}
-                onChange={setBatchId}
-                placeholder="Choose a batch"
-                searchable
-                aria-invalid={touched && batchError ? true : undefined}
-              />
-              <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
-                {newBatchChosen
-                  ? "A new batch is created with its own batch number and barcode."
-                  : action === "add"
-                    ? "Or pick an existing batch to add to. Scan its barcode to find it quickly."
-                    : "Scan a batch barcode to find it quickly."}
-              </div>
-            </FormField>
-          ) : null}
-
-          {/* How many, and what that does to the batch */}
-          {action && batchId ? (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                columnGap: spacing[3],
-                alignItems: "start",
-              }}
-            >
-              <FormField
-                id="movement-quantity"
-                label={
-                  action === "count"
-                    ? `COUNTED NOW (${unit.toUpperCase()})`
-                    : `HOW MANY (${unit.toUpperCase()})`
-                }
-                span={newBatchChosen ? 1 : 2}
-                error={touched ? quantityError : null}
               >
-                <Input
-                  id="movement-quantity"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  placeholder={action === "count" && batch ? String(batch.remaining) : "0"}
-                  value={quantity}
-                  aria-invalid={touched && quantityError ? true : undefined}
-                  onChange={(event) => setQuantity(event.target.value)}
+                {submitError}
+              </div>
+            ) : null}
+            {summary}
+            <div style={{ display: "flex", gap: spacing[3] }}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={onClose}
+                disabled={submitting}
+                style={{ flex: 1 }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                form="record-movement-form"
+                variant="primary"
+                disabled={submitting}
+                style={{ flex: 2 }}
+              >
+                {submitting ? "Recording..." : "Record movement"}
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <form
+          id="record-movement-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: spacing[8] }}>
+            {/* What do you want to do */}
+            <div style={{ display: "flex", flexDirection: "column", gap: spacing[6] }}>
+              <Group label="WHAT DO YOU WANT TO DO?" error={touched ? actionError : null}>
+                <Chips
+                  aria-label="What do you want to do"
+                  columns={3}
+                  options={actionOptions}
+                  value={action}
+                  onChange={(next) => {
+                    setAction(next as MovementAction);
+                    setBatchId(defaultBatchFor(next as MovementAction));
+                    setQuantity("");
+                    setPurchasePrice("");
+                  }}
                 />
-              </FormField>
+                {actionInfo ? (
+                  <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
+                    {actionInfo.hint}
+                  </div>
+                ) : null}
+              </Group>
+            </div>
 
-              {newBatchChosen ? (
+            {/* Which batch - after the action, since adding can start a new one */}
+            {action ? (
+              <FormField
+                id="movement-batch"
+                label="BATCH"
+                span={12}
+                error={touched ? batchError : null}
+              >
+                <Select
+                  id="movement-batch"
+                  options={batchOptions}
+                  value={batchId}
+                  onChange={setBatchId}
+                  placeholder="Choose a batch"
+                  searchable
+                  aria-invalid={touched && batchError ? true : undefined}
+                />
+                <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
+                  {newBatchChosen
+                    ? "A new batch is created with its own batch number and barcode."
+                    : action === "add"
+                      ? "Or pick an existing batch to add to. Scan its barcode to find it quickly."
+                      : "Scan a batch barcode to find it quickly."}
+                </div>
+              </FormField>
+            ) : null}
+
+            {/* How many, and what that does to the batch */}
+            {action && batchId ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                  columnGap: spacing[3],
+                  alignItems: "start",
+                }}
+              >
                 <FormField
-                  id="movement-purchase-price"
-                  label="PURCHASE PRICE PER UNIT (₹)"
-                  span={1}
-                  error={touched ? purchasePriceError : null}
+                  id="movement-quantity"
+                  label={
+                    action === "count"
+                      ? `COUNTED NOW (${unit.toUpperCase()})`
+                      : `HOW MANY (${unit.toUpperCase()})`
+                  }
+                  span={newBatchChosen ? 1 : 2}
+                  error={touched ? quantityError : null}
                 >
                   <Input
-                    id="movement-purchase-price"
+                    id="movement-quantity"
                     inputMode="decimal"
                     autoComplete="off"
-                    placeholder={String(newBatchUnitCost)}
-                    value={purchasePrice}
-                    aria-invalid={touched && purchasePriceError ? true : undefined}
-                    onChange={(event) => setPurchasePrice(event.target.value)}
+                    placeholder={action === "count" && batch ? String(batch.remaining) : "0"}
+                    value={quantity}
+                    aria-invalid={touched && quantityError ? true : undefined}
+                    onChange={(event) => setQuantity(event.target.value)}
                   />
                 </FormField>
-              ) : null}
-            </div>
-          ) : null}
 
-          {action ? (
-            <FormField id="movement-note" label="NOTE" span={12} error={touched ? noteError : null}>
-              <Input
+                {newBatchChosen ? (
+                  <FormField
+                    id="movement-purchase-price"
+                    label="PURCHASE PRICE PER UNIT (₹)"
+                    span={1}
+                    error={touched ? purchasePriceError : null}
+                  >
+                    <Input
+                      id="movement-purchase-price"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      placeholder={String(newBatchUnitCost)}
+                      value={purchasePrice}
+                      aria-invalid={touched && purchasePriceError ? true : undefined}
+                      onChange={(event) => setPurchasePrice(event.target.value)}
+                    />
+                  </FormField>
+                ) : null}
+              </div>
+            ) : null}
+
+            {action ? (
+              <FormField
                 id="movement-note"
-                autoComplete="off"
-                placeholder="What happened? e.g. Water damage in storage"
-                value={note}
-                aria-invalid={touched && noteError ? true : undefined}
-                onChange={(event) => setNote(event.target.value)}
-              />
-            </FormField>
-          ) : null}
-        </div>
-      </form>
-    </Sheet>
+                label="NOTE"
+                span={12}
+                error={touched ? noteError : null}
+              >
+                <Input
+                  id="movement-note"
+                  autoComplete="off"
+                  placeholder="What happened? e.g. Water damage in storage"
+                  value={note}
+                  aria-invalid={touched && noteError ? true : undefined}
+                  onChange={(event) => setNote(event.target.value)}
+                />
+              </FormField>
+            ) : null}
+          </div>
+        </form>
+      </Sheet>
 
-    <Modal open={confirming} onClose={() => setConfirming(false)}>
-      <div style={{ width: 420, maxWidth: "100%" }}>
-        <div style={{ ...textStyle("title3"), color: colors.ink }}>Record this stock change?</div>
-        <p style={{ ...textStyle("body"), color: colors.inkMuted, margin: `${spacing[3]}px 0 0` }}>
-          {value !== null
-            ? `This changes your stock by ${formatPrice(Math.abs(value))}. Check it's right before you continue.`
-            : "Check this is right before you continue."}
-        </p>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: spacing[3], marginTop: spacing[6] }}>
-          <Button type="button" variant="secondary" onClick={() => setConfirming(false)} disabled={submitting}>
-            Go back
-          </Button>
-          <Button type="button" variant="primary" onClick={() => void record()} disabled={submitting}>
-            {submitting ? "Recording..." : "Yes, record it"}
-          </Button>
+      <Modal open={confirming} onClose={() => setConfirming(false)}>
+        <div style={{ width: 420, maxWidth: "100%" }}>
+          <div style={{ ...textStyle("title3"), color: colors.ink }}>Record this stock change?</div>
+          <p
+            style={{ ...textStyle("body"), color: colors.inkMuted, margin: `${spacing[3]}px 0 0` }}
+          >
+            {value !== null
+              ? `This changes your stock by ${formatPrice(Math.abs(value))}. Check it's right before you continue.`
+              : "Check this is right before you continue."}
+          </p>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: spacing[3],
+              marginTop: spacing[6],
+            }}
+          >
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setConfirming(false)}
+              disabled={submitting}
+            >
+              Go back
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => void record()}
+              disabled={submitting}
+            >
+              {submitting ? "Recording..." : "Yes, record it"}
+            </Button>
+          </div>
         </div>
-      </div>
-    </Modal>
+      </Modal>
     </>
   );
 }

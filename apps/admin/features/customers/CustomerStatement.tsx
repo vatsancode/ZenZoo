@@ -109,7 +109,14 @@ function describe(entry: StatementEntry): { title: string; detail: string } {
  * first on screen, each with the balance right after it. It is a read-only record - the ledger behind
  * it refuses edits and deletes, and a mistake is fixed with a new entry, never by rewriting history.
  */
-export default function CustomerStatement({ customerId }: { customerId: string }) {
+export default function CustomerStatement({
+  customerId,
+  refreshKey = 0,
+}: {
+  customerId: string;
+  /** Change it to load the statement again, e.g. after a payment is recorded. */
+  refreshKey?: number;
+}) {
   const { colors, spacing } = useTheme();
   const router = useRouter();
   const { can } = useAccess();
@@ -130,7 +137,7 @@ export default function CustomerStatement({ customerId }: { customerId: string }
         setEntries([]);
         setError(reason instanceof Error ? reason.message : "Couldn't load the statement.");
       });
-  }, [customerId]);
+  }, [customerId, refreshKey]);
 
   // The server sends oldest first (that is how the balance builds up). Each line's balance is the
   // real running balance, so it stays right whatever range is showing.

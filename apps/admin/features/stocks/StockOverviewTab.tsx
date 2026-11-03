@@ -57,7 +57,7 @@ export default function StockOverviewTab({
   item: StockItem;
   /** The most recent real PURCHASED movement's date, or null if nothing has ever arrived. */
   lastPurchaseDate: string | null;
-  /** Always null for now - there's no real sales capability yet to report a last sale from. */
+  /** The most recent real SOLD movement's date, or null if it has never sold. */
   lastSaleDate: string | null;
 }) {
   const { colors, spacing } = useTheme();

@@ -1,6 +1,7 @@
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { MEMBERSHIP_SELECT, toUserDto, type UserDto } from "../users/dto";
+import { getOwnerUserId } from "../users/ownerRules";
 
 export const listUsers = defineCapability<void, UserDto[]>({
   name: "listUsers",
@@ -13,7 +14,8 @@ export const listUsers = defineCapability<void, UserDto[]>({
         orderBy: { created_at: "asc" },
         select: MEMBERSHIP_SELECT,
       });
-      return rows.map((row) => toUserDto(row, actor.userId));
+      const ownerUserId = await getOwnerUserId(tx, actor.tenantId);
+      return rows.map((row) => toUserDto(row, actor.userId, ownerUserId));
     });
   },
 });

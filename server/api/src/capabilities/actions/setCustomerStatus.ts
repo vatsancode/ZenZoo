@@ -8,6 +8,7 @@ import {
   type CustomerDto,
 } from "../customers/dto";
 import { customerBalance } from "../customers/ledger";
+import { customerSpend } from "../customers/spend";
 
 export interface SetCustomerStatusInput {
   id: string;
@@ -40,7 +41,11 @@ export const setCustomerStatus = defineCapability<SetCustomerStatusInput, Custom
           data: { status: input.archived ? "archived" : "active" },
           select: CUSTOMER_SELECT,
         });
-        return toCustomerDto(updated, await customerBalance(tx, actor.tenantId, updated.id));
+        return toCustomerDto(
+          updated,
+          await customerBalance(tx, actor.tenantId, updated.id),
+          await customerSpend(tx, actor.tenantId, updated.id),
+        );
       });
     } catch (error) {
       rethrowPhoneTaken(error);

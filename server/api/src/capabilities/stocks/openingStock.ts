@@ -1,13 +1,15 @@
 import type { CapabilityActor } from "@zenzoo/types";
 import type { TenantTx } from "../../shared/tenantContext";
 import { generateBarcode } from "../purchases/barcode";
+import { assertVariantQuantities } from "../../shared/quantity";
 
 export interface RecordOpeningStockInput {
   storeId: string;
   variantId: string;
   quantity: number;
   unitCost: number;
-  date: string;
+  /** A past day (YYYY-MM-DD) the stock really arrived on - omit to stamp it with right now. */
+  date?: string;
   /** Free-text reason, stored as the movement's `reason` - e.g. why stock is starting outside a purchase. */
   reason?: string;
 }
@@ -33,7 +35,10 @@ export async function recordOpeningStock(
   actor: CapabilityActor,
   input: RecordOpeningStockInput,
 ): Promise<RecordedOpeningStock> {
-  const occurredAt = new Date(input.date);
+  await assertVariantQuantities(tx, [{ variantId: input.variantId, quantity: input.quantity }]);
+  // A bare date would read as midnight UTC (5:30 AM in India), sorting it ahead of the
+  // day's real changes. Right now when no date is given; midday India time for a past day.
+  const occurredAt = input.date ? new Date(`${input.date}T12:00:00+05:30`) : new Date();
 
   const batch = await tx.inventory_batches.create({
     data: {

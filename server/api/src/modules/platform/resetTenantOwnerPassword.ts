@@ -27,7 +27,8 @@ export async function resetTenantOwnerPassword(
   `;
   const row = rows[0];
   if (!row) {
-    throw new Error("platform_reset_tenant_owner_password returned no row");
+    console.error("platform_reset_tenant_owner_password returned no row");
+    throw new Error("We couldn't reset the password. Please try again.");
   }
   return { userId: row.user_id, email: row.email };
 }

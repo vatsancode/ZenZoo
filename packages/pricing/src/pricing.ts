@@ -1,3 +1,4 @@
+import { hasQuantityPrecision, toThousandths } from "./quantity";
 /** Whole paise - 1/100 of a rupee. Every money amount in this package is an integer number of these. */
 export type Paise = number;
 
@@ -137,7 +138,8 @@ export function priceCart(input: PriceCartInput): PricedCart {
     if (!Number.isFinite(line.quantity) || line.quantity < 0) {
       throw new PricingError(`A quantity must be 0 or more (got ${line.quantity}).`);
     }
-    const gross = Math.round(line.quantity * line.unitPrice);
+    // In whole thousandths, so 1.25 kg rounds to the paisa exactly as the database does.
+    const gross = Math.round((toThousandths(line.quantity) * line.unitPrice) / 1000);
     const lineDiscount = discountOf(gross, line.discount);
     return { gross, lineDiscount, afterLine: gross - lineDiscount };
   });
@@ -184,19 +186,23 @@ export function returnValue(
     [alreadyReturned, "The quantity already returned"],
     [returning, "The quantity returning"],
   ] as const) {
-    if (!Number.isSafeInteger(value) || value < 0) {
-      throw new PricingError(`${what} must be a whole number, 0 or more (got ${value}).`);
+    if (!hasQuantityPrecision(value) || value < 0) {
+      throw new PricingError(`${what} must be 0 or more, to 3 decimal places (got ${value}).`);
     }
   }
-  if (lineQuantity === 0 || returning === 0) return 0;
-  if (alreadyReturned + returning > lineQuantity) {
+  // Worked in whole thousandths: shares of 1.5 kg are the same as shares of 1500 g.
+  const line = toThousandths(lineQuantity);
+  const before = toThousandths(alreadyReturned);
+  const now = toThousandths(returning);
+  if (line === 0 || now === 0) return 0;
+  if (before + now > line) {
     throw new PricingError("That is more than was sold on the line.");
   }
   // x / y rounded half-up = floor((2x + y) / 2y), exactly, in BigInt (lineTotal x quantity can pass 2^53).
   const upTo = (units: number): bigint => {
     const x = BigInt(lineTotal) * BigInt(units);
-    const y = BigInt(lineQuantity);
+    const y = BigInt(line);
     return (BigInt(2) * x + y) / (BigInt(2) * y);
   };
-  return Number(upTo(alreadyReturned + returning) - upTo(alreadyReturned));
+  return Number(upTo(before + now) - upTo(before));
 }

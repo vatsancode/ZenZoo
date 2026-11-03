@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { JetBrains_Mono, Manrope } from "next/font/google";
 import type { ReactNode } from "react";
 import { ThemedBody } from "./ThemedBody";
+import "./scrollbars.css";
 
 const sans = Manrope({ subsets: ["latin"], variable: "--font-sans" });
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });

@@ -41,6 +41,18 @@ export class ConflictError extends Error {
   }
 }
 
+/**
+ * Thrown from a handler when the record asked for isn't there (or belongs to another shop, which
+ * looks the same from here). Comes back as NOT_FOUND (404), so a screen can show "not found"
+ * rather than treating it as a failed load to retry.
+ */
+export class NotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NotFoundError";
+  }
+}
+
 export class PermissionDeniedError extends Error {
   constructor(permission: Permission) {
     super(`Missing permission: ${permission}`);
@@ -88,7 +100,8 @@ export function defineCapability<Input, Output>(
           ok: false,
           error: {
             code: "PERMISSION_DENIED",
-            message: `Actor lacks permission ${required.map((item) => `"${item}"`).join(" or ")} for capability "${definition.name}"`,
+            // Plain words for the person on screen; the technical detail goes to the log.
+            message: "You don't have access to do this. Ask the owner to change your role.",
           },
         };
       }
@@ -111,11 +124,15 @@ export function defineCapability<Input, Output>(
         if (error instanceof ConflictError) {
           return { ok: false, error: { code: "CONFLICT", message: error.message } };
         }
+        if (error instanceof NotFoundError) {
+          return { ok: false, error: { code: "NOT_FOUND", message: error.message } };
+        }
         return {
           ok: false,
           error: {
             code: "INTERNAL_ERROR",
-            message: error instanceof Error ? error.message : "Unknown error",
+            message:
+              error instanceof Error ? error.message : "Something went wrong. Please try again.",
           },
         };
       }

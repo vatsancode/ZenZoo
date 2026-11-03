@@ -1,8 +1,8 @@
-import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
 import { PRODUCT_SELECT, toProductDto, type ProductDto } from "../products/dto";
+import { GENERATED_SKU_ATTEMPTS, generateSku, isSkuClash } from "../products/sku";
 
 export interface UpdateVariantInput {
   id: string;
@@ -25,35 +25,44 @@ export const updateVariant = defineCapability<UpdateVariantInput, ProductDto>({
     if (!name) throw new Error("Give the variant a name.");
     if (input.basePrice < 0) throw new Error("Price can't be negative.");
 
-    try {
-      return await runInTenantContext(actor, async (tx) => {
-        const existing = await tx.variants.findFirst({
-          where: { id: input.id, tenant_id: actor.tenantId },
-          select: { store_id: true, sellable_id: true },
-        });
-        if (!existing) throw new Error("That variant doesn't exist.");
-        await assertStoreAccess(actor, existing.store_id);
+    // A variant never ends up without a SKU: clearing it (or editing an older variant that
+    // never had one) generates one, the same way creating does.
+    const generatesSku = !input.sku?.trim();
 
-        await tx.variants.update({
-          where: { id: input.id },
-          data: {
-            name,
-            sku: input.sku?.trim() || null,
-            base_price: input.basePrice,
-          },
-        });
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await runInTenantContext(actor, async (tx) => {
+          const existing = await tx.variants.findFirst({
+            where: { id: input.id, tenant_id: actor.tenantId },
+            select: { store_id: true, sellable_id: true, sellables: { select: { name: true } } },
+          });
+          if (!existing) throw new Error("That variant doesn't exist.");
+          await assertStoreAccess(actor, existing.store_id);
 
-        const row = await tx.sellables.findUniqueOrThrow({
-          where: { id: existing.sellable_id },
-          select: PRODUCT_SELECT,
+          await tx.variants.update({
+            where: { id: input.id },
+            data: {
+              name,
+              sku:
+                input.sku?.trim() ||
+                (await generateSku(tx, actor.tenantId, existing.sellables.name, name)),
+              base_price: input.basePrice,
+            },
+          });
+
+          const row = await tx.sellables.findUniqueOrThrow({
+            where: { id: existing.sellable_id },
+            select: PRODUCT_SELECT,
+          });
+          return toProductDto(row);
         });
-        return toProductDto(row);
-      });
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new Error("That SKU is already used by another product.");
+      } catch (error) {
+        if (isSkuClash(error)) {
+          if (generatesSku && attempt < GENERATED_SKU_ATTEMPTS) continue;
+          throw new Error("That SKU is already used by another product.");
+        }
+        throw error;
       }
-      throw error;
     }
   },
 });

@@ -13,6 +13,7 @@ import { listRoles } from "./roles";
 import { listUsers } from "./userDirectory";
 import { listExpenseCategories } from "../expenses/expenseCategories";
 import { useAccess } from "../../lib/access";
+import { LAYOUT_AREAS } from "../../lib/layouts";
 import { formatPrice } from "../../lib/stock-display";
 
 interface Tile {
@@ -105,6 +106,13 @@ export default function SettingsHome() {
       description: "Choose a light or dark look, or follow this device.",
       detail:
         preference === "system" ? "Follows this device" : preference === "dark" ? "Dark" : "Light",
+    },
+    {
+      href: "/settings/layout",
+      icon: "layout",
+      name: "Layout",
+      description: "Choose how screens like Point of Sale are arranged.",
+      detail: `${LAYOUT_AREAS.length} ${LAYOUT_AREAS.length === 1 ? "screen" : "screens"}`,
     },
     {
       href: "/settings/accounts",

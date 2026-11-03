@@ -8,6 +8,8 @@ export interface UserDto {
   status: "active" | "disabled";
   /** True when this row is the signed-in actor themself - lets the frontend show "You" and block self-disable without a separate /me call. */
   isSelf: boolean;
+  /** This person is the tenant's one owner (tenants.owner_user_id) - their role and access are locked. */
+  isOwner: boolean;
 }
 
 interface MembershipRow {
@@ -24,10 +26,11 @@ interface MembershipRow {
   } | null;
 }
 
-export function toUserDto(row: MembershipRow, actorUserId: string): UserDto {
+export function toUserDto(row: MembershipRow, actorUserId: string, ownerUserId: string): UserDto {
   const user = row.users;
   if (!user) {
-    throw new Error("Expected an active membership to have a user attached");
+    console.error("Expected an active membership to have a user attached");
+    throw new Error("Something is wrong with this user's record. Please contact support.");
   }
   return {
     id: user.id,
@@ -37,6 +40,7 @@ export function toUserDto(row: MembershipRow, actorUserId: string): UserDto {
     roleId: row.role_id,
     status: row.status === "active" ? "active" : "disabled",
     isSelf: user.id === actorUserId,
+    isOwner: user.id === ownerUserId,
   };
 }
 

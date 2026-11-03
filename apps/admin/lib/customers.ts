@@ -4,6 +4,7 @@ import { ensureStoreId } from "./storeContext";
 import { toSale } from "./sales";
 import type { TillPaymentOptions } from "./till";
 import type { DueCollection, Sale } from "../features/sales/sales";
+import { apiFetch } from "./apiFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -23,6 +24,12 @@ export interface Customer {
    * the server's running total of their ledger, never worked out here.
    */
   balance: string;
+  /** Completed sales to them, across every store - counted by the server. */
+  purchases: number;
+  /** What they spent after refunds and credit given back, as "1250.00" - the server's figure. */
+  spent: string;
+  /** Their latest purchase, YYYY-MM-DD; null if they never bought. */
+  lastPurchase: string | null;
 }
 
 /** What they owe the shop, in rupees (0 when they owe nothing or hold credit). */
@@ -51,7 +58,7 @@ async function parseError(response: Response): Promise<string> {
 }
 
 async function send<T>(path: string, method: string, body?: unknown): Promise<T | string> {
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await apiFetch(`${API_URL}${path}`, {
     method,
     headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     credentials: "include",

@@ -3,6 +3,7 @@ import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { PERMISSION_AREAS, type AccessLevel } from "../../shared/permissionAreas";
 import { ROLE_SELECT, toRoleDto, type RoleDto } from "../roles/dto";
+import { cleanRoleName, ROLE_NAME_TAKEN, roleLengthProblem, roleNameTaken } from "../roles/names";
 
 export interface UpdateRoleInput {
   id: string;
@@ -16,8 +17,10 @@ export const updateRole = defineCapability<UpdateRoleInput, RoleDto>({
   kind: "action",
   requiredPermission: "users:edit",
   async handler(actor, input) {
-    const name = input.name.trim();
+    const name = cleanRoleName(input.name);
     if (!name) throw new Error("Give the role a name.");
+    const lengthProblem = roleLengthProblem(name, input.description.trim());
+    if (lengthProblem) throw new Error(lengthProblem);
 
     return runInTenantContext(actor, async (tx) => {
       const existing = await tx.roles.findFirst({
@@ -30,6 +33,7 @@ export const updateRole = defineCapability<UpdateRoleInput, RoleDto>({
       // message that reads like the rest of this capability's errors, not a
       // raw Postgres exception.
       if (existing.is_owner_role) throw new Error("The Owner role can't be changed.");
+      if (await roleNameTaken(tx, actor.tenantId, name, input.id)) throw new Error(ROLE_NAME_TAKEN);
 
       try {
         await tx.roles.update({
@@ -38,14 +42,14 @@ export const updateRole = defineCapability<UpdateRoleInput, RoleDto>({
         });
       } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-          throw new Error("There is already a role with that name.");
+          throw new Error(ROLE_NAME_TAKEN);
         }
         throw error;
       }
 
       // A role edit rewrites the whole grid at once (see role_permissions'
       // own "no updated_at" note) - delete and recreate rather than
-      // upserting each of the eleven areas individually.
+      // upserting each area individually.
       await tx.role_permissions.deleteMany({ where: { role_id: input.id } });
       await tx.role_permissions.createMany({
         data: PERMISSION_AREAS.map((area) => ({

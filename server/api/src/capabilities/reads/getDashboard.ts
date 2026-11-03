@@ -23,6 +23,7 @@ import {
   type TopProduct,
   type Totals,
 } from "../dashboard/metrics";
+import { addQuantities, toQuantity, toThousandths } from "../../shared/quantity";
 
 export interface GetDashboardInput {
   storeId: string;
@@ -172,7 +173,10 @@ export const getDashboard = defineCapability<GetDashboardInput, DashboardDto>({
             for (const item of ret.sale_return_items) {
               returnedByItem.set(
                 item.sale_item_id,
-                (returnedByItem.get(item.sale_item_id) ?? 0) + item.quantity,
+                addQuantities(
+                  returnedByItem.get(item.sale_item_id) ?? 0,
+                  toQuantity(item.quantity),
+                ),
               );
             }
           }
@@ -191,14 +195,19 @@ export const getDashboard = defineCapability<GetDashboardInput, DashboardDto>({
               // In paise so several batches add up exactly.
               const costPaise = item.sale_item_batches.reduce(
                 (sum, part) =>
-                  sum + part.quantity * Math.round(num(part.inventory_batches.unit_cost) * 100),
+                  sum +
+                  Math.round(
+                    (toThousandths(toQuantity(part.quantity)) *
+                      Math.round(num(part.inventory_batches.unit_cost) * 100)) /
+                      1000,
+                  ),
                 0,
               );
               return {
                 name:
                   item.variants.name === product ? product : `${product} - ${item.variants.name}`,
                 category: item.variants.sellables.categories.name,
-                quantity: item.quantity,
+                quantity: toQuantity(item.quantity),
                 returned: returnedByItem.get(item.id) ?? 0,
                 unitPrice: num(item.unit_price),
                 ownDiscount: round(num(item.discount_amount) - num(item.bill_discount_share)),
@@ -251,7 +260,7 @@ export const getDashboard = defineCapability<GetDashboardInput, DashboardDto>({
         }),
       ]);
       const onHand = new Map(
-        onHandRows.map((row) => [row.variant_id, row._sum.available_quantity ?? 0]),
+        onHandRows.map((row) => [row.variant_id, toQuantity(row._sum.available_quantity)]),
       );
       const stockItems: LowStockItem[] = products.flatMap((product) =>
         product.variants.map((variant) => ({

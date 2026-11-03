@@ -6,7 +6,9 @@ import { useEffect, useState, type KeyboardEvent } from "react";
 import { priceProblem, toPrice } from "../features/stocks/stock-validation";
 import type { CategoryResponse } from "../lib/catalogue";
 import type { CreateProductInput } from "../lib/realProducts";
+import CategoryPicker from "./CategoryPicker";
 import FormField from "./FormField";
+import { useSingleFlight } from "../lib/useSingleFlight";
 
 interface AddProductSheetProps {
   open: boolean;
@@ -16,6 +18,13 @@ interface AddProductSheetProps {
   unitOptions: { value: string; label: string }[];
   /** This store's full category tree, flat - fetched by the caller, live. */
   categories: CategoryResponse[];
+  /**
+   * Offers "Add new category" / "Add new subcategory" - pass the Settings edit check, since
+   * creating a category is a Settings write. A new one is saved as soon as it is named and
+   * handed to `onCategoryCreated`, which must add it to `categories`.
+   */
+  canCreateCategory: boolean;
+  onCategoryCreated: (row: CategoryResponse) => void;
   onClose: () => void;
   /** Returns the SKU that clashed and why, or null on success. May be async. */
   onSubmit: (
@@ -48,6 +57,8 @@ export default function AddProductSheet({
   existingNames,
   unitOptions,
   categories,
+  canCreateCategory,
+  onCategoryCreated,
   onClose,
   onSubmit,
 }: AddProductSheetProps) {
@@ -61,16 +72,9 @@ export default function AddProductSheet({
   const [subcategoryId, setSubcategoryId] = useState("");
   const [skuError, setSkuError] = useState<{ sku: string; message: string } | null>(null);
   const [touched, setTouched] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const { busy: submitting, run: runSave } = useSingleFlight();
 
   const topLevelCategories = categories.filter((category) => category.parentId === null);
-  const categoryOptions = topLevelCategories.map((category) => ({
-    value: category.id,
-    label: category.name,
-  }));
-  const subcategoryOptions = categories
-    .filter((category) => category.parentId === categoryId)
-    .map((category) => ({ value: category.id, label: category.name }));
 
   useEffect(() => {
     if (!open) {
@@ -82,7 +86,6 @@ export default function AddProductSheet({
       setSubcategoryId("");
       setSkuError(null);
       setTouched(false);
-      setSubmitting(false);
     } else {
       setUnitId((current) => current || unitOptions[0]?.value || "");
       setCategoryId((current) => {
@@ -95,11 +98,6 @@ export default function AddProductSheet({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, unitOptions, categories]);
-
-  function changeCategory(next: string) {
-    setCategoryId(next);
-    setSubcategoryId("");
-  }
 
   const nameTaken = existingNames.some(
     (existing) => existing.trim().toLowerCase() === name.trim().toLowerCase(),
@@ -116,22 +114,22 @@ export default function AddProductSheet({
 
   const valid = !nameError && !priceError && unitId !== "" && categoryId !== "";
 
-  async function submit() {
-    setTouched(true);
-    if (!valid || submitting) return;
-    setSubmitting(true);
-    const clash = await onSubmit({
-      name: name.trim(),
-      sku: sku.trim() === "" ? undefined : sku.trim(),
-      basePrice: toPrice(price),
-      unitId,
-      categoryId: subcategoryId || categoryId,
+  function submit() {
+    return runSave(async () => {
+      setTouched(true);
+      if (!valid) return;
+      const clash = await onSubmit({
+        name: name.trim(),
+        sku: sku.trim() === "" ? undefined : sku.trim(),
+        basePrice: toPrice(price),
+        unitId,
+        categoryId: subcategoryId || categoryId,
+      });
+      if (clash) {
+        setSkuError({ sku: clash.sku, message: clash.error });
+        focusField("product-sku");
+      }
     });
-    setSubmitting(false);
-    if (clash) {
-      setSkuError({ sku: clash.sku, message: clash.error });
-      focusField("product-sku");
-    }
   }
 
   function enterFrom(id: string) {
@@ -235,24 +233,21 @@ export default function AddProductSheet({
               onKeyDown={enterFrom("product-unit")}
             />
           </FormField>
-          <FormField id="product-category" label="CATEGORY" span={6}>
-            <Select
-              id="product-category"
-              options={categoryOptions}
-              value={categoryId}
-              onChange={changeCategory}
-              onKeyDown={enterFrom("product-category")}
-            />
-          </FormField>
-          <FormField id="product-subcategory" label="SUBCATEGORY (OPTIONAL)" span={6}>
-            <Select
-              id="product-subcategory"
-              options={[{ value: "", label: "None" }, ...subcategoryOptions]}
-              value={subcategoryId}
-              onChange={setSubcategoryId}
-              onKeyDown={enterFrom("product-subcategory")}
-            />
-          </FormField>
+          <CategoryPicker
+            idPrefix="product"
+            span={6}
+            categories={categories}
+            categoryId={categoryId}
+            subcategoryId={subcategoryId}
+            canCreate={canCreateCategory}
+            disabled={submitting}
+            onCreated={onCategoryCreated}
+            onChange={(next) => {
+              setCategoryId(next.categoryId);
+              setSubcategoryId(next.subcategoryId);
+            }}
+            onFieldKeyDown={enterFrom}
+          />
         </div>
       </form>
     </Sheet>

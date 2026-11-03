@@ -6,6 +6,8 @@ import { useEffect, useState, type KeyboardEvent } from "react";
 import type { Customer, CustomerInput } from "../../lib/customers";
 import { emailProblem } from "../vendors/vendors";
 import FormField from "../../components/FormField";
+import { useSingleFlight } from "../../lib/useSingleFlight";
+import { cleanPhoneInput } from "../settings/users";
 
 export type { CustomerInput };
 
@@ -53,7 +55,7 @@ export default function CustomerSheet({
   const [address, setAddress] = useState("");
   const [notes, setNotes] = useState("");
   const [touched, setTouched] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run: runSave } = useSingleFlight();
   const [serverError, setServerError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -63,7 +65,6 @@ export default function CustomerSheet({
     setAddress(open && customer ? (customer.address ?? "") : "");
     setNotes(open && customer ? (customer.notes ?? "") : "");
     setTouched(false);
-    setSaving(false);
     setServerError(null);
   }, [open, customer]);
 
@@ -76,14 +77,14 @@ export default function CustomerSheet({
     ? existing.find((other) => other.id !== customer?.id && samePhone(other.phone ?? "", phone))
     : undefined;
 
-  async function submit() {
-    setTouched(true);
-    if (nameError || emailError || saving) return;
-    setSaving(true);
-    setServerError(null);
-    const message = await onSubmit({ name, phone, email, address, notes });
-    setSaving(false);
-    setServerError(message);
+  function submit() {
+    return runSave(async () => {
+      setTouched(true);
+      if (nameError || emailError) return;
+      setServerError(null);
+      const message = await onSubmit({ name, phone, email, address, notes });
+      setServerError(message);
+    });
   }
 
   function enterFrom(id: string) {
@@ -149,7 +150,7 @@ export default function CustomerSheet({
               value={phone}
               aria-invalid={phoneTaken ? true : undefined}
               onChange={(event) => {
-                setPhone(event.target.value);
+                setPhone(cleanPhoneInput(event.target.value));
                 setServerError(null);
               }}
               onKeyDown={enterFrom("customer-phone")}

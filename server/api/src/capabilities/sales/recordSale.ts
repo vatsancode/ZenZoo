@@ -5,6 +5,7 @@ import { ConflictError } from "../capability";
 import { SALE_SELECT, toSaleDto, type SaleDto } from "./dto";
 import { customerBalance, creditMethods, lockCustomer } from "../customers/ledger";
 import { money, priceSale, type SalePricingInput } from "./pricing";
+import { addQuantities, subtractQuantity, toQuantity } from "../../shared/quantity";
 
 export interface SalePaymentInput {
   paymentMethodId: string;
@@ -87,7 +88,7 @@ async function takeStock(
   line: { saleItemId: string; variantId: string; label: string; quantity: number },
   soldAt: Date,
 ) {
-  const batches = await tx.$queryRaw<{ id: string; available_quantity: number }[]>`
+  const rows = await tx.$queryRaw<{ id: string; available_quantity: { toString(): string } }[]>`
     SELECT id, available_quantity
       FROM inventory_batches
      WHERE tenant_id = ${actor.tenantId}::uuid
@@ -95,8 +96,13 @@ async function takeStock(
        AND variant_id = ${line.variantId}::uuid
        AND available_quantity > 0
      ORDER BY received_at ASC, id ASC`;
+  // numeric comes back from raw SQL as a Decimal, not a number.
+  const batches = rows.map((row) => ({
+    id: row.id,
+    available_quantity: toQuantity(row.available_quantity),
+  }));
 
-  const have = batches.reduce((sum, batch) => sum + batch.available_quantity, 0);
+  const have = addQuantities(...batches.map((batch) => batch.available_quantity));
   if (have < line.quantity) {
     throw new ConflictError(
       have === 0 ? `${line.label} is out of stock.` : `Only ${have} of ${line.label} left.`,
@@ -131,7 +137,7 @@ async function takeStock(
         created_by: actor.userId,
       },
     });
-    remaining -= take;
+    remaining = subtractQuantity(remaining, take);
   }
 }
 
@@ -147,7 +153,7 @@ export async function recordSale(
   input: RecordSaleInput,
 ): Promise<SaleDto> {
   if (typeof input.id !== "string" || !UUID.test(input.id))
-    throw new Error("The sale needs an id.");
+    throw new Error("We couldn't save this sale. Please try again.");
 
   // A retry of a sale that already went through: hand back what was saved, change nothing.
   const already = await findSale(tx, actor, input.storeId, input.id);

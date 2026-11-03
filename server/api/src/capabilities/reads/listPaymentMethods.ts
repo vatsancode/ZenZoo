@@ -1,5 +1,6 @@
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
+import { sortByPlacement } from "../../shared/placement";
 import {
   PAYMENT_METHOD_SELECT,
   toPaymentMethodDto,
@@ -15,10 +16,9 @@ export const listPaymentMethods = defineCapability<void, PaymentMethodDto[]>({
     return runInTenantContext(actor, async (tx) => {
       const rows = await tx.payment_methods.findMany({
         where: { tenant_id: actor.tenantId },
-        orderBy: { created_at: "asc" },
         select: PAYMENT_METHOD_SELECT,
       });
-      return rows.map(toPaymentMethodDto);
+      return sortByPlacement(rows).map(toPaymentMethodDto);
     });
   },
 });

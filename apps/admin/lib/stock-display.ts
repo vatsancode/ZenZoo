@@ -19,3 +19,10 @@ export function formatDate(iso: string): string {
     year: "numeric",
   });
 }
+
+/** A timestamp's calendar day (YYYY-MM-DD) where the viewer is, not in UTC. */
+export function localDay(timestamp: string): string {
+  const date = new Date(timestamp);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}

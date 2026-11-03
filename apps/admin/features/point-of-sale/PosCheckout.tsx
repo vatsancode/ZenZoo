@@ -19,6 +19,7 @@ import InfoTip from "../../components/InfoTip";
 import { UnitToggle } from "./PosLines";
 import ProfitBreakdown from "./ProfitBreakdown";
 import QuickAddCustomer from "./QuickAddCustomer";
+import { useSingleFlight } from "../../lib/useSingleFlight";
 
 export interface CheckoutDetails {
   customerId?: string;
@@ -48,6 +49,11 @@ interface PosCheckoutProps {
   dueBalanceOf: (customerId: string) => number;
   /** Saves the sale; resolves to an error message to show, or null when it went through. */
   onComplete: (details: CheckoutDetails) => Promise<string | null>;
+  /**
+   * The bill discount, when it is set somewhere else (a bar under the cart). The Bill box is then
+   * left out and the checkout is drawn plain, to sit inside a dialog instead of being a card.
+   */
+  bill?: { value: string; type: DiscountType };
 }
 
 const WALK_IN = "walk-in";
@@ -92,19 +98,22 @@ export default function PosCheckout({
   creditBalanceOf,
   dueBalanceOf,
   onComplete,
+  bill,
 }: PosCheckoutProps) {
   const { colors, radius, spacing } = useTheme();
   const canSell = useAccess().can("pos", "edit");
   const [customerId, setCustomerId] = useState(WALK_IN);
   // What was typed into "Add new customer" while the quick-add popup is open; null when closed.
   const [newCustomer, setNewCustomer] = useState<string | null>(null);
-  const [billValue, setBillValue] = useState("");
-  const [billType, setBillType] = useState<DiscountType>("amount");
+  const [ownBillValue, setBillValue] = useState("");
+  const [ownBillType, setBillType] = useState<DiscountType>("amount");
+  const billValue = bill?.value ?? ownBillValue;
+  const billType = bill?.type ?? ownBillType;
   const [pay, setPay] = useState<PayLine[]>([blankLine()]);
   const [useCredit, setUseCredit] = useState(false);
   // Typed over the most that can be used; null means as much as possible.
   const [creditTyped, setCreditTyped] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const { busy: submitting, run: runComplete } = useSingleFlight();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const methods = paymentOptions?.methods ?? [];
@@ -248,37 +257,37 @@ export default function PosCheckout({
     ]);
   }
 
-  async function complete() {
-    if (missing || submitting) return;
+  function complete() {
+    if (missing) return;
     const money_ = pay
       .map((line, index) => ({ line, amount: amounts[index]! }))
       .filter(({ line }) => line.method !== ON_ACCOUNT);
-    setSubmitting(true);
-    setSubmitError(null);
-    const failure = await onComplete({
-      customerId: customer?.id,
-      customerName: customer?.name ?? "Walk-in customer",
-      payments: coveredByCredit
-        ? []
-        : money_.map(({ line, amount }) => ({
-            method: line.method,
-            accountId: line.accountId,
-            amount,
-            tendered:
-              line.method === "CASH" &&
-              typed(line.tendered) !== null &&
-              typed(line.tendered)! > amount
-                ? typed(line.tendered)!
-                : undefined,
-          })),
-      dueAmount: coveredByCredit ? 0 : onAccount,
-      changeGiven: coveredByCredit ? 0 : changeGiven,
-      billValue,
-      billType,
-      creditUsed,
+    return runComplete(async () => {
+      setSubmitError(null);
+      const failure = await onComplete({
+        customerId: customer?.id,
+        customerName: customer?.name ?? "Walk-in customer",
+        payments: coveredByCredit
+          ? []
+          : money_.map(({ line, amount }) => ({
+              method: line.method,
+              accountId: line.accountId,
+              amount,
+              tendered:
+                line.method === "CASH" &&
+                typed(line.tendered) !== null &&
+                typed(line.tendered)! > amount
+                  ? typed(line.tendered)!
+                  : undefined,
+            })),
+        dueAmount: coveredByCredit ? 0 : onAccount,
+        changeGiven: coveredByCredit ? 0 : changeGiven,
+        billValue,
+        billType,
+        creditUsed,
+      });
+      if (failure) setSubmitError(failure);
     });
-    setSubmitting(false);
-    if (failure) setSubmitError(failure);
   }
 
   const row = (text: string, value: ReactNode, muted = true) => (
@@ -292,16 +301,8 @@ export default function PosCheckout({
 
   const takenNow = money(payNow - onAccount);
 
-  return (
-    <Card
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: spacing[8],
-        position: "sticky",
-        top: spacing[6],
-      }}
-    >
+  const content = (
+    <>
       <div>
         <Label>Customer</Label>
         <Select
@@ -334,7 +335,15 @@ export default function PosCheckout({
         ) : null}
       </div>
 
-      {/* The bill: what it adds up to, the discount on all of it, and the total to take. */}
+      {bill ? (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <span style={{ ...textStyle("bodyMedium"), color: colors.ink }}>Total</span>
+          <span style={{ ...textStyle("title2"), color: colors.ink }}>
+            {formatPrice(totals.total)}
+          </span>
+        </div>
+      ) : (
+      /* The bill: what it adds up to, the discount on all of it, and the total to take. */
       <div>
         <Label>Bill</Label>
         <div
@@ -437,6 +446,7 @@ export default function PosCheckout({
           ) : null}
         </div>
       </div>
+      )}
 
       {/* Only shown when this customer holds store credit, and there is something to pay. */}
       {balance > 0 && hasLines ? (
@@ -687,6 +697,22 @@ export default function PosCheckout({
           )}
         </div>
       </div>
+    </>
+  );
+
+  return bill ? (
+    <div style={{ display: "flex", flexDirection: "column", gap: spacing[6] }}>{content}</div>
+  ) : (
+    <Card
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: spacing[8],
+        position: "sticky",
+        top: spacing[6],
+      }}
+    >
+      {content}
     </Card>
   );
 }

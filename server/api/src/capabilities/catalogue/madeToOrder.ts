@@ -10,10 +10,16 @@ export interface MadeToOrderInput {
   price?: number;
 }
 
+/** sellables.name is varchar(200). */
+export const MAX_NAME_LENGTH = 200;
+
 /** Checks and normalises a made-to-order form - throws the message the person should see. */
 export function cleanMadeToOrderInput(input: MadeToOrderInput) {
   const name = input.name?.trim() ?? "";
   if (!name) throw new Error("Enter a name.");
+  if (name.length > MAX_NAME_LENGTH) {
+    throw new Error(`Keep the name to ${MAX_NAME_LENGTH} characters or fewer.`);
+  }
   if (!input.categoryId) throw new Error("Choose a category.");
   if (input.pricing !== "fixed" && input.pricing !== "custom") {
     throw new Error("Choose how it is priced.");

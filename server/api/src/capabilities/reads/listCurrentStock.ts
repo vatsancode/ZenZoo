@@ -2,6 +2,7 @@ import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
 import type { CurrentStockDto } from "../stock/dto";
+import { toQuantity } from "../../shared/quantity";
 
 export interface ListCurrentStockInput {
   storeId: string;
@@ -28,7 +29,7 @@ export const listCurrentStock = defineCapability<ListCurrentStockInput, CurrentS
       });
       return rows.map((row) => ({
         variantId: row.variant_id,
-        onHand: row._sum.available_quantity ?? 0,
+        onHand: toQuantity(row._sum.available_quantity),
       }));
     });
   },

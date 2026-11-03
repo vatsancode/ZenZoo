@@ -6,6 +6,7 @@ import { useEffect, useState, type KeyboardEvent } from "react";
 import { priceProblem, quantityProblem, toPrice } from "../features/stocks/stock-validation";
 import type { Variant, VariantInput } from "../features/stocks/stocks";
 import FormField from "./FormField";
+import { useSingleFlight } from "../lib/useSingleFlight";
 
 interface VariantSheetProps {
   open: boolean;
@@ -47,7 +48,7 @@ export default function VariantSheet({
   const [purchasePrice, setPurchasePrice] = useState("");
   const [skuError, setSkuError] = useState<{ sku: string; message: string } | null>(null);
   const [touched, setTouched] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const { busy: submitting, run: runSave } = useSingleFlight();
 
   useEffect(() => {
     if (!open) {
@@ -58,7 +59,6 @@ export default function VariantSheet({
       setPurchasePrice("");
       setSkuError(null);
       setTouched(false);
-      setSubmitting(false);
     } else if (variant) {
       setName(variant.name);
       setSku(variant.sku);
@@ -89,24 +89,24 @@ export default function VariantSheet({
 
   const valid = !nameError && !quantityError && !priceError && !purchasePriceError;
 
-  async function submit() {
-    setTouched(true);
-    if (!valid || submitting) return;
-    setSubmitting(true);
-    const clash = await onSubmit({
-      name,
-      sku,
-      quantity: Number(quantity),
-      // Unit is inherited from the product, not picked here - see createVariant/setProductUnit.
-      unit: variant?.unit ?? "",
-      price: toPrice(price),
-      purchasePrice: variant ? variant.purchasePrice : toPrice(purchasePrice),
+  function submit() {
+    return runSave(async () => {
+      setTouched(true);
+      if (!valid) return;
+      const clash = await onSubmit({
+        name,
+        sku,
+        quantity: Number(quantity),
+        // Unit is inherited from the product, not picked here - see createVariant/setProductUnit.
+        unit: variant?.unit ?? "",
+        price: toPrice(price),
+        purchasePrice: variant ? variant.purchasePrice : toPrice(purchasePrice),
+      });
+      if (clash) {
+        setSkuError({ sku: clash.sku, message: clash.error });
+        focusField("variant-sku");
+      }
     });
-    setSubmitting(false);
-    if (clash) {
-      setSkuError({ sku: clash.sku, message: clash.error });
-      focusField("variant-sku");
-    }
   }
 
   const order = isEditing
@@ -174,14 +174,14 @@ export default function VariantSheet({
           </FormField>
           <FormField
             id="variant-sku"
-            label={isEditing ? "SKU" : "SKU (OPTIONAL)"}
+            label="SKU (OPTIONAL)"
             span={6}
             error={skuMessage}
           >
             <Input
               id="variant-sku"
               autoComplete="off"
-              placeholder={isEditing ? undefined : "Auto-generated if blank"}
+              placeholder="Auto-generated if blank"
               value={sku}
               aria-invalid={skuMessage ? true : undefined}
               onChange={(event) => {

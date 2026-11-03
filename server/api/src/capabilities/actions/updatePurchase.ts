@@ -4,6 +4,7 @@ import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
 import { PURCHASE_SELECT, toPurchaseDto, type PurchaseDto } from "../purchases/dto";
 import { computeTotals, type PurchaseLineInput } from "../purchases/totals";
+import { assertVariantQuantities } from "../../shared/quantity";
 
 export interface UpdatePurchaseInput {
   id: string;
@@ -11,6 +12,8 @@ export interface UpdatePurchaseInput {
   referenceNumber?: string;
   purchaseDate: string;
   adjustmentAmount?: number;
+  /** One tax amount for the whole bill - spread across the lines, see computeTotals. */
+  taxAmount?: number;
   items: PurchaseLineInput[];
 }
 
@@ -26,10 +29,11 @@ export const updatePurchase = defineCapability<UpdatePurchaseInput, PurchaseDto>
       if (item.unitCost < 0) throw new Error("Cost can't be negative.");
     }
 
-    const totals = computeTotals(input.items, input.adjustmentAmount ?? 0);
+    const totals = computeTotals(input.items, input.adjustmentAmount ?? 0, input.taxAmount ?? 0);
 
     try {
       return await runInTenantContext(actor, async (tx) => {
+        await assertVariantQuantities(tx, input.items);
         const existing = await tx.purchases.findFirst({
           where: { id: input.id, tenant_id: actor.tenantId },
           select: { store_id: true, status: true },

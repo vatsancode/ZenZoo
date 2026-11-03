@@ -1,4 +1,4 @@
-import { saleLineNet, saleMethods, saleRefundTotal, type Sale } from "../sales/sales";
+import { saleLineNet, saleMethods, type Sale } from "../sales/sales";
 
 const round = (value: number) => Math.round(value * 100) / 100;
 
@@ -7,11 +7,6 @@ export function customerSales(sales: Sale[], customerId: string): Sale[] {
   return sales
     .filter((sale) => sale.customerId === customerId)
     .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-}
-
-/** What they spent, after anything refunded or credited back. */
-export function netSpent(sales: Sale[]): number {
-  return round(sales.reduce((sum, sale) => sum + sale.total - saleRefundTotal(sale), 0));
 }
 
 export interface CreditEntry {
@@ -50,10 +45,6 @@ export function creditEntries(sales: Sale[]): CreditEntry[] {
       amount: -(sale.creditUsed ?? 0),
     }));
   return [...issued, ...used].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-}
-
-export function creditBalance(entries: CreditEntry[]): number {
-  return round(entries.reduce((sum, entry) => sum + entry.amount, 0));
 }
 
 export interface Preferences {

@@ -46,6 +46,7 @@ import { createVariant } from "./capabilities/actions/createVariant";
 import { updateVariant } from "./capabilities/actions/updateVariant";
 import { setVariantStatus } from "./capabilities/actions/setVariantStatus";
 import { listSuppliers } from "./capabilities/reads/listSuppliers";
+import { getSupplier } from "./capabilities/reads/getSupplier";
 import { createSupplier } from "./capabilities/actions/createSupplier";
 import { updateSupplier } from "./capabilities/actions/updateSupplier";
 import { setSupplierStatus } from "./capabilities/actions/setSupplierStatus";
@@ -68,11 +69,19 @@ import { createTransfer } from "./capabilities/actions/createTransfer";
 import { listPaymentMethods } from "./capabilities/reads/listPaymentMethods";
 import { createPaymentMethod } from "./capabilities/actions/createPaymentMethod";
 import { setPaymentMethodStatus } from "./capabilities/actions/setPaymentMethodStatus";
+import { renamePaymentMethod } from "./capabilities/actions/renamePaymentMethod";
 import { createPurchasePayment } from "./capabilities/actions/createPurchasePayment";
 import { listPurchasePayments } from "./capabilities/reads/listPurchasePayments";
 import { listUnits } from "./capabilities/reads/listUnits";
 import { createUnit } from "./capabilities/actions/createUnit";
 import { setUnitStatus } from "./capabilities/actions/setUnitStatus";
+import { deleteUnit } from "./capabilities/actions/deleteUnit";
+import { updateUnit } from "./capabilities/actions/updateUnit";
+import { listAccountLedger } from "./capabilities/reads/listAccountLedger";
+import { reorderUnits } from "./capabilities/actions/reorderUnits";
+import { resetUnitOrder } from "./capabilities/actions/resetUnitOrder";
+import { reorderPaymentMethods } from "./capabilities/actions/reorderPaymentMethods";
+import { resetPaymentMethodOrder } from "./capabilities/actions/resetPaymentMethodOrder";
 import { listExpenseCategories } from "./capabilities/reads/listExpenseCategories";
 import { createExpenseCategory } from "./capabilities/actions/createExpenseCategory";
 import { renameExpenseCategory } from "./capabilities/actions/renameExpenseCategory";
@@ -121,6 +130,17 @@ const CAPABILITY_FAILURE_STATUS: Record<string, number> = {
   POLICY_VIOLATION: 409,
   CONFLICT: 409,
   INTERNAL_ERROR: 400,
+};
+
+const REQUIRED_FIELD_LABELS: Record<keyof ProvisionTenantInput, string> = {
+  ownerEmail: "owner email",
+  ownerPassword: "owner password",
+  ownerFirstName: "owner first name",
+  ownerLastName: "owner last name",
+  tenantName: "business name",
+  tenantSlug: "business web name",
+  storeName: "shop name",
+  storeCode: "shop code",
 };
 
 /** Sends a capability's result as the route's response - 2xx with its data, or the matching status with { error: message } on failure. */
@@ -199,7 +219,9 @@ export function createApp(): Express {
     const body = req.body as Partial<ProvisionTenantInput>;
     const missing = REQUIRED_FIELDS.filter((field) => !body[field]);
     if (missing.length > 0) {
-      res.status(400).json({ error: `Missing required fields: ${missing.join(", ")}` });
+      res.status(400).json({
+        error: `Fill in: ${missing.map((field) => REQUIRED_FIELD_LABELS[field]).join(", ")}.`,
+      });
       return;
     }
 
@@ -207,7 +229,9 @@ export function createApp(): Express {
       const result = await provisionTenant(body as ProvisionTenantInput);
       res.status(201).json(result);
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : "Unknown error" });
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Something went wrong. Please try again.",
+      });
     }
   });
 
@@ -215,7 +239,7 @@ export function createApp(): Express {
     const id = req.params.id as string;
     const newPassword = typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
     if (!newPassword) {
-      res.status(400).json({ error: "Missing required field: newPassword" });
+      res.status(400).json({ error: "Enter the new password." });
       return;
     }
 
@@ -223,7 +247,9 @@ export function createApp(): Express {
       const result = await resetTenantOwnerPassword(id, newPassword);
       res.status(200).json(result);
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : "Unknown error" });
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Something went wrong. Please try again.",
+      });
     }
   });
 
@@ -231,7 +257,7 @@ export function createApp(): Express {
     const id = req.params.id as string;
     const newEmail = typeof req.body?.newEmail === "string" ? req.body.newEmail.trim() : "";
     if (!newEmail) {
-      res.status(400).json({ error: "Missing required field: newEmail" });
+      res.status(400).json({ error: "Enter the new email." });
       return;
     }
 
@@ -239,7 +265,9 @@ export function createApp(): Express {
       const result = await updateTenantOwnerEmail(id, newEmail);
       res.status(200).json(result);
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : "Unknown error" });
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Something went wrong. Please try again.",
+      });
     }
   });
 
@@ -278,7 +306,7 @@ export function createApp(): Express {
   app.get("/categories", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await listCategories.execute(getActor(req), { storeId });
@@ -305,7 +333,7 @@ export function createApp(): Express {
   app.get("/products", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await listProducts.execute(getActor(req), { storeId });
@@ -356,7 +384,7 @@ export function createApp(): Express {
   app.get("/catalogue", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await listCatalogue.execute(getActor(req), { storeId });
@@ -366,7 +394,7 @@ export function createApp(): Express {
   app.get("/till/items", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await listTillItems.execute(getActor(req), { storeId });
@@ -376,7 +404,7 @@ export function createApp(): Express {
   app.get("/catalogue/candidates", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await listCatalogueCandidates.execute(getActor(req), { storeId });
@@ -386,7 +414,7 @@ export function createApp(): Express {
   app.get("/catalogue/settings", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await getCatalogueSettings.execute(getActor(req), { storeId });
@@ -407,7 +435,7 @@ export function createApp(): Express {
     const id = req.params.id as string;
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await removeFromCatalogue.execute(getActor(req), { id, storeId });
@@ -429,7 +457,7 @@ export function createApp(): Express {
     const id = req.params.id as string;
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await deleteMadeToOrderItem.execute(getActor(req), { id, storeId });
@@ -446,7 +474,7 @@ export function createApp(): Express {
   app.get("/customers/payment-options", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await listCustomerPaymentOptions.execute(getActor(req), { storeId });
@@ -456,7 +484,7 @@ export function createApp(): Express {
   app.get("/customers/sales", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const customerId = req.query.customerId as string | undefined;
@@ -467,7 +495,7 @@ export function createApp(): Express {
   app.get("/customers/payments", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const customerId = typeof req.query.customerId === "string" ? req.query.customerId : undefined;
@@ -518,7 +546,7 @@ export function createApp(): Express {
   app.get("/till/payment-options", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await listTillPaymentOptions.execute(getActor(req), { storeId });
@@ -528,7 +556,7 @@ export function createApp(): Express {
   app.get("/sales", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const text = (value: unknown) =>
@@ -560,7 +588,7 @@ export function createApp(): Express {
   app.get("/sales/payment-options", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await listSaleRefundOptions.execute(getActor(req), { storeId });
@@ -571,7 +599,7 @@ export function createApp(): Express {
     const id = req.params.id as string;
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await getSale.execute(getActor(req), { storeId, id });
@@ -597,7 +625,7 @@ export function createApp(): Express {
   const requireStoreId = (req: Request, res: Response): string | null => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return null;
     }
     return storeId;
@@ -658,7 +686,7 @@ export function createApp(): Express {
   app.get("/dashboard", requireTenantUser, async (req, res) => {
     const { storeId, from, to, timeZone } = req.query as Record<string, string | undefined>;
     if (!storeId || !from || !to) {
-      res.status(400).json({ error: "storeId, from and to are required" });
+      res.status(400).json({ error: "Choose a shop and a date range." });
       return;
     }
     const result = await getDashboard.execute(getActor(req), { storeId, from, to, timeZone });
@@ -698,6 +726,12 @@ export function createApp(): Express {
     sendCapabilityResult(res, result);
   });
 
+  app.get("/suppliers/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await getSupplier.execute(getActor(req), { id });
+    sendCapabilityResult(res, result);
+  });
+
   app.post("/suppliers", requireTenantUser, async (req, res) => {
     const result = await createSupplier.execute(getActor(req), req.body);
     sendCapabilityResult(res, result, 201);
@@ -718,7 +752,7 @@ export function createApp(): Express {
   app.get("/accounts", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await listAccounts.execute(getActor(req), { storeId });
@@ -745,10 +779,30 @@ export function createApp(): Express {
   app.get("/account-transfers", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await listTransfers.execute(getActor(req), { storeId });
+    sendCapabilityResult(res, result);
+  });
+
+  app.get("/account-ledger", requireTenantUser, async (req, res) => {
+    const storeId = requireStoreId(req, res);
+    if (!storeId) return;
+    const text = (key: string) => {
+      const value = req.query[key];
+      return typeof value === "string" && value !== "" ? value : undefined;
+    };
+    const result = await listAccountLedger.execute(getActor(req), {
+      storeId,
+      accountId: text("accountId"),
+      direction: text("direction") as "in" | "out" | undefined,
+      kind: text("kind"),
+      from: text("from"),
+      to: text("to"),
+      page: Number(text("page") ?? 1),
+      pageSize: Number(text("pageSize") ?? 25),
+    });
     sendCapabilityResult(res, result);
   });
 
@@ -767,9 +821,25 @@ export function createApp(): Express {
     sendCapabilityResult(res, result, 201);
   });
 
+  app.put("/payment-methods/order", requireTenantUser, async (req, res) => {
+    const result = await reorderPaymentMethods.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result);
+  });
+
+  app.delete("/payment-methods/order", requireTenantUser, async (req, res) => {
+    const result = await resetPaymentMethodOrder.execute(getActor(req), undefined);
+    sendCapabilityResult(res, result);
+  });
+
   app.put("/payment-methods/:id/status", requireTenantUser, async (req, res) => {
     const id = req.params.id as string;
     const result = await setPaymentMethodStatus.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.put("/payment-methods/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await renamePaymentMethod.execute(getActor(req), { ...req.body, id });
     sendCapabilityResult(res, result);
   });
 
@@ -783,9 +853,32 @@ export function createApp(): Express {
     sendCapabilityResult(res, result, 201);
   });
 
+  // "/units/order" has to come before "/units/:id", or "order" would be read as a unit id.
+  app.put("/units/order", requireTenantUser, async (req, res) => {
+    const result = await reorderUnits.execute(getActor(req), req.body);
+    sendCapabilityResult(res, result);
+  });
+
+  app.delete("/units/order", requireTenantUser, async (req, res) => {
+    const result = await resetUnitOrder.execute(getActor(req), undefined);
+    sendCapabilityResult(res, result);
+  });
+
   app.put("/units/:id/status", requireTenantUser, async (req, res) => {
     const id = req.params.id as string;
     const result = await setUnitStatus.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.put("/units/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await updateUnit.execute(getActor(req), { ...req.body, id });
+    sendCapabilityResult(res, result);
+  });
+
+  app.delete("/units/:id", requireTenantUser, async (req, res) => {
+    const id = req.params.id as string;
+    const result = await deleteUnit.execute(getActor(req), { id });
     sendCapabilityResult(res, result);
   });
 
@@ -814,7 +907,7 @@ export function createApp(): Express {
   app.get("/expenses", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await listExpenses.execute(getActor(req), { storeId });
@@ -847,7 +940,7 @@ export function createApp(): Express {
   app.get("/purchases", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await listPurchases.execute(getActor(req), { storeId });
@@ -897,7 +990,7 @@ export function createApp(): Express {
   app.get("/stock/current", requireTenantUser, async (req, res) => {
     const storeId = req.query.storeId as string | undefined;
     if (!storeId) {
-      res.status(400).json({ error: "storeId is required" });
+      res.status(400).json({ error: "Choose a shop first." });
       return;
     }
     const result = await listCurrentStock.execute(getActor(req), { storeId });

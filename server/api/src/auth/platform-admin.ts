@@ -45,7 +45,7 @@ export async function requirePlatformAdmin(
     // header was even sent), and that header is what makes browsers pop up
     // their native credentials dialog - only the actual Basic-Auth branch
     // below should trigger that, for non-browser callers like curl/Postman.
-    res.status(401).json({ error: "Platform admin credentials required" });
+    res.status(401).json({ error: "Sign in to continue." });
     return;
   }
 
@@ -53,7 +53,7 @@ export async function requirePlatformAdmin(
   const separatorIndex = decoded.indexOf(":");
   if (separatorIndex === -1) {
     res.set("WWW-Authenticate", "Basic");
-    res.status(401).json({ error: "Malformed credentials" });
+    res.status(401).json({ error: "Wrong email or password." });
     return;
   }
   const email = decoded.slice(0, separatorIndex);
@@ -62,7 +62,7 @@ export async function requirePlatformAdmin(
   const ok = await verifyPlatformAdmin(email, password);
   if (!ok) {
     res.set("WWW-Authenticate", "Basic");
-    res.status(401).json({ error: "Invalid platform admin credentials" });
+    res.status(401).json({ error: "Wrong email or password." });
     return;
   }
 

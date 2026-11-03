@@ -1,5 +1,6 @@
 import { redirectToSignInIfUnauthorized } from "./auth";
 import { ensureStoreId } from "./storeContext";
+import { apiFetch } from "./apiFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -23,7 +24,7 @@ export interface RealStockMovement {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, { credentials: "include" });
+  const response = await apiFetch(`${API_URL}${path}`, { credentials: "include" });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
     throw new Error("Couldn't load stock data.");
@@ -75,7 +76,7 @@ export async function recordMovement(
   variantId: string,
   input: RecordMovementInput,
 ): Promise<string | null> {
-  const response = await fetch(`${API_URL}/variants/${variantId}/movements`, {
+  const response = await apiFetch(`${API_URL}/variants/${variantId}/movements`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",

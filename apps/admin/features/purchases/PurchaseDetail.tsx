@@ -1,7 +1,7 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Badge, Button, Card, Modal, Notice, Tabs, textStyle } from "@zenzoo/ui-web";
+import { Badge, Button, Card, LoadError, Modal, Notice, Tabs, textStyle } from "@zenzoo/ui-web";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
@@ -40,6 +40,7 @@ import {
   type PaymentMethodLookup,
   type VendorLookup,
 } from "../../lib/lookups";
+import DetailPageLoading from "../../components/DetailPageLoading";
 import PageHeader from "../../components/PageHeader";
 import PaymentsModal, {
   countedRows,
@@ -51,6 +52,7 @@ import PaymentsModal, {
 import ReceiveSheet, { type DeliveryInput } from "./ReceiveSheet";
 import ReturnSheet from "../../components/ReturnSheet";
 import StatTile, { StatRow } from "../../components/StatTile";
+import { useSingleFlight } from "../../lib/useSingleFlight";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -126,12 +128,27 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
   const [returnOpen, setReturnOpen] = useState(false);
   const [paymentsOpen, setPaymentsOpen] = useState(false);
   const [paymentRows, setPaymentRows] = useState<PayRow[]>([newPayRow()]);
-  const [savingPayments, setSavingPayments] = useState(false);
+  const { busy: savingPayments, run: runPayments } = useSingleFlight();
+  const { busy: deliverySaving, run: runDelivery } = useSingleFlight();
+  const { busy: placingOrder, run: runPlaceOrder } = useSingleFlight();
+  const { busy: cancelling, run: runCancel } = useSingleFlight();
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [tab, setTab] = useState("overview");
 
+  // Set when fetching the purchase failed: the whole page before it first loads, otherwise a
+  // note above it (whatever was just done went through; only the refresh didn't).
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
   function refresh() {
-    getPurchase(purchaseId).then(setPurchase);
+    setRefreshing(true);
+    getPurchase(purchaseId)
+      .then((next) => {
+        setPurchase(next);
+        setLoadFailed(false);
+      })
+      .catch(() => setLoadFailed(true))
+      .finally(() => setRefreshing(false));
   }
 
   function refreshPayments() {
@@ -158,7 +175,15 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
 
   if (purchase === undefined) {
     return (
-      <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>Loading purchase...</div>
+      <DetailPageLoading
+        backHref="/purchases"
+        backLabel="Back to purchases"
+        failed={loadFailed}
+        failedTitle="Purchase"
+        failedMessage="Couldn't load this purchase."
+        onRetry={refresh}
+        retrying={refreshing}
+      />
     );
   }
 
@@ -189,30 +214,34 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
   const receiving = canEdit && canReceive(purchase);
   const notExpected = purchase.status === "draft" || purchase.status === "cancelled";
 
-  async function confirmDelivery({ date, arrived }: DeliveryInput) {
-    const lines = arrived.map(({ item, quantity }) => ({ purchaseItemId: item.id, quantity }));
-    const result = await receiveDelivery(purchase!.id, date, lines);
-    if (typeof result === "string") {
-      setNotice(result);
-      return;
-    }
-    const units = arrived.reduce((sum, entry) => sum + entry.quantity, 0);
-    setReceiveOpen(false);
-    setTab("items");
-    setNotice(
-      `Delivery recorded: ${units} ${units === 1 ? "unit" : "units"} across ${arrived.length} ${arrived.length === 1 ? "product" : "products"}. Your stock has been updated.`,
-    );
-    setPurchase(result);
+  function confirmDelivery({ date, arrived }: DeliveryInput) {
+    return runDelivery(async () => {
+      const lines = arrived.map(({ item, quantity }) => ({ purchaseItemId: item.id, quantity }));
+      const result = await receiveDelivery(purchase!.id, date, lines);
+      if (typeof result === "string") {
+        setNotice(result);
+        return;
+      }
+      const units = arrived.reduce((sum, entry) => sum + entry.quantity, 0);
+      setReceiveOpen(false);
+      setTab("items");
+      setNotice(
+        `Delivery recorded: ${units} ${units === 1 ? "unit" : "units"} across ${arrived.length} ${arrived.length === 1 ? "product" : "products"}. Your stock has been updated.`,
+      );
+      setPurchase(result);
+    });
   }
 
-  async function handlePlaceOrder() {
-    const result = await placeOrder(purchase!.id);
-    if (typeof result === "string") {
-      setNotice(result);
-      return;
-    }
-    setNotice("Order placed.");
-    setPurchase(result);
+  function handlePlaceOrder() {
+    return runPlaceOrder(async () => {
+      const result = await placeOrder(purchase!.id);
+      if (typeof result === "string") {
+        setNotice(result);
+        return;
+      }
+      setNotice("Order placed.");
+      setPurchase(result);
+    });
   }
 
   // UI only for now - no purchase_returns capability exists yet (see the
@@ -225,43 +254,44 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
     );
   }
 
-  async function handleRecordPayments() {
+  function handleRecordPayments() {
     const counted = countedRows(paymentRows);
     if (payRowProblems(paymentRows).length > 0 || counted.length === 0) return;
-    setSavingPayments(true);
-    setPaymentError(null);
-    for (const row of counted) {
-      const result = await createPurchasePayment(purchase!.id, {
-        paymentMethodId: row.method,
-        paymentAccountId: row.accountId,
-        amount: Number(row.amount),
-        date: row.date,
-      });
-      if (typeof result === "string") {
-        setSavingPayments(false);
-        setPaymentError(result);
-        return;
+    return runPayments(async () => {
+      setPaymentError(null);
+      for (const row of counted) {
+        const result = await createPurchasePayment(purchase!.id, {
+          paymentMethodId: row.method,
+          paymentAccountId: row.accountId,
+          amount: Number(row.amount),
+          date: row.date,
+        });
+        if (typeof result === "string") {
+          setPaymentError(result);
+          return;
+        }
       }
-    }
-    setSavingPayments(false);
-    const total = rowsTotal(counted);
-    setPaymentsOpen(false);
-    setPaymentRows([newPayRow()]);
-    setTab("payments");
-    setNotice(`${formatPrice(total)} recorded. Your account balance has been updated.`);
-    refreshPayments();
-    lookupAccounts().then(setAccounts);
+      const total = rowsTotal(counted);
+      setPaymentsOpen(false);
+      setPaymentRows([newPayRow()]);
+      setTab("payments");
+      setNotice(`${formatPrice(total)} recorded. Your account balance has been updated.`);
+      refreshPayments();
+      lookupAccounts().then(setAccounts);
+    });
   }
 
-  async function handleCancel() {
-    const result = await cancelPurchase(purchase!.id);
-    setCancelOpen(false);
-    if (typeof result === "string") {
-      setNotice(result);
-      return;
-    }
-    setNotice("Purchase cancelled.");
-    setPurchase(result);
+  function handleCancel() {
+    return runCancel(async () => {
+      const result = await cancelPurchase(purchase!.id);
+      setCancelOpen(false);
+      if (typeof result === "string") {
+        setNotice(result);
+        return;
+      }
+      setNotice("Purchase cancelled.");
+      setPurchase(result);
+    });
   }
 
   const columns = [
@@ -316,7 +346,12 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
               </Button>
             ) : null}
             {canEdit && purchase.status === "draft" ? (
-              <Button type="button" variant="primary" onClick={() => void handlePlaceOrder()}>
+              <Button
+                type="button"
+                variant="primary"
+                loading={placingOrder}
+                onClick={() => void handlePlaceOrder()}
+              >
                 Place order
               </Button>
             ) : null}
@@ -340,6 +375,14 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
       />
 
       {notice ? <Notice>{notice}</Notice> : null}
+
+      {loadFailed ? (
+        <LoadError
+          message="Couldn't refresh this purchase."
+          onRetry={refresh}
+          retrying={refreshing}
+        />
+      ) : null}
 
       <Tabs aria-label="Purchase sections" tabs={TABS} value={tab} onChange={setTab} />
 
@@ -412,10 +455,17 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
                 <div style={{ display: "flex", flexDirection: "column", gap: spacing[4] }}>
                   <Line label="Subtotal" value={formatPrice(purchase.subtotal)} />
                   {purchase.discount ? (
-                    <Line label="Extra discount" value={`- ${formatPrice(purchase.discount)}`} />
+                    <Line label="Line discounts" value={`- ${formatPrice(purchase.discount)}`} />
+                  ) : null}
+                  {/* The bill-level discount is stored as a negative adjustment. */}
+                  {purchase.adjustment < 0 ? (
+                    <Line
+                      label="Extra discount"
+                      value={`- ${formatPrice(-purchase.adjustment)}`}
+                    />
                   ) : null}
                   {purchase.tax ? <Line label="Tax" value={formatPrice(purchase.tax)} /> : null}
-                  {purchase.adjustment ? (
+                  {purchase.adjustment > 0 ? (
                     <Line label="Adjustment" value={formatPrice(purchase.adjustment)} />
                   ) : null}
                   <hr
@@ -684,6 +734,7 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
         purchase={purchase}
         onClose={() => setReceiveOpen(false)}
         onConfirm={(delivery) => void confirmDelivery(delivery)}
+        saving={deliverySaving}
       />
 
       <ReturnSheet
@@ -741,7 +792,12 @@ export default function PurchaseDetail({ purchaseId }: { purchaseId: string }) {
             <Button type="button" variant="secondary" onClick={() => setCancelOpen(false)}>
               Keep it
             </Button>
-            <Button type="button" variant="danger" onClick={() => void handleCancel()}>
+            <Button
+              type="button"
+              variant="danger"
+              loading={cancelling}
+              onClick={() => void handleCancel()}
+            >
               Cancel purchase
             </Button>
           </div>

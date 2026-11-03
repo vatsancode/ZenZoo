@@ -11,6 +11,7 @@ import {
   type InventoryItem,
 } from "../lib/catalogue-items";
 import { formatPrice } from "../lib/stock-display";
+import { useSingleFlight } from "../lib/useSingleFlight";
 
 export interface ImportFromInventoryModalProps {
   open: boolean;
@@ -32,7 +33,7 @@ export default function ImportFromInventoryModal({
   const [keepImporting, setKeepImporting] = useState(false);
   // What the store's setting was when the popup opened - to tell a real change from a re-save.
   const [wasAutoImport, setWasAutoImport] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run: runSave } = useSingleFlight();
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -93,30 +94,31 @@ export default function ImportFromInventoryModal({
     });
   }
 
-  async function submit() {
-    setSaving(true);
-    setError(null);
-    let added = 0;
-    // Switching auto-import on imports everything server-side in one go; it was
-    // already on, "import all" just sweeps up whatever is listed here.
-    if (keepImporting !== wasAutoImport) {
-      const result = await setAutoImport(keepImporting);
-      if (typeof result === "string") return fail(result);
-      added += result;
-    }
-    if (!(keepImporting && !wasAutoImport) && picked.size > 0) {
-      const result = await importInventoryItems([...picked]);
-      if (typeof result === "string") return fail(result);
-      added += result;
-    }
-    setSaving(false);
-    onImported(added);
-    onClose();
-  }
-
-  function fail(message: string) {
-    setSaving(false);
-    setError(message);
+  function submit() {
+    return runSave(async () => {
+      setError(null);
+      let added = 0;
+      // Switching auto-import on imports everything server-side in one go; it was
+      // already on, "import all" just sweeps up whatever is listed here.
+      if (keepImporting !== wasAutoImport) {
+        const result = await setAutoImport(keepImporting);
+        if (typeof result === "string") {
+          setError(result);
+          return;
+        }
+        added += result;
+      }
+      if (!(keepImporting && !wasAutoImport) && picked.size > 0) {
+        const result = await importInventoryItems([...picked]);
+        if (typeof result === "string") {
+          setError(result);
+          return;
+        }
+        added += result;
+      }
+      onImported(added);
+      onClose();
+    });
   }
 
   // Saving only the auto-import switch is allowed even with nothing ticked.

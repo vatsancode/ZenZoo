@@ -1,13 +1,19 @@
 import { UNIT_OPTIONS, type Product } from "../features/stocks/stocks";
 import { redirectToSignInIfUnauthorized } from "./auth";
 import { ensureStoreId } from "./storeContext";
+import { apiFetch } from "./apiFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+
+export interface Subcategory {
+  id: string;
+  name: string;
+}
 
 export interface Category {
   id: string;
   name: string;
-  subcategories: string[];
+  subcategories: Subcategory[];
 }
 
 export interface CategoryResponse {
@@ -17,9 +23,7 @@ export interface CategoryResponse {
   parentId: string | null;
 }
 
-// Raw rows from the last listCategories() call, kept so removeSubcategory
-// (which only gets a name, like the rest of this UI) can resolve it back to
-// the real row id the API needs - see categoriesSnapshot/rawSnapshot below.
+// Raw rows from the last listCategories() call, kept for categoriesSnapshot().
 let rawSnapshot: CategoryResponse[] = [];
 
 function toCategories(rows: CategoryResponse[]): Category[] {
@@ -27,7 +31,9 @@ function toCategories(rows: CategoryResponse[]): Category[] {
   return topLevel.map((row) => ({
     id: row.id,
     name: row.name,
-    subcategories: rows.filter((child) => child.parentId === row.id).map((child) => child.name),
+    subcategories: rows
+      .filter((child) => child.parentId === row.id)
+      .map((child) => ({ id: child.id, name: child.name })),
   }));
 }
 
@@ -46,7 +52,7 @@ async function parseError(response: Response): Promise<string> {
  */
 export async function listCategories(): Promise<Category[]> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/lookups/categories?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/lookups/categories?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -67,7 +73,7 @@ export async function listCategories(): Promise<Category[]> {
  */
 export async function listCategoriesFlat(): Promise<CategoryResponse[]> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/lookups/categories?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/lookups/categories?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -82,10 +88,10 @@ export function categoriesSnapshot(): Category[] {
   return toCategories(rawSnapshot);
 }
 
-/** Creates a top-level category - requires "catalogue:edit". Returns the new category, or null on error. */
-export async function addCategory(name: string): Promise<Category | null> {
+/** Creates a top-level category - requires "settings:edit". Returns the new category, or the server's reason it failed. */
+export async function addCategory(name: string): Promise<Category | string> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/categories`, {
+  const response = await apiFetch(`${API_URL}/categories`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -93,27 +99,30 @@ export async function addCategory(name: string): Promise<Category | null> {
   });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
-    return null;
+    return await parseError(response);
   }
   const row = (await response.json()) as CategoryResponse;
   return { id: row.id, name: row.name, subcategories: [] };
 }
 
-/** Renames a category or subcategory - requires "catalogue:edit". Returns false on error. */
-export async function renameCategory(id: string, name: string): Promise<boolean> {
-  const response = await fetch(`${API_URL}/categories/${id}`, {
+/** Renames a category or subcategory - requires "settings:edit". Returns the server's reason it failed, or null on success. */
+export async function renameCategory(id: string, name: string): Promise<string | null> {
+  const response = await apiFetch(`${API_URL}/categories/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify({ name }),
   });
-  if (!response.ok) redirectToSignInIfUnauthorized(response);
-  return response.ok;
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  return null;
 }
 
-/** Deletes a category (and its subcategories) - requires "catalogue:delete". Returns an error message, or null on success. */
+/** Deletes a category (and its subcategories) - requires "settings:delete". Returns an error message, or null on success. */
 export async function deleteCategory(id: string): Promise<string | null> {
-  const response = await fetch(`${API_URL}/categories/${id}`, {
+  const response = await apiFetch(`${API_URL}/categories/${id}`, {
     method: "DELETE",
     credentials: "include",
   });
@@ -124,30 +133,33 @@ export async function deleteCategory(id: string): Promise<string | null> {
   return null;
 }
 
-/** Adds a subcategory under an existing top-level category - requires "catalogue:edit". Returns false on error. */
-export async function addSubcategory(id: string, name: string): Promise<boolean> {
+/** Adds a subcategory under an existing top-level category - requires "settings:edit". Returns the server's reason it failed, or null on success. */
+export async function addSubcategory(id: string, name: string): Promise<string | null> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/categories`, {
+  const response = await apiFetch(`${API_URL}/categories`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify({ storeId, name, parentId: id }),
   });
-  if (!response.ok) redirectToSignInIfUnauthorized(response);
-  return response.ok;
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    return await parseError(response);
+  }
+  return null;
 }
 
 /**
  * Creates a category, or a subcategory when parentId is given, and hands back
  * the real row - for a form that has to submit the new id straight away.
- * Requires "catalogue:edit". Returns null on error.
+ * Requires "settings:edit". Returns the server's reason it failed instead of the row when it can't.
  */
 export async function createCategoryRow(
   name: string,
   parentId?: string,
-): Promise<CategoryResponse | null> {
+): Promise<CategoryResponse | string> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/categories`, {
+  const response = await apiFetch(`${API_URL}/categories`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -155,16 +167,9 @@ export async function createCategoryRow(
   });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
-    return null;
+    return await parseError(response);
   }
   return (await response.json()) as CategoryResponse;
-}
-
-/** Removes a subcategory by name, resolved against the last listCategories() snapshot. */
-export async function removeSubcategory(id: string, name: string): Promise<void> {
-  const child = rawSnapshot.find((row) => row.parentId === id && row.name === name);
-  if (!child) return;
-  await fetch(`${API_URL}/categories/${child.id}`, { method: "DELETE", credentials: "include" });
 }
 
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -178,6 +183,20 @@ export function productsInSubcategory(products: Product[], category: string, nam
   return products.filter(
     (product) => same(product.category, category) && same(product.subcategory ?? "", name),
   ).length;
+}
+
+/** Applies a subcategory rename to the products filed under it. */
+export function renameSubcategoryInProducts(
+  products: Product[],
+  category: string,
+  from: string,
+  to: string,
+): Product[] {
+  return products.map((product) =>
+    same(product.category, category) && same(product.subcategory ?? "", from)
+      ? { ...product, subcategory: to.trim() }
+      : product,
+  );
 }
 
 /** Applies a category rename to the products that carry the old name. */

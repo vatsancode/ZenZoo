@@ -3,6 +3,7 @@ import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
 import type { CategoryDto } from "../categories/dto";
 import type { UnitDto } from "../units/dto";
+import { sortByPlacement } from "../../shared/placement";
 import { categoriesInTx, unitsInTx } from "../lookups/queries";
 
 /**
@@ -96,10 +97,9 @@ export const lookupPaymentMethods = defineCapability<void, PaymentMethodLookup[]
     return runInTenantContext(actor, async (tx) => {
       const rows = await tx.payment_methods.findMany({
         where: { tenant_id: actor.tenantId },
-        orderBy: { created_at: "asc" },
-        select: { id: true, name: true, code: true, status: true },
+        select: { id: true, name: true, code: true, status: true, sort_order: true },
       });
-      return rows.map((row) => ({
+      return sortByPlacement(rows).map((row) => ({
         id: row.id,
         name: row.name,
         code: row.code,

@@ -1,8 +1,8 @@
-import { Prisma } from "@prisma/client";
 import type { CapabilityActor } from "@zenzoo/types";
 import { runInTenantContext, type TenantTx } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
 import { recordOpeningStock } from "../stocks/openingStock";
+import { GENERATED_SKU_ATTEMPTS, generateSku, isSkuClash } from "./sku";
 
 export interface AddVariantInput {
   sellableId: string;
@@ -39,54 +39,58 @@ export async function addVariant<T>(
     }
   }
 
-  try {
-    return await runInTenantContext(actor, async (tx) => {
-      const sellable = await tx.sellables.findFirst({
-        where: { id: input.sellableId, tenant_id: actor.tenantId },
-        select: { store_id: true },
-      });
-      if (!sellable) throw new Error("That product doesn't exist.");
-      await assertStoreAccess(actor, sellable.store_id);
+  const generatesSku = !input.sku?.trim();
 
-      // Every variant under a product shares one unit - a new variant
-      // inherits it from a sibling rather than being asked, same as
-      // createProduct's own "a sellable with its variants" shape. Every
-      // product always has >=1 variant by the time one can be added here.
-      const sibling = await tx.variants.findFirst({
-        where: { sellable_id: input.sellableId, tenant_id: actor.tenantId },
-        select: { unit_id: true },
-      });
-      if (!sibling) throw new Error("That product doesn't exist.");
-
-      const created = await tx.variants.create({
-        data: {
-          tenant_id: actor.tenantId,
-          store_id: sellable.store_id,
-          sellable_id: input.sellableId,
-          name,
-          sku: input.sku?.trim() || null,
-          base_price: input.basePrice,
-          unit_id: sibling.unit_id,
-        },
-        select: { id: true },
-      });
-
-      if (input.openingQuantity) {
-        await recordOpeningStock(tx, actor, {
-          storeId: sellable.store_id,
-          variantId: created.id,
-          quantity: input.openingQuantity,
-          unitCost: input.openingUnitCost!,
-          date: new Date().toISOString().slice(0, 10),
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await runInTenantContext(actor, async (tx) => {
+        const sellable = await tx.sellables.findFirst({
+          where: { id: input.sellableId, tenant_id: actor.tenantId },
+          select: { store_id: true, name: true },
         });
-      }
+        if (!sellable) throw new Error("That product doesn't exist.");
+        await assertStoreAccess(actor, sellable.store_id);
 
-      return project(tx, input.sellableId);
-    });
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      throw new Error("That SKU is already used by another product.");
+        // Every variant under a product shares one unit - a new variant
+        // inherits it from a sibling rather than being asked, same as
+        // createProduct's own "a sellable with its variants" shape. Every
+        // product always has >=1 variant by the time one can be added here.
+        const sibling = await tx.variants.findFirst({
+          where: { sellable_id: input.sellableId, tenant_id: actor.tenantId },
+          select: { unit_id: true },
+        });
+        if (!sibling) throw new Error("That product doesn't exist.");
+
+        const created = await tx.variants.create({
+          data: {
+            tenant_id: actor.tenantId,
+            store_id: sellable.store_id,
+            sellable_id: input.sellableId,
+            name,
+            sku: input.sku?.trim() || (await generateSku(tx, actor.tenantId, sellable.name, name)),
+            base_price: input.basePrice,
+            unit_id: sibling.unit_id,
+          },
+          select: { id: true },
+        });
+
+        if (input.openingQuantity) {
+          await recordOpeningStock(tx, actor, {
+            storeId: sellable.store_id,
+            variantId: created.id,
+            quantity: input.openingQuantity,
+            unitCost: input.openingUnitCost!,
+          });
+        }
+
+        return project(tx, input.sellableId);
+      });
+    } catch (error) {
+      if (isSkuClash(error)) {
+        if (generatesSku && attempt < GENERATED_SKU_ATTEMPTS) continue;
+        throw new Error("That SKU is already used by another product.");
+      }
+      throw error;
     }
-    throw error;
   }
 }

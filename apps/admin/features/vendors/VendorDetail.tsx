@@ -1,49 +1,101 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Badge, Button, Card, Notice, Switch, textStyle } from "@zenzoo/ui-web";
-import { useEffect, useState, type ReactNode } from "react";
+import { Badge, Button, Card, LoadError, Notice, Switch, textStyle } from "@zenzoo/ui-web";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useAccess } from "../../lib/access";
-import { editVendor, getVendor, setVendorStatus, type Vendor, type VendorInput } from "./vendors";
+import { useSingleFlight } from "../../lib/useSingleFlight";
+import {
+  editVendor,
+  getVendor,
+  lastSeenVendor,
+  listVendors,
+  setVendorStatus,
+  type Vendor,
+  type VendorInput,
+} from "./vendors";
+import DetailPageLoading from "../../components/DetailPageLoading";
 import PageHeader from "../../components/PageHeader";
 import StatTile, { StatRow } from "../../components/StatTile";
 import VendorSheet from "./VendorSheet";
 
 export default function VendorDetail({ vendorId }: { vendorId: string }) {
   const { colors, spacing } = useTheme();
-  // undefined while loading, null when there is no such vendor.
-  const [vendor, setVendor] = useState<Vendor | null | undefined>(undefined);
+  // undefined while loading, null when there is no such vendor. Opened from the list, it starts
+  // from the copy the list already has, so the page shows at once while the fresh copy loads.
+  const [vendor, setVendor] = useState<Vendor | null | undefined>(() => lastSeenVendor(vendorId));
+  // Every vendor, so editing here warns about a repeated name or GSTIN just as the list does.
+  // Only fetched once Edit is opened - just looking at a vendor needs nothing but that vendor.
+  const [vendors, setVendors] = useState<Vendor[]>([]);
   const canEdit = useAccess().can("vendors", "edit");
   const [editOpen, setEditOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const { busy: loading, run: runLoad } = useSingleFlight();
+  // One archive / reactivate at a time; the switch shows it is busy until the answer comes back.
+  const { busy: archiving, run: runArchive } = useSingleFlight();
+
+  const load = useCallback(
+    () =>
+      runLoad(async () => {
+        setLoadFailed(false);
+        try {
+          setVendor(await getVendor(vendorId));
+        } catch {
+          setLoadFailed(true);
+        }
+      }),
+    [runLoad, vendorId],
+  );
 
   useEffect(() => {
-    getVendor(vendorId).then(setVendor);
-  }, [vendorId]);
+    void load();
+  }, [load]);
 
-  async function handleSubmit(input: VendorInput) {
-    if (!vendor) return;
+  useEffect(() => {
+    if (!editOpen) return;
+    // The warnings are a convenience - the server still refuses a repeated GSTIN without them.
+    listVendors()
+      .then(setVendors)
+      .catch(() => setVendors([]));
+  }, [editOpen]);
+
+  async function handleSubmit(input: VendorInput): Promise<string | null> {
+    if (!vendor) return null;
     const result = await editVendor(vendor.id, input);
-    if (typeof result === "string") {
-      setNotice(result);
-      return;
-    }
+    // Refused: the sheet stays open and shows why.
+    if (typeof result === "string") return result;
     setVendor(result);
+    setVendors((all) => all.map((item) => (item.id === result.id ? result : item)));
     setEditOpen(false);
+    return null;
   }
 
-  async function toggleArchived(archived: boolean) {
-    if (!vendor) return;
-    const result = await setVendorStatus(vendor.id, archived);
-    if (typeof result === "string") {
-      setNotice(result);
-      return;
-    }
-    setVendor(result);
+  function toggleArchived(archived: boolean) {
+    return runArchive(async () => {
+      if (!vendor) return;
+      const result = await setVendorStatus(vendor.id, archived);
+      if (typeof result === "string") {
+        setNotice(result);
+        return;
+      }
+      setNotice(null);
+      setVendor(result);
+    });
   }
 
   if (vendor === undefined) {
-    return <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>Loading vendor...</div>;
+    return (
+      <DetailPageLoading
+        backHref="/vendors"
+        backLabel="Back to vendors"
+        failed={loadFailed}
+        failedTitle="Vendor"
+        failedMessage="Couldn't load this vendor."
+        onRetry={() => void load()}
+        retrying={loading}
+      />
+    );
   }
 
   if (vendor === null) {
@@ -96,6 +148,15 @@ export default function VendorDetail({ vendorId }: { vendorId: string }) {
 
       {notice ? <Notice>{notice}</Notice> : null}
 
+      {/* Showing the list's copy, but the fresh one didn't come. */}
+      {loadFailed ? (
+        <LoadError
+          message="Couldn't refresh this vendor."
+          onRetry={() => void load()}
+          retrying={loading}
+        />
+      ) : null}
+
       {/* No purchases exist yet, so these stay empty until that data does. */}
       <StatRow>
         <StatTile label="Total purchases" value="-" hint="No purchases yet" />
@@ -114,12 +175,19 @@ export default function VendorDetail({ vendorId }: { vendorId: string }) {
         >
           <div style={{ ...textStyle("headline"), color: colors.ink }}>Vendor details</div>
           <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
+            {archiving ? (
+              <span role="status" style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
+                Saving...
+              </span>
+            ) : null}
             <Badge tone={vendor.status === "active" ? "success" : "neutral"}>
               {vendor.status === "active" ? "Active" : "Archived"}
             </Badge>
             {canEdit ? (
               <Switch
                 checked={vendor.status === "active"}
+                disabled={archiving}
+                aria-busy={archiving || undefined}
                 aria-label={
                   vendor.status === "active"
                     ? `Archive ${vendor.name}`
@@ -160,6 +228,7 @@ export default function VendorDetail({ vendorId }: { vendorId: string }) {
       <VendorSheet
         open={editOpen}
         vendor={vendor}
+        existing={vendors}
         onClose={() => setEditOpen(false)}
         onSubmit={handleSubmit}
       />

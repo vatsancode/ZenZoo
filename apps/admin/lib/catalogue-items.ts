@@ -1,5 +1,6 @@
 import { redirectToSignInIfUnauthorized } from "./auth";
 import { ensureStoreId } from "./storeContext";
+import { apiFetch } from "./apiFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -68,7 +69,7 @@ async function parseError(response: Response): Promise<string> {
 /** Everything the till may sell: imported products and made-to-order items. */
 export async function listCatalogueItems(): Promise<CatalogueItem[]> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/catalogue?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/catalogue?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -96,7 +97,7 @@ export async function listCatalogueItems(): Promise<CatalogueItem[]> {
 /** Adds a made-to-order item. Returns an error message (e.g. the name is taken), or null. */
 export async function addCatalogueItem(input: CatalogueItemInput): Promise<string | null> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/catalogue/items`, {
+  const response = await apiFetch(`${API_URL}/catalogue/items`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -114,7 +115,7 @@ export async function editCatalogueItem(
   input: CatalogueItemInput,
 ): Promise<string | null> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/catalogue/items/${id}`, {
+  const response = await apiFetch(`${API_URL}/catalogue/items/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -130,7 +131,7 @@ export async function editCatalogueItem(
 /** Deletes a made-to-order item. Past sales that included it are kept. Returns an error message, or null. */
 export async function deleteCatalogueItem(id: string): Promise<string | null> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/catalogue/items/${id}?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/catalogue/items/${id}?storeId=${storeId}`, {
     method: "DELETE",
     credentials: "include",
   });
@@ -149,7 +150,7 @@ export async function deleteCatalogueItem(id: string): Promise<string | null> {
 /** Takes an imported product off the catalogue; it stays in inventory. Returns an error message, or null. */
 export async function removeFromCatalogue(id: string): Promise<string | null> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/catalogue/${id}?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/catalogue/${id}?storeId=${storeId}`, {
     method: "DELETE",
     credentials: "include",
   });
@@ -162,7 +163,7 @@ export async function removeFromCatalogue(id: string): Promise<string | null> {
 
 export async function listUnimportedInventoryItems(): Promise<InventoryItem[]> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/catalogue/candidates?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/catalogue/candidates?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -182,7 +183,7 @@ export async function listUnimportedInventoryItems(): Promise<InventoryItem[]> {
 /** Whether new inventory items land in the catalogue on their own. */
 export async function getAutoImport(): Promise<boolean> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/catalogue/settings?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/catalogue/settings?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -198,7 +199,7 @@ export async function getAutoImport(): Promise<boolean> {
  */
 export async function setAutoImport(on: boolean): Promise<number | string> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/catalogue/settings`, {
+  const response = await apiFetch(`${API_URL}/catalogue/settings`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -214,7 +215,7 @@ export async function setAutoImport(on: boolean): Promise<number | string> {
 /** Adds the chosen inventory products to the catalogue. Returns how many were added, or an error message. */
 export async function importInventoryItems(ids: string[]): Promise<number | string> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/catalogue/import`, {
+  const response = await apiFetch(`${API_URL}/catalogue/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",

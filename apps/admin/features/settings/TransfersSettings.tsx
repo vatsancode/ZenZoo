@@ -14,6 +14,8 @@ import {
 } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
 import { useAccess } from "../../lib/access";
+import { NOTE_MAX } from "../../lib/text";
+import { useSingleFlight } from "../../lib/useSingleFlight";
 import {
   addTransfer,
   listAccounts,
@@ -32,7 +34,7 @@ const ACTIVITY_SHOWN = 12;
 /** What is in each account, what has moved through the selected one, and a way to move money between them. */
 export default function TransfersSettings() {
   const { colors, radius, spacing, elevation } = useTheme();
-  const canEdit = useAccess().can("settings", "edit");
+  const canEdit = useAccess().can("accounts", "edit");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -43,7 +45,9 @@ export default function TransfersSettings() {
   const [date, setDate] = useState(today());
   const [note, setNote] = useState("");
   const [touched, setTouched] = useState(false);
-  const [saving, setSaving] = useState(false);
+  // Why the server turned the transfer down; shown in the form, not on the page behind it.
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const { busy: saving, run } = useSingleFlight();
   const [notice, setNotice] = useState<string | null>(null);
 
   async function reload() {
@@ -62,6 +66,10 @@ export default function TransfersSettings() {
     const timer = setTimeout(() => setNotice(null), 5000);
     return () => clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => {
+    setSubmitError(null);
+  }, [fromId, toId, amount, date, note]);
 
   const movements = transferMovements(accounts, transfers);
   const balances = new Map(accounts.map((account) => [account.id, account.balance]));
@@ -93,44 +101,50 @@ export default function TransfersSettings() {
   const valid = Object.values(problems).every((item) => item === null);
 
   function openForm(preselectFrom?: string) {
-    setFromId(preselectFrom ?? "");
+    // A switched-off account isn't in the From list, so it can't be the starting choice either.
+    const canSend = accounts.some(
+      (account) => account.id === preselectFrom && account.status === "active",
+    );
+    setFromId(canSend ? preselectFrom! : "");
     setToId("");
     setAmount("");
     setDate(today());
     setNote("");
     setTouched(false);
+    setSubmitError(null);
     setOpen(true);
   }
 
-  async function submit() {
-    setTouched(true);
-    if (!valid || !from || !to) return;
-    setSaving(true);
-    const result = await addTransfer({
-      fromAccountId: fromId,
-      toAccountId: toId,
-      amount: Math.round(value * 100) / 100,
-      date,
-      note: note.trim() || undefined,
+  function submit() {
+    return run(async () => {
+      setTouched(true);
+      if (!valid || !from || !to) return;
+      const result = await addTransfer({
+        fromAccountId: fromId,
+        toAccountId: toId,
+        amount: Math.round(value * 100) / 100,
+        date,
+        note: note.trim() || undefined,
+      });
+      if (typeof result === "string") {
+        setSubmitError(result);
+        // The balances here may be out of date (a sale since the page opened) - show the real ones.
+        void reload();
+        return;
+      }
+      setOpen(false);
+      setSelectedId(from.id);
+      setNotice(`${formatPrice(value)} moved from ${from.name} to ${to.name}.`);
+      void reload();
     });
-    setSaving(false);
-    if (typeof result === "string") {
-      setNotice(result);
-      return;
-    }
-    setOpen(false);
-    setSelectedId(from.id);
-    setNotice(`${formatPrice(value)} moved from ${from.name} to ${to.name}.`);
-    void reload();
   }
 
   // A disabled account can't send or receive a transfer, but still shows its balance above.
-  const options = accounts
-    .filter((account) => account.status === "active")
-    .map((account) => ({
-      value: account.id,
-      label: `${account.name} · ${formatPrice(balances.get(account.id) ?? 0)}`,
-    }));
+  const activeAccounts = accounts.filter((account) => account.status === "active");
+  const options = activeAccounts.map((account) => ({
+    value: account.id,
+    label: `${account.name} · ${formatPrice(balances.get(account.id) ?? 0)}`,
+  }));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: spacing[6] }}>
@@ -144,7 +158,7 @@ export default function TransfersSettings() {
             <Button
               type="button"
               variant="primary"
-              disabled={accounts.length < 2}
+              disabled={activeAccounts.length < 2}
               onClick={() => openForm(selectedId ?? undefined)}
             >
               Transfer money
@@ -201,7 +215,7 @@ export default function TransfersSettings() {
                 }}
               >
                 <Icon name="bank" size={18} />
-                <span style={{ ...textStyle("callout") }}>
+                <span style={{ ...textStyle("callout"), minWidth: 0, overflowWrap: "anywhere" }}>
                   {account.name}
                   {account.status === "disabled" ? " · disabled" : ""}
                 </span>
@@ -226,7 +240,7 @@ export default function TransfersSettings() {
           <div style={{ ...textStyle("headline"), color: colors.ink }}>
             {selected ? `${selected.name} activity` : "Activity"}
           </div>
-          {selected && accounts.length > 1 ? (
+          {selected?.status === "active" && activeAccounts.length > 1 ? (
             <button
               type="button"
               onClick={() => openForm(selected.id)}
@@ -266,7 +280,9 @@ export default function TransfersSettings() {
                 <span style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>
                   {formatDate(movement.date)}
                 </span>
-                <span style={{ ...textStyle("body"), color: colors.ink }}>{movement.label}</span>
+                <span style={{ ...textStyle("body"), color: colors.ink, overflowWrap: "anywhere" }}>
+                  {movement.label}
+                </span>
                 <span
                   style={{
                     ...textStyle("data"),
@@ -390,6 +406,7 @@ export default function TransfersSettings() {
                 id="transfer-note"
                 autoComplete="off"
                 placeholder="e.g. Cash deposited at the bank"
+                maxLength={NOTE_MAX}
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
               />
@@ -412,6 +429,15 @@ export default function TransfersSettings() {
             </div>
           ) : null}
 
+          {submitError ? (
+            <div
+              role="alert"
+              style={{ ...textStyle("footnote"), color: colors.danger, marginTop: spacing[5] }}
+            >
+              {submitError}
+            </div>
+          ) : null}
+
           <div
             style={{
               display: "flex",
@@ -428,8 +454,8 @@ export default function TransfersSettings() {
             >
               Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={saving}>
-              {saving ? "Transferring..." : "Transfer"}
+            <Button type="submit" variant="primary" loading={saving}>
+              Transfer
             </Button>
           </div>
         </form>

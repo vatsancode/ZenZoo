@@ -2,6 +2,8 @@ import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { hashPassword } from "../../shared/password";
 import { MEMBERSHIP_SELECT, toUserDto, type UserDto } from "../users/dto";
+import { fieldLengthProblem } from "../users/fieldLimits";
+import { getOwnerUserId, isOwnerRole, OWNER_ROLE_TAKEN } from "../users/ownerRules";
 
 export interface CreateUserInput {
   name: string;
@@ -35,15 +37,27 @@ export const createUser = defineCapability<CreateUserInput, UserDto>({
     const email = input.email.trim();
     if (!name) throw new Error("Enter the person's name.");
     if (!EMAIL_RE.test(email)) throw new Error("Enter a valid email address.");
+    if (!input.roleId) throw new Error("Choose a role.");
     const passwordProblem = passwordStrengthProblem(input.password);
     if (passwordProblem) throw new Error(passwordProblem);
 
     const [firstName, ...rest] = name.split(/\s+/);
     const lastName = rest.join(" ") || null;
+    const lengthProblem = fieldLengthProblem({
+      firstName: firstName ?? "",
+      lastName,
+      email,
+      phone: input.phone,
+    });
+    if (lengthProblem) throw new Error(lengthProblem);
     const passwordHash = await hashPassword(input.password);
 
     try {
       return await runInTenantContext(actor, async (tx) => {
+        if (await isOwnerRole(tx, actor.tenantId, input.roleId)) {
+          throw new Error(OWNER_ROLE_TAKEN);
+        }
+
         const rows = await tx.$queryRaw<AddTenantUserRow[]>`
           SELECT * FROM add_tenant_user(
             ${actor.tenantId}::UUID, ${input.roleId}::UUID, ${email},
@@ -51,7 +65,10 @@ export const createUser = defineCapability<CreateUserInput, UserDto>({
           )
         `;
         const created = rows[0];
-        if (!created) throw new Error("add_tenant_user returned no row");
+        if (!created) {
+          console.error("add_tenant_user returned no row");
+          throw new Error("We couldn't add this person. Please try again.");
+        }
 
         if (input.phone?.trim()) {
           await tx.users.update({
@@ -64,7 +81,7 @@ export const createUser = defineCapability<CreateUserInput, UserDto>({
           where: { id: created.membership_id },
           select: MEMBERSHIP_SELECT,
         });
-        return toUserDto(row, actor.userId);
+        return toUserDto(row, actor.userId, await getOwnerUserId(tx, actor.tenantId));
       });
     } catch (error) {
       // add_tenant_user runs as a raw query (see its own migration for why),
@@ -73,7 +90,7 @@ export const createUser = defineCapability<CreateUserInput, UserDto>({
       // tidier P2002/P2003 codes Prisma gives its own generated queries -
       // match on the underlying constraint name instead.
       const message = error instanceof Error ? error.message : "";
-      if (/users_email_key|unique constraint/i.test(message)) {
+      if (/users_email_key|unique constraint|23505/i.test(message)) {
         throw new Error("Someone with that email already exists.");
       }
       if (/tenant_memberships_role_fk/i.test(message)) {

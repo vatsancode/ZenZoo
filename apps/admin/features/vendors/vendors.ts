@@ -1,4 +1,5 @@
 import { redirectToSignInIfUnauthorized } from "../../lib/auth";
+import { apiFetch } from "../../lib/apiFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -47,19 +48,40 @@ async function parseError(response: Response): Promise<string> {
 
 /** Lists this tenant's vendors (the `suppliers` table) from the real API - requires at least "vendors:view". */
 export async function listVendors(): Promise<Vendor[]> {
-  const response = await fetch(`${API_URL}/suppliers`, { credentials: "include" });
+  const response = await apiFetch(`${API_URL}/suppliers`, { credentials: "include" });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
     throw new Error(await parseError(response));
   }
   const data = (await response.json()) as SupplierResponse[];
-  return data.map(toVendor);
+  const vendors = data.map(toVendor);
+  lastSeen = new Map(vendors.map((vendor) => [vendor.id, vendor]));
+  return vendors;
 }
 
-/** No GET /suppliers/:id route - the list is small, so this just fetches it and finds the one row. */
+// The vendors from the last list this tab loaded, so a vendor opened from the list can show
+// straight away while its own fresh copy loads. Only a head start - never trusted on its own.
+let lastSeen = new Map<string, Vendor>();
+
+/** The copy of this vendor from the last list loaded, if there was one. */
+export function lastSeenVendor(id: string): Vendor | undefined {
+  return lastSeen.get(id);
+}
+
+/**
+ * One vendor - requires "vendors:view". Null when there is no such vendor (including another
+ * shop's id); any other failure throws, so the page can offer Try again instead of "not found".
+ */
 export async function getVendor(id: string): Promise<Vendor | null> {
-  const vendors = await listVendors();
-  return vendors.find((vendor) => vendor.id === id) ?? null;
+  const response = await apiFetch(`${API_URL}/suppliers/${encodeURIComponent(id)}`, {
+    credentials: "include",
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    redirectToSignInIfUnauthorized(response);
+    throw new Error(await parseError(response));
+  }
+  return toVendor((await response.json()) as SupplierResponse);
 }
 
 export interface VendorInput {
@@ -72,7 +94,7 @@ export interface VendorInput {
 
 /** Creates a vendor - requires "vendors:edit". Returns the new vendor, or an error message. */
 export async function addVendor(input: VendorInput): Promise<Vendor | string> {
-  const response = await fetch(`${API_URL}/suppliers`, {
+  const response = await apiFetch(`${API_URL}/suppliers`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -87,7 +109,7 @@ export async function addVendor(input: VendorInput): Promise<Vendor | string> {
 
 /** Edits an existing vendor - requires "vendors:edit". Returns the updated vendor, or an error message. */
 export async function editVendor(id: string, input: VendorInput): Promise<Vendor | string> {
-  const response = await fetch(`${API_URL}/suppliers/${id}`, {
+  const response = await apiFetch(`${API_URL}/suppliers/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -102,7 +124,7 @@ export async function editVendor(id: string, input: VendorInput): Promise<Vendor
 
 /** Archives or reactivates a vendor - requires "vendors:edit". Returns the updated vendor, or an error message. */
 export async function setVendorStatus(id: string, archived: boolean): Promise<Vendor | string> {
-  const response = await fetch(`${API_URL}/suppliers/${id}/status`, {
+  const response = await apiFetch(`${API_URL}/suppliers/${id}/status`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -134,7 +156,19 @@ export function mapUrlProblem(value: string): string | null {
   return url.protocol === "https:" && isGoogleMaps ? null : "Enter a Google Maps link.";
 }
 
+/** Digits with spaces, + - ( ) between them, up to 20 characters (the database limit). Optional. */
+export function phoneProblem(value: string): string | null {
+  const text = value.trim();
+  if (!text) return null;
+  if (text.length > 20) return "Phone is too long (max 20 characters).";
+  return /^[0-9+()\- ]+$/.test(text) && /\d/.test(text)
+    ? null
+    : "Use digits only (spaces, + - ( ) allowed).";
+}
+
 export function emailProblem(value: string): string | null {
   const text = value.trim();
-  return !text || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text) ? null : "Enter a valid email address.";
+  return !text || /^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/.test(text)
+    ? null
+    : "Enter a valid email address.";
 }

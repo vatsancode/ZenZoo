@@ -15,6 +15,8 @@ import {
 } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
 import { useAccess } from "../../lib/access";
+import { ACCOUNT_NAME_MAX, cleanName } from "../../lib/text";
+import { useSingleFlight } from "../../lib/useSingleFlight";
 import {
   addAccount,
   editAccount,
@@ -32,7 +34,7 @@ import PageHeader from "../../components/PageHeader";
 /** The places money is received into and paid from: add, rename, correct the opening balance, switch on/off. */
 export default function AccountsSettings() {
   const { colors, radius, spacing } = useTheme();
-  const canEdit = useAccess().can("settings", "edit");
+  const canEdit = useAccess().can("accounts", "edit");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   // null = closed; an Account = editing it; "new" = adding.
@@ -40,7 +42,7 @@ export default function AccountsSettings() {
   const [name, setName] = useState("");
   const [opening, setOpening] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSingleFlight();
   const [notice, setNotice] = useState<string | null>(null);
 
   async function reload() {
@@ -70,28 +72,31 @@ export default function AccountsSettings() {
     setError(null);
   }
 
-  async function submit() {
-    const amount = opening.trim() === "" ? 0 : Number(opening);
-    if (Number.isNaN(amount) || amount < 0) {
-      setError("Enter the opening balance as a number, like 25000.");
-      return;
-    }
-    setSaving(true);
-    const result =
-      editing === "new"
-        ? await addAccount(name, amount)
-        : editing
-          ? await editAccount(editing.id, name, amount)
-          : null;
-    setSaving(false);
-    if (typeof result === "string") {
-      setError(result);
-      return;
-    }
-    setNotice(editing === "new" ? `${name.trim()} added.` : `${name.trim()} updated.`);
-    closeForm();
-    void reload();
+  function submit() {
+    return run(async () => {
+      const amount = opening.trim() === "" ? 0 : Number(opening);
+      if (Number.isNaN(amount) || amount < 0) {
+        setError("Enter the opening balance as a number, like 25000.");
+        return;
+      }
+      const result =
+        editing === "new"
+          ? await addAccount(name, amount)
+          : editing
+            ? await editAccount(editing.id, name, amount)
+            : null;
+      if (typeof result === "string") {
+        setError(result);
+        return;
+      }
+      setNotice(editing === "new" ? `${cleanName(name)} added.` : `${cleanName(name)} updated.`);
+      closeForm();
+      void reload();
+    });
   }
+
+  // Once money has moved in or out, the opening balance is history: it can't be rewritten.
+  const openingLocked = editing !== null && editing !== "new" && editing.openingLocked;
 
   const movements = transferMovements(accounts, transfers);
   const usedBy = (account: Account) =>
@@ -152,6 +157,7 @@ export default function AccountsSettings() {
                     display: "flex",
                     alignItems: "center",
                     gap: spacing[3],
+                    overflowWrap: "anywhere",
                   }}
                 >
                   {account.name}
@@ -227,6 +233,7 @@ export default function AccountsSettings() {
                 autoFocus
                 autoComplete="off"
                 placeholder="e.g. SBI Savings Account"
+                maxLength={ACCOUNT_NAME_MAX}
                 value={name}
                 disabled={saving}
                 onChange={(event) => {
@@ -242,15 +249,16 @@ export default function AccountsSettings() {
                 autoComplete="off"
                 placeholder="0.00"
                 value={opening}
-                disabled={saving}
+                disabled={saving || openingLocked}
                 onChange={(event) => {
                   setOpening(event.target.value);
                   setError(null);
                 }}
               />
               <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
-                What was in the account before it was tracked here. Sales, payments and transfers
-                are added to it.
+                {openingLocked
+                  ? "Locked: money has already moved in or out of this account. Every movement is listed under Transactions."
+                  : "What was in the account before it was tracked here. Sales, payments and transfers are added to it. It locks once money moves in or out."}
               </span>
             </FormField>
             {error ? (
@@ -270,8 +278,8 @@ export default function AccountsSettings() {
             <Button type="button" variant="secondary" onClick={closeForm} disabled={saving}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={saving}>
-              {saving ? "Saving..." : editing === "new" ? "Add account" : "Save changes"}
+            <Button type="submit" variant="primary" loading={saving}>
+              {editing === "new" ? "Add account" : "Save changes"}
             </Button>
           </div>
         </form>

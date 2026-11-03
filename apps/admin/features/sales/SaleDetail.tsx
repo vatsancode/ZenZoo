@@ -30,6 +30,7 @@ import type { TillPaymentOptions } from "../../lib/till";
 import SaleReturnSheet from "./SaleReturnSheet";
 import PageHeader from "../../components/PageHeader";
 import StatTile, { StatRow } from "../../components/StatTile";
+import { useSingleFlight } from "../../lib/useSingleFlight";
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   const { colors, spacing } = useTheme();
@@ -78,7 +79,7 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
   const [refundOptions, setRefundOptions] = useState<TillPaymentOptions | null>(null);
   const [voidOpen, setVoidOpen] = useState(false);
   const [voidReason, setVoidReason] = useState("");
-  const [voiding, setVoiding] = useState(false);
+  const { busy: voiding, run: runVoid } = useSingleFlight();
   const [voidError, setVoidError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -141,19 +142,19 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
     return null;
   }
 
-  async function confirmVoid() {
+  function confirmVoid() {
     if (!sale) return;
-    setVoiding(true);
-    setVoidError(null);
-    const result = await voidSale(sale.id, voidReason);
-    setVoiding(false);
-    if (!result.ok) {
-      setVoidError(result.error);
-      return;
-    }
-    setSale(result.sale);
-    setVoidOpen(false);
-    setNotice(`Sale ${result.sale.number} cancelled. The items are back in stock.`);
+    return runVoid(async () => {
+      setVoidError(null);
+      const result = await voidSale(sale.id, voidReason);
+      if (!result.ok) {
+        setVoidError(result.error);
+        return;
+      }
+      setSale(result.sale);
+      setVoidOpen(false);
+      setNotice(`Sale ${result.sale.number} cancelled. The items are back in stock.`);
+    });
   }
 
   const profit = saleProfitOf(sale);
@@ -255,13 +256,14 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
         <div style={{ ...textStyle("headline"), color: colors.ink, marginBottom: spacing[5] }}>
           Items sold
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: spacing[1] }}>
+        <div style={{ display: "flex", flexDirection: "column" }}>
           <div
             style={{
               display: "grid",
               gridTemplateColumns: columns,
               columnGap: spacing[3],
-              padding: `0 ${spacing[4]}px ${spacing[2]}px`,
+              padding: `0 ${spacing[4]}px ${spacing[3]}px`,
+              borderBottom: `1px solid ${colors.border}`,
               ...textStyle("caption"),
               color: colors.inkMuted,
             }}
@@ -272,7 +274,7 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
             {hasLineDiscount ? <span>DISCOUNT</span> : null}
             <span style={{ textAlign: "right" }}>TOTAL</span>
           </div>
-          {sale.lines.map((line) => (
+          {sale.lines.map((line, index) => (
             <div
               key={line.sku}
               onMouseEnter={() => setHovered(line.sku)}
@@ -284,7 +286,9 @@ export default function SaleDetail({ saleId }: { saleId: string }) {
                 alignItems: "center",
                 minHeight: 72,
                 padding: `${spacing[3]}px ${spacing[4]}px`,
-                borderRadius: radius.lg,
+                // A line between items; the header's own line covers the first.
+                borderTop: index === 0 ? "none" : `1px solid ${colors.border}`,
+                borderRadius: radius.sm,
                 backgroundColor:
                   hovered === line.sku
                     ? `color-mix(in srgb, ${colors.ink} 5%, transparent)`

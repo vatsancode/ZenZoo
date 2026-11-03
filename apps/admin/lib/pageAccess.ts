@@ -1,23 +1,30 @@
+import type { IconName } from "@zenzoo/ui-web";
 import type { AccessLevel, PermissionArea } from "../features/settings/users";
 
 /** The pages in the sidebar, in order. */
 export interface NavItem {
   label: string;
   href: string;
+  /** Shown alone when the sidebar is collapsed. */
+  icon: IconName;
 }
 
+// The icons are stand-ins from the shared set until each page gets its own drawn icon.
 export const NAV_ITEMS: NavItem[] = [
-  { label: "Dashboard", href: "/" },
-  { label: "Vendors", href: "/vendors" },
-  { label: "Purchases", href: "/purchases" },
-  { label: "Stocks", href: "/stocks" },
-  { label: "Expenses", href: "/expenses" },
-  { label: "Catalogue", href: "/catalogue" },
-  { label: "Point of Sale", href: "/point-of-sale" },
-  { label: "Sales", href: "/sales" },
-  { label: "Customers", href: "/customers" },
-  { label: "Settings", href: "/settings" },
-  { label: "Style guide", href: "/style-guide" },
+  { label: "Dashboard", href: "/", icon: "layout" },
+  { label: "Vendors", href: "/vendors", icon: "bank" },
+  { label: "Purchases", href: "/purchases", icon: "receipt" },
+  { label: "Stocks", href: "/stocks", icon: "ruler" },
+  { label: "Expenses", href: "/expenses", icon: "card" },
+  { label: "Catalogue", href: "/catalogue", icon: "tag" },
+  { label: "Point of Sale", href: "/point-of-sale", icon: "plus" },
+  { label: "Sales", href: "/sales", icon: "history" },
+  { label: "Customers", href: "/customers", icon: "user" },
+  { label: "Employees", href: "/employees", icon: "users" },
+  { label: "Slot management", href: "/slots", icon: "calendar" },
+  { label: "Transactions", href: "/transactions", icon: "transfer" },
+  { label: "Settings", href: "/settings", icon: "settings" },
+  { label: "Style guide", href: "/style-guide", icon: "theme" },
 ];
 
 interface PageRule {
@@ -47,8 +54,11 @@ const RULES: PageRule[] = [
   { path: "/settings/users", all: ["users"] },
   // The page lists and totals expenses, so it needs Expenses as well as Settings.
   { path: "/settings/expense-categories", all: ["settings", "expenses"] },
+  // Accounts and the money moving between them have their own area, not Settings.
+  { path: "/settings/accounts", all: ["accounts"] },
+  { path: "/settings/transfers", all: ["accounts"] },
   // The Settings home is for anyone with a card to open; each card checks its own page.
-  { path: "/settings", exact: true, any: ["settings", "users"] },
+  { path: "/settings", exact: true, any: ["settings", "users", "accounts"] },
   { path: "/settings", all: ["settings"] },
   { path: "/vendors", all: ["vendors"] },
   // Writing a purchase takes more than looking at one.
@@ -61,6 +71,7 @@ const RULES: PageRule[] = [
   { path: "/point-of-sale", all: ["pos"] },
   { path: "/sales", all: ["sales"] },
   { path: "/customers", all: ["customers"] },
+  { path: "/transactions", all: ["accounts"] },
 ];
 
 export type CanFn = (area: PermissionArea, level: AccessLevel) => boolean;

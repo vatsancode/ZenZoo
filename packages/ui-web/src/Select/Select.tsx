@@ -36,6 +36,18 @@ export interface SelectProps {
   creatable?: boolean;
   createLabel?: string;
   /**
+   * Hands "+ <createLabel>" to the caller instead of showing the inline box, e.g. to open a
+   * dialog that saves the new option. Gets whatever was typed in the search box. The caller
+   * adds the option and then selects it through `onChange`; nothing typed is reported here.
+   */
+  onCreateRequest?: (typed: string) => void;
+  /**
+   * A note shown inside the open list, under the options, when a search finds nothing or when the
+   * list is short enough to leave empty room. Not selectable. For things like "ask someone with
+   * access to add a new option" when `creatable` is off.
+   */
+  hint?: string;
+  /**
    * Called for keys pressed while the list is closed. Call preventDefault to
    * stop Select from also acting on the key (e.g. to move to the next field).
    */
@@ -46,6 +58,8 @@ export interface SelectProps {
 const CREATE = "__create__";
 const LIST_MAX_HEIGHT = 200;
 const PANEL_ESTIMATED_HEIGHT = 300;
+// Roughly one option row; a list of fewer rows than fit in LIST_MAX_HEIGHT leaves room for the hint.
+const OPTION_ROW_HEIGHT = 36;
 
 export function Select({
   options,
@@ -57,6 +71,8 @@ export function Select({
   searchable = true,
   creatable,
   createLabel = "Add new",
+  onCreateRequest,
+  hint,
   onKeyDown,
   style,
   ...aria
@@ -80,6 +96,8 @@ export function Select({
     return creatable ? [...matches, { value: CREATE, label: `+ ${createLabel}` }] : matches;
   }, [options, query, creatable, createLabel]);
   const hasMatches = items.some((item) => item.value !== CREATE);
+  const matchCount = items.filter((item) => item.value !== CREATE).length;
+  const showHint = Boolean(hint) && (!hasMatches || matchCount * OPTION_ROW_HEIGHT < LIST_MAX_HEIGHT);
 
   const selected = options.find((option) => option.value === value);
   const invalid = aria["aria-invalid"] === true;
@@ -120,6 +138,10 @@ export function Select({
   function choose(item: SelectOption) {
     setOpen(false);
     if (item.value === CREATE) {
+      if (onCreateRequest) {
+        onCreateRequest(query.trim());
+        return;
+      }
       setDraft(query.trim());
       setCreating(true);
       return;
@@ -251,12 +273,17 @@ export function Select({
           justifyContent: "space-between",
           gap: spacing[2],
           textAlign: "start",
-          color: disabled ? colors.inkFaint : selected || value ? colors.ink : colors.inkFaint,
+          color: disabled
+            ? colors.inkFaint
+            : selected || (creatable && !onCreateRequest && value)
+              ? colors.ink
+              : colors.inkFaint,
           cursor: disabled ? "not-allowed" : "pointer",
         }}
       >
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {selected?.label ?? (value || placeholder)}
+          {/* Only a typed-in value can be missing from `options`; anything else (an id) never shows. */}
+          {selected?.label ?? ((creatable && !onCreateRequest && value) || placeholder)}
         </span>
         <svg
           width="16"
@@ -358,6 +385,14 @@ export function Select({
                 </li>
               );
             })}
+            {showHint ? (
+              <li
+                role="presentation"
+                style={{ ...textStyle("footnote"), color: colors.inkMuted, padding: spacing[3] }}
+              >
+                {hint}
+              </li>
+            ) : null}
           </ul>
         </div>
       ) : null}

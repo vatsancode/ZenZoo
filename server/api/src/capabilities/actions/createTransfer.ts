@@ -1,6 +1,7 @@
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
+import { assertFits } from "../../shared/names";
 import { TRANSFER_SELECT, toTransferDto, type TransferDto } from "../accounts/dto";
 
 export interface CreateTransferInput {
@@ -24,7 +25,7 @@ export interface CreateTransferInput {
 export const createTransfer = defineCapability<CreateTransferInput, TransferDto>({
   name: "createTransfer",
   kind: "action",
-  requiredPermission: "settings:edit",
+  requiredPermission: "accounts:edit",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);
 
@@ -32,6 +33,9 @@ export const createTransfer = defineCapability<CreateTransferInput, TransferDto>
       throw new Error("Choose two different accounts.");
     }
     if (!(input.amount > 0)) throw new Error("Enter an amount more than zero.");
+    // A note is free text, so it is only trimmed - the person's own spacing stays.
+    const note = input.note?.trim() || null;
+    if (note) assertFits(note, 500, "The note");
 
     try {
       return await runInTenantContext(actor, async (tx) => {
@@ -53,7 +57,7 @@ export const createTransfer = defineCapability<CreateTransferInput, TransferDto>
             to_account_id: input.toAccountId,
             amount: input.amount,
             transfer_date: new Date(input.date),
-            note: input.note?.trim() || null,
+            note,
             created_by: actor.userId,
           },
           select: TRANSFER_SELECT,

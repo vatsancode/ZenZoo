@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
+import { assertFits, cleanName } from "../../shared/names";
 import {
   EXPENSE_CATEGORY_SELECT,
   toExpenseCategoryDto,
@@ -19,8 +20,9 @@ export const createExpenseCategory = defineCapability<
   kind: "action",
   requiredPermission: "expenses:edit",
   async handler(actor, input) {
-    const name = input.name.trim();
+    const name = cleanName(input.name);
     if (!name) throw new Error("Enter a name.");
+    assertFits(name, 100, "The category name");
 
     try {
       return await runInTenantContext(actor, async (tx) => {

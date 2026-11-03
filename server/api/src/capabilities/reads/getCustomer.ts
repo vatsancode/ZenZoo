@@ -2,6 +2,7 @@ import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { CUSTOMER_SELECT, toCustomerDto, type CustomerDto } from "../customers/dto";
 import { customerBalance } from "../customers/ledger";
+import { customerSpend } from "../customers/spend";
 
 export interface GetCustomerInput {
   id: string;
@@ -19,7 +20,11 @@ export const getCustomer = defineCapability<GetCustomerInput, CustomerDto>({
         select: CUSTOMER_SELECT,
       });
       if (!row) throw new Error("That customer doesn't exist.");
-      return toCustomerDto(row, await customerBalance(tx, actor.tenantId, row.id));
+      return toCustomerDto(
+        row,
+        await customerBalance(tx, actor.tenantId, row.id),
+        await customerSpend(tx, actor.tenantId, row.id),
+      );
     });
   },
 });

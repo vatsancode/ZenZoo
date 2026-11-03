@@ -1,6 +1,7 @@
 import { redirectToSignInIfUnauthorized } from "./auth";
 import { ensureStoreId } from "./storeContext";
 import type { CategoryRow, DateRange, DayPoint } from "./dashboard";
+import { apiFetch } from "./apiFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -51,7 +52,7 @@ export async function getDashboard(range: DateRange): Promise<Dashboard> {
     to: range.to,
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   });
-  const response = await fetch(`${API_URL}/dashboard?${query}`, { credentials: "include" });
+  const response = await apiFetch(`${API_URL}/dashboard?${query}`, { credentials: "include" });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
     let message = "Couldn't load the dashboard.";

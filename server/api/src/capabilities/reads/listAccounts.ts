@@ -10,7 +10,7 @@ export interface ListAccountsInput {
 export const listAccounts = defineCapability<ListAccountsInput, AccountDto[]>({
   name: "listAccounts",
   kind: "read",
-  requiredPermission: "settings:view",
+  requiredPermission: "accounts:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);
 

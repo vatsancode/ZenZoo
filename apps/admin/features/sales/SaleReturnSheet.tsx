@@ -17,6 +17,9 @@ import { formatPrice } from "../../lib/stock-display";
 import FormField from "../../components/FormField";
 import InfoTip from "../../components/InfoTip";
 import QuantityPill from "../../components/QuantityPill";
+import { useSingleFlight } from "../../lib/useSingleFlight";
+import { addQuantities, hasQuantityPrecision } from "@zenzoo/pricing";
+import { wholeNumbersOnly } from "../../lib/unitRules";
 
 interface SaleReturnSheetProps {
   open: boolean;
@@ -64,7 +67,7 @@ export default function SaleReturnSheet({
   const [method, setMethod] = useState("");
   const [accountId, setAccountId] = useState("");
   const [touched, setTouched] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run: runConfirm } = useSingleFlight();
   const [serverError, setServerError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -78,7 +81,6 @@ export default function SaleReturnSheet({
     setMethod("");
     setAccountId("");
     setTouched(false);
-    setSaving(false);
     setServerError(null);
   }, [open]);
 
@@ -86,7 +88,7 @@ export default function SaleReturnSheet({
   const picks = lines
     .map((line) => ({ line, quantity: number(quantities[line.sku] ?? "") }))
     .filter((entry) => entry.quantity > 0);
-  const units = picks.reduce((sum, entry) => sum + entry.quantity, 0);
+  const units = addQuantities(...picks.map((entry) => entry.quantity));
   // The same shared maths the server uses, so what is shown is what is paid.
   const value = money(
     picks.reduce((sum, entry) => sum + returnValueOf(entry.line, entry.quantity), 0),
@@ -97,7 +99,8 @@ export default function SaleReturnSheet({
     const quantity = number(typed);
     if (typed.trim() === "") return null;
     if (Number.isNaN(quantity) || quantity < 0) return "Enter a number.";
-    if (!Number.isInteger(quantity)) return "Whole pieces only.";
+    if (wholeNumbersOnly(line.unit) && !Number.isInteger(quantity)) return "Whole pieces only.";
+    if (!hasQuantityPrecision(quantity)) return "Use at most 3 decimal places.";
     if (quantity > returnableOf(line)) return `Only ${returnableOf(line)} can come back.`;
     return null;
   }
@@ -128,31 +131,31 @@ export default function SaleReturnSheet({
     }
   }
 
-  async function confirm() {
-    setTouched(true);
-    if (!stepTwoReady || saving) return;
-    setSaving(true);
-    setServerError(null);
-    const failure = await onConfirm({
-      reason,
-      note: note.trim() || undefined,
-      items: picks.flatMap(({ line, quantity }) =>
-        line.id ? [{ saleItemId: line.id, quantity }] : [],
-      ),
-      refund:
-        mode === "none"
-          ? { mode }
-          : {
-              mode,
-              // Only when the customer is refunded less than the full value; otherwise the server
-              // works the full value out itself.
-              amount: amount === null ? undefined : money(paid),
-              paymentMethodId: mode === "money" ? method : undefined,
-              paymentAccountId: mode === "money" ? accountId : undefined,
-            },
+  function confirm() {
+    return runConfirm(async () => {
+      setTouched(true);
+      if (!stepTwoReady) return;
+      setServerError(null);
+      const failure = await onConfirm({
+        reason,
+        note: note.trim() || undefined,
+        items: picks.flatMap(({ line, quantity }) =>
+          line.id ? [{ saleItemId: line.id, quantity }] : [],
+        ),
+        refund:
+          mode === "none"
+            ? { mode }
+            : {
+                mode,
+                // Only when the customer is refunded less than the full value; otherwise the server
+                // works the full value out itself.
+                amount: amount === null ? undefined : money(paid),
+                paymentMethodId: mode === "money" ? method : undefined,
+                paymentAccountId: mode === "money" ? accountId : undefined,
+              },
+      });
+      if (failure) setServerError(failure);
     });
-    setSaving(false);
-    if (failure) setServerError(failure);
   }
 
   const refundOptions: { value: SaleRefundMode; label: string }[] = [

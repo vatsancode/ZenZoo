@@ -11,7 +11,7 @@ export interface SetAccountStatusInput {
 export const setAccountStatus = defineCapability<SetAccountStatusInput, AccountDto>({
   name: "setAccountStatus",
   kind: "action",
-  requiredPermission: "settings:edit",
+  requiredPermission: "accounts:edit",
   async handler(actor, input) {
     return runInTenantContext(actor, async (tx) => {
       const existing = await tx.payment_accounts.findFirst({

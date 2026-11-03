@@ -35,15 +35,28 @@ interface ProvisionRow {
 export async function provisionTenant(input: ProvisionTenantInput): Promise<ProvisionTenantResult> {
   const passwordHash = await hashPassword(input.ownerPassword);
 
-  const rows = await prisma.$queryRaw<ProvisionRow[]>`
-    SELECT * FROM provision_new_account(
-      ${input.ownerEmail}, ${passwordHash}, ${input.ownerFirstName}, ${input.ownerLastName},
-      ${input.tenantName}, ${input.tenantSlug}, ${input.storeName}, ${input.storeCode}
-    )
-  `;
+  let rows: ProvisionRow[];
+  try {
+    rows = await prisma.$queryRaw<ProvisionRow[]>`
+      SELECT * FROM provision_new_account(
+        ${input.ownerEmail}, ${passwordHash}, ${input.ownerFirstName}, ${input.ownerLastName},
+        ${input.tenantName}, ${input.tenantSlug}, ${input.storeName}, ${input.storeCode}
+      )
+    `;
+  } catch (error) {
+    // Raw query, so Postgres's unique violation (23505) arrives wrapped in
+    // Prisma's text - tell the two likely clashes apart by the key it names.
+    const message = error instanceof Error ? error.message : "";
+    if (/23505|already exists/i.test(message)) {
+      if (/\(email\)/i.test(message)) throw new Error("Someone with that email already exists.");
+      if (/\(slug\)/i.test(message)) throw new Error("That business web name is already taken.");
+    }
+    throw error;
+  }
   const row = rows[0];
   if (!row) {
-    throw new Error("provision_new_account returned no row");
+    console.error("provision_new_account returned no row");
+    throw new Error("We couldn't create this tenant. Please try again.");
   }
   return {
     userId: row.user_id,

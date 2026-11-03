@@ -8,6 +8,8 @@ import { today } from "../../lib/date-ranges";
 import FormField from "../../components/FormField";
 import InfoTip from "../../components/InfoTip";
 import QuantityPill from "../../components/QuantityPill";
+import { addQuantities, hasQuantityPrecision } from "@zenzoo/pricing";
+import { wholeNumbersOnly } from "../../lib/unitRules";
 
 export interface DeliveryInput {
   date: string;
@@ -20,6 +22,8 @@ interface ReceiveSheetProps {
   purchase: Purchase;
   onClose: () => void;
   onConfirm: (delivery: DeliveryInput) => void;
+  /** True while the delivery is being saved, so the button shows it and a second click is ignored. */
+  saving?: boolean;
 }
 
 const number = (value: string) => (value.trim() === "" ? 0 : Number(value));
@@ -30,7 +34,13 @@ const number = (value: string) => (value.trim() === "" ? 0 : Number(value));
  * arrived. Matches receivePurchase on the backend exactly: each line here
  * maps to one inventory_batches + stock_movements row there.
  */
-export default function ReceiveSheet({ open, purchase, onClose, onConfirm }: ReceiveSheetProps) {
+export default function ReceiveSheet({
+  open,
+  purchase,
+  onClose,
+  onConfirm,
+  saving = false,
+}: ReceiveSheetProps) {
   const { colors, spacing } = useTheme();
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [date, setDate] = useState(today());
@@ -50,14 +60,17 @@ export default function ReceiveSheet({ open, purchase, onClose, onConfirm }: Rec
   const arrived = waiting
     .map((item) => ({ item, quantity: number(quantities[item.id] ?? "") }))
     .filter((entry) => entry.quantity > 0);
-  const units = arrived.reduce((sum, entry) => sum + entry.quantity, 0);
+  const units = addQuantities(...arrived.map((entry) => entry.quantity));
 
   function problemWith(item: PurchaseItem): string | null {
     const typed = quantities[item.id] ?? "";
     const quantity = number(typed);
     if (typed.trim() === "") return null;
     if (Number.isNaN(quantity) || quantity < 0) return "Enter a number.";
-    if (!Number.isInteger(quantity)) return "Must be a whole number.";
+    if (wholeNumbersOnly(item.unit) && !Number.isInteger(quantity)) {
+      return `${item.unit} is counted in whole numbers.`;
+    }
+    if (!hasQuantityPrecision(quantity)) return "Use at most 3 decimal places.";
     if (quantity > item.pending) return `Only ${item.pending} still to come.`;
     return null;
   }
@@ -98,6 +111,7 @@ export default function ReceiveSheet({ open, purchase, onClose, onConfirm }: Rec
             <Button
               type="button"
               variant="primary"
+              loading={saving}
               disabled={arrived.length === 0}
               onClick={submit}
               style={{ flex: 2 }}
@@ -109,7 +123,12 @@ export default function ReceiveSheet({ open, purchase, onClose, onConfirm }: Rec
       }
     >
       <div style={{ display: "flex", flexDirection: "column", gap: spacing[6] }}>
-        <FormField id="delivery-date" label="DELIVERY DATE" span={12} error={touched ? dateError : null}>
+        <FormField
+          id="delivery-date"
+          label="DELIVERY DATE"
+          span={12}
+          error={touched ? dateError : null}
+        >
           <DatePicker id="delivery-date" value={date} clearable={false} onChange={setDate} />
         </FormField>
 
@@ -140,7 +159,9 @@ export default function ReceiveSheet({ open, purchase, onClose, onConfirm }: Rec
             <button
               type="button"
               onClick={() =>
-                setQuantities(Object.fromEntries(waiting.map((item) => [item.id, String(item.pending)])))
+                setQuantities(
+                  Object.fromEntries(waiting.map((item) => [item.id, String(item.pending)])),
+                )
               }
               style={{
                 ...textStyle("bodyMedium"),
@@ -177,7 +198,9 @@ export default function ReceiveSheet({ open, purchase, onClose, onConfirm }: Rec
                 <div style={{ minWidth: 0 }}>
                   <div style={{ ...textStyle("bodyMedium"), color: colors.ink }}>{item.name}</div>
                   {item.sku ? (
-                    <div style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>{item.sku}</div>
+                    <div style={{ ...textStyle("dataSmall"), color: colors.inkMuted }}>
+                      {item.sku}
+                    </div>
                   ) : null}
                   <div
                     role={problem ? "alert" : undefined}

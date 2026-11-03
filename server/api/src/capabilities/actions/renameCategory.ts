@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
+import { assertFits, cleanName } from "../../shared/names";
 import { CATEGORY_SELECT, toCategoryDto, type CategoryDto } from "../categories/dto";
 
 export interface RenameCategoryInput {
@@ -12,10 +13,11 @@ export interface RenameCategoryInput {
 export const renameCategory = defineCapability<RenameCategoryInput, CategoryDto>({
   name: "renameCategory",
   kind: "action",
-  requiredPermission: "stocks:edit",
+  requiredPermission: "settings:edit",
   async handler(actor, input) {
-    const name = input.name.trim();
+    const name = cleanName(input.name);
     if (!name) throw new Error("Give the category a name.");
+    assertFits(name, 100, "The category name");
 
     try {
       return await runInTenantContext(actor, async (tx) => {

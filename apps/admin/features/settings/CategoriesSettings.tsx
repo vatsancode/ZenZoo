@@ -1,9 +1,11 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Button, Card, Icon, IconButton, Input, Modal, Notice, textStyle } from "@zenzoo/ui-web";
+import { Button, Card, IconButton, Input, Modal, Notice, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
 import { useAccess } from "../../lib/access";
+import { NAME_MAX, cleanName } from "../../lib/text";
+import { useSingleFlight } from "../../lib/useSingleFlight";
 import {
   addCategory,
   addSubcategory,
@@ -11,10 +13,11 @@ import {
   listCategories,
   productsInCategory,
   productsInSubcategory,
-  removeSubcategory,
   renameCategory,
   renameCategoryInProducts,
+  renameSubcategoryInProducts,
   type Category,
+  type Subcategory,
 } from "../../lib/catalogue";
 import { listProducts, saveProducts, type Product } from "../stocks/stocks";
 import PageHeader from "../../components/PageHeader";
@@ -25,20 +28,33 @@ export default function CategoriesSettings() {
   const { colors, radius, spacing } = useTheme();
   // Categories belong to Stocks on the server, so changing them takes Stocks access.
   const { can } = useAccess();
-  const canEdit = can("stocks", "edit");
-  const canDelete = can("stocks", "delete");
+  const canEdit = can("settings", "edit");
+  const canDelete = can("settings", "delete");
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [query, setQuery] = useState("");
+  const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
   const [addingSubTo, setAddingSubTo] = useState<{ id: string; name: string } | null>(null);
-  const [deleting, setDeleting] = useState<Category | null>(null);
+  const [renamingSub, setRenamingSub] = useState<{ id: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState<{
+    id: string;
+    name: string;
+    kind: "category" | "subcategory";
+  } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const categorySave = useSingleFlight();
+  const subSave = useSingleFlight();
+  const subRenameSave = useSingleFlight();
+  const deleteSave = useSingleFlight();
 
   async function reload() {
-    setCategories([...(await listCategories())]);
+    const list = [...(await listCategories())];
+    setCategories(list);
     setProducts([...(await listProducts())]);
+    return list;
   }
 
   useEffect(() => {
@@ -51,20 +67,61 @@ export default function CategoriesSettings() {
     return () => clearTimeout(timer);
   }, [notice]);
 
-  async function create() {
-    if (newName.trim() === "") {
-      setError("Enter a name.");
-      return;
-    }
-    const category = await addCategory(newName);
-    if (!category) {
-      setError("A category with this name already exists.");
-      return;
-    }
+  function create() {
+    return categorySave.run(async () => {
+      if (newName.trim() === "") {
+        setError("Enter a name.");
+        return;
+      }
+      const category = await addCategory(newName);
+      if (typeof category === "string") {
+        setError(category);
+        return;
+      }
+      closeCreate();
+      setAddingSubTo({ id: category.id, name: "" });
+      void reload();
+    });
+  }
+
+  function openCreate() {
     setNewName("");
     setError(null);
-    setAddingSubTo({ id: category.id, name: "" });
-    void reload();
+    setCreating(true);
+  }
+
+  function closeCreate() {
+    setCreating(false);
+    setNewName("");
+    setError(null);
+  }
+
+  const needle = query.trim().toLowerCase();
+  const visibleCategories = needle
+    ? categories.filter(
+        (category) =>
+          category.name.toLowerCase().includes(needle) ||
+          category.subcategories.some((sub) => sub.name.toLowerCase().includes(needle)),
+      )
+    : categories;
+
+  /**
+   * Shows why an edit failed. The list is refreshed too, because a failure is often a stale
+   * screen (another tab deleted it); if the category is gone, its card goes with it, so the
+   * message moves to the top where it can still be read.
+   */
+  async function showFailure(
+    message: string,
+    stillThere: (list: Category[]) => boolean,
+    closeEditor: () => void,
+  ) {
+    setError(message);
+    const list = await reload();
+    if (!stillThere(list)) {
+      closeEditor();
+      setError(null);
+      setNotice(message);
+    }
   }
 
   async function saveRename(category: Category) {
@@ -73,51 +130,85 @@ export default function CategoriesSettings() {
       setError("Enter a name.");
       return;
     }
-    if (!(await renameCategory(category.id, renaming.name))) {
-      setError("A category with this name already exists.");
+    const problem = await renameCategory(category.id, renaming.name);
+    if (problem) {
+      await showFailure(
+        problem,
+        (list) => list.some((item) => item.id === category.id),
+        () => setRenaming(null),
+      );
       return;
     }
-    // Products carry the category by name, so they follow the rename.
-    saveProducts(renameCategoryInProducts(await listProducts(), category.name, renaming.name));
+    // Products carry the category by name, so they follow the rename - with the spacing the
+    // server saved, or they would no longer match.
+    const renamed = cleanName(renaming.name);
+    saveProducts(renameCategoryInProducts(await listProducts(), category.name, renamed));
     setRenaming(null);
     setError(null);
-    setNotice(`Renamed to ${renaming.name.trim()}.`);
+    setNotice(`Renamed to ${renamed}.`);
     void reload();
   }
 
-  async function saveSub(category: Category) {
-    if (!addingSubTo) return;
-    if (addingSubTo.name.trim() === "") {
-      setError("Enter a name.");
-      return;
-    }
-    if (await addSubcategory(category.id, addingSubTo.name)) {
+  function saveSub(category: Category) {
+    return subSave.run(async () => {
+      if (!addingSubTo) return;
+      if (addingSubTo.name.trim() === "") {
+        setError("Enter a name.");
+        return;
+      }
+      const problem = await addSubcategory(category.id, addingSubTo.name);
+      if (problem) {
+        await showFailure(
+          problem,
+          (list) => list.some((item) => item.id === category.id),
+          () => setAddingSubTo(null),
+        );
+        return;
+      }
       setAddingSubTo(null);
       setError(null);
       void reload();
-    } else {
-      setError("This subcategory already exists.");
-    }
+    });
   }
 
-  const pill = (children: React.ReactNode, key: string) => (
-    <span
-      key={key}
-      style={{
-        ...textStyle("callout"),
-        display: "inline-flex",
-        alignItems: "center",
-        gap: spacing[2],
-        height: 36,
-        paddingInline: spacing[4],
-        border: `1px solid ${colors.border}`,
-        borderRadius: radius.full,
-        color: colors.ink,
-      }}
-    >
-      {children}
-    </span>
-  );
+  function saveSubRename(category: Category, sub: Subcategory) {
+    return subRenameSave.run(async () => {
+      if (!renamingSub) return;
+      if (renamingSub.name.trim() === "") {
+        setError("Enter a name.");
+        return;
+      }
+      const problem = await renameCategory(sub.id, renamingSub.name);
+      if (problem) {
+        await showFailure(
+          problem,
+          (list) => list.some((item) => item.subcategories.some((other) => other.id === sub.id)),
+          () => setRenamingSub(null),
+        );
+        return;
+      }
+      // Products carry the subcategory by name too, so they follow the rename.
+      const renamed = cleanName(renamingSub.name);
+      saveProducts(
+        renameSubcategoryInProducts(await listProducts(), category.name, sub.name, renamed),
+      );
+      setRenamingSub(null);
+      setError(null);
+      setNotice(`Renamed to ${renamed}.`);
+      void reload();
+    });
+  }
+
+  function confirmDelete() {
+    return deleteSave.run(async () => {
+      if (!deleting) return;
+      const target = deleting;
+      setDeleting(null);
+      const problem = await deleteCategory(target.id);
+      if (problem) setNotice(problem);
+      void reload();
+    });
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: spacing[6] }}>
@@ -132,38 +223,48 @@ export default function CategoriesSettings() {
       {notice ? <Notice>{notice}</Notice> : null}
 
       {canEdit ? (
-        <div style={{ display: "flex", alignItems: "flex-start", gap: spacing[3], maxWidth: 520 }}>
-          <div style={{ flex: 1 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: spacing[3],
+          }}
+        >
+          <div style={{ maxWidth: 360, width: "100%" }}>
             <Input
+              type="search"
               autoComplete="off"
-              placeholder="New category, e.g. Kids wear"
-              aria-label="New category name"
-              aria-invalid={error && !renaming && !addingSubTo ? true : undefined}
-              value={newName}
-              onChange={(event) => {
-                setNewName(event.target.value);
-                setError(null);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void create();
-              }}
+              placeholder="Search categories..."
+              aria-label="Search categories"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
             />
-            {error && !renaming && !addingSubTo ? (
-              <div
-                role="alert"
-                style={{ ...textStyle("footnote"), color: colors.danger, marginTop: spacing[2] }}
-              >
-                {error}
-              </div>
-            ) : null}
           </div>
-          <Button type="button" variant="primary" onClick={() => void create()}>
+          <Button type="button" variant="primary" onClick={openCreate}>
             Add category
           </Button>
         </div>
+      ) : (
+        <div style={{ maxWidth: 360, width: "100%" }}>
+          <Input
+            type="search"
+            autoComplete="off"
+            placeholder="Search categories..."
+            aria-label="Search categories"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
+      )}
+
+      {needle && visibleCategories.length === 0 ? (
+        <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>
+          No categories match "{query.trim()}".
+        </div>
       ) : null}
 
-      {categories.map((category) => {
+      {visibleCategories.map((category) => {
         const used = productsInCategory(products, category.name);
         const isRenaming = renaming?.id === category.id;
         const isAdding = addingSubTo?.id === category.id;
@@ -194,6 +295,7 @@ export default function CategoriesSettings() {
                     autoFocus
                     autoComplete="off"
                     aria-label="Category name"
+                    maxLength={NAME_MAX}
                     value={renaming.name}
                     aria-invalid={error ? true : undefined}
                     onChange={(event) => setRenaming({ id: category.id, name: event.target.value })}
@@ -217,8 +319,16 @@ export default function CategoriesSettings() {
                   </Button>
                 </div>
               ) : (
-                <div>
-                  <div style={{ ...textStyle("headline"), color: colors.ink }}>{category.name}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      ...textStyle("headline"),
+                      color: colors.ink,
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {category.name}
+                  </div>
                   <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
                     {used} {used === 1 ? "product" : "products"} · {category.subcategories.length}{" "}
                     {category.subcategories.length === 1 ? "subcategory" : "subcategories"}
@@ -233,13 +343,14 @@ export default function CategoriesSettings() {
                       label={`Rename ${category.name}`}
                       onClick={() => {
                         setRenaming({ id: category.id, name: category.name });
+                        setRenamingSub(null);
                         setError(null);
                       }}
                     />
                   ) : null}
                   {canDelete ? (
                     <IconButton
-                      icon="close"
+                      icon="trash"
                       label={
                         used > 0
                           ? `${category.name} is in use and can't be deleted`
@@ -250,7 +361,7 @@ export default function CategoriesSettings() {
                           ? setNotice(
                               `${category.name} has ${used} products. Move them to another category first.`,
                             )
-                          : setDeleting(category)
+                          : setDeleting({ id: category.id, name: category.name, kind: "category" })
                       }
                     />
                   ) : null}
@@ -263,121 +374,299 @@ export default function CategoriesSettings() {
               </div>
             ) : null}
 
-            <div
-              style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: spacing[2] }}
-            >
-              {category.subcategories.map((name) => {
-                const count = productsInSubcategory(products, category.name, name);
-                return pill(
-                  <>
-                    {name}
-                    <span style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
-                      {count}
-                    </span>
-                    {count === 0 && canDelete ? (
-                      <button
-                        type="button"
-                        aria-label={`Remove ${name}`}
-                        onClick={() => {
-                          void removeSubcategory(category.id, name).then(() => reload());
+            {category.subcategories.length > 0 || isAdding || canEdit ? (
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {category.subcategories.map((sub) => {
+                  const count = productsInSubcategory(products, category.name, sub.name);
+                  const isRenamingSub = renamingSub?.id === sub.id;
+                  return (
+                    <div
+                      key={sub.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: spacing[4],
+                        minHeight: 56,
+                        paddingLeft: spacing[4],
+                        borderTop: `1px solid ${colors.border}`,
+                      }}
+                    >
+                      {isRenamingSub ? (
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: spacing[2],
+                            flex: 1,
+                            maxWidth: 440,
+                            paddingBlock: spacing[3],
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
+                            <Input
+                              autoFocus
+                              autoComplete="off"
+                              aria-label="Subcategory name"
+                              maxLength={NAME_MAX}
+                              value={renamingSub.name}
+                              aria-invalid={error ? true : undefined}
+                              onChange={(event) => {
+                                setRenamingSub({ id: sub.id, name: event.target.value });
+                                setError(null);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") void saveSubRename(category, sub);
+                                if (event.key === "Escape") {
+                                  setRenamingSub(null);
+                                  setError(null);
+                                }
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              variant="primary"
+                              loading={subRenameSave.busy}
+                              onClick={() => void saveSubRename(category, sub)}
+                            >
+                              Save
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={() => {
+                                setRenamingSub(null);
+                                setError(null);
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                          {error ? (
+                            <div
+                              role="alert"
+                              style={{ ...textStyle("footnote"), color: colors.danger }}
+                            >
+                              {error}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <>
+                          <div style={{ minWidth: 0 }}>
+                            <div
+                              style={{
+                                ...textStyle("bodyMedium"),
+                                color: colors.ink,
+                                overflowWrap: "anywhere",
+                              }}
+                            >
+                              {sub.name}
+                            </div>
+                            <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
+                              {count} {count === 1 ? "product" : "products"}
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", gap: spacing[1] }}>
+                            {canEdit ? (
+                              <IconButton
+                                icon="edit"
+                                label={`Rename ${sub.name}`}
+                                onClick={() => {
+                                  setRenamingSub({ id: sub.id, name: sub.name });
+                                  setRenaming(null);
+                                  setAddingSubTo(null);
+                                  setError(null);
+                                }}
+                              />
+                            ) : null}
+                            {canDelete ? (
+                              <IconButton
+                                icon="trash"
+                                label={
+                                  count > 0
+                                    ? `${sub.name} is in use and can't be deleted`
+                                    : `Delete ${sub.name}`
+                                }
+                                onClick={() =>
+                                  count > 0
+                                    ? setNotice(
+                                        `${sub.name} has ${count} ${count === 1 ? "product" : "products"}. Move ${count === 1 ? "it" : "them"} to another subcategory first.`,
+                                      )
+                                    : setDeleting({
+                                        id: sub.id,
+                                        name: sub.name,
+                                        kind: "subcategory",
+                                      })
+                                }
+                              />
+                            ) : null}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {isAdding ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: spacing[2],
+                      paddingBlock: spacing[3],
+                      paddingLeft: spacing[4],
+                      borderTop: `1px solid ${colors.border}`,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: spacing[3],
+                        maxWidth: 440,
+                      }}
+                    >
+                      <Input
+                        autoFocus
+                        autoComplete="off"
+                        placeholder="Subcategory name"
+                        aria-label="New subcategory name"
+                        maxLength={NAME_MAX}
+                        value={addingSubTo.name}
+                        aria-invalid={error ? true : undefined}
+                        onChange={(event) => {
+                          setAddingSubTo({ id: category.id, name: event.target.value });
+                          setError(null);
                         }}
-                        style={{
-                          display: "inline-flex",
-                          padding: 0,
-                          border: "none",
-                          background: "transparent",
-                          color: colors.inkMuted,
-                          cursor: "pointer",
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") void saveSub(category);
+                          if (event.key === "Escape") setAddingSubTo(null);
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="primary"
+                        loading={subSave.busy}
+                        onClick={() => void saveSub(category)}
+                      >
+                        Add
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => {
+                          setAddingSubTo(null);
+                          setError(null);
                         }}
                       >
-                        <Icon name="close" size={14} />
-                      </button>
+                        Cancel
+                      </Button>
+                    </div>
+                    {error ? (
+                      <div role="alert" style={{ ...textStyle("footnote"), color: colors.danger }}>
+                        {error}
+                      </div>
                     ) : null}
-                  </>,
-                  name,
-                );
-              })}
-
-              {isAdding ? (
-                <span style={{ display: "inline-flex", alignItems: "center", gap: spacing[2] }}>
-                  <span style={{ width: 200 }}>
-                    <Input
-                      autoFocus
-                      autoComplete="off"
-                      placeholder="Subcategory name"
-                      aria-label="New subcategory name"
-                      value={addingSubTo.name}
-                      aria-invalid={error ? true : undefined}
-                      style={{ height: 36 }}
-                      onChange={(event) => {
-                        setAddingSubTo({ id: category.id, name: event.target.value });
+                  </div>
+                ) : canEdit ? (
+                  <div
+                    style={{
+                      paddingTop: spacing[3],
+                      paddingLeft: spacing[4],
+                      borderTop:
+                        category.subcategories.length > 0 ? `1px solid ${colors.border}` : "none",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddingSubTo({ id: category.id, name: "" });
+                        setRenamingSub(null);
                         setError(null);
                       }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") void saveSub(category);
-                        if (event.key === "Escape") setAddingSubTo(null);
+                      style={{
+                        ...textStyle("callout"),
+                        height: 36,
+                        paddingInline: spacing[4],
+                        border: `1px dashed ${colors.border}`,
+                        borderRadius: radius.full,
+                        background: "transparent",
+                        color: colors.inkMuted,
+                        cursor: "pointer",
                       }}
-                    />
-                  </span>
-                  <Button
-                    type="button"
-                    variant="primary"
-                    onClick={() => void saveSub(category)}
-                    style={{ height: 36 }}
-                  >
-                    Add
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => {
-                      setAddingSubTo(null);
-                      setError(null);
-                    }}
-                    style={{ height: 36 }}
-                  >
-                    Cancel
-                  </Button>
-                </span>
-              ) : canEdit ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddingSubTo({ id: category.id, name: "" });
-                    setError(null);
-                  }}
-                  style={{
-                    ...textStyle("callout"),
-                    height: 36,
-                    paddingInline: spacing[4],
-                    border: `1px dashed ${colors.border}`,
-                    borderRadius: radius.full,
-                    background: "transparent",
-                    color: colors.inkMuted,
-                    cursor: "pointer",
-                  }}
-                >
-                  + Add subcategory
-                </button>
-              ) : null}
-            </div>
-            {isAdding && error ? (
-              <div role="alert" style={{ ...textStyle("footnote"), color: colors.danger }}>
-                {error}
+                    >
+                      + Add subcategory
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </Card>
         );
       })}
 
+      <Modal open={creating} onClose={closeCreate}>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void create();
+          }}
+          style={{ width: 420, maxWidth: "100%" }}
+        >
+          <div style={{ ...textStyle("title3"), color: colors.ink }}>New category</div>
+          <div style={{ marginTop: spacing[4] }}>
+            <Input
+              autoFocus
+              autoComplete="off"
+              placeholder="e.g. Kids wear"
+              maxLength={NAME_MAX}
+              aria-label="Category name"
+              aria-invalid={error ? true : undefined}
+              value={newName}
+              onChange={(event) => {
+                setNewName(event.target.value);
+                setError(null);
+              }}
+            />
+            {error ? (
+              <div
+                role="alert"
+                style={{ ...textStyle("footnote"), color: colors.danger, marginTop: spacing[2] }}
+              >
+                {error}
+              </div>
+            ) : null}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: spacing[3],
+              marginTop: spacing[6],
+            }}
+          >
+            <Button type="button" variant="secondary" onClick={closeCreate}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" loading={categorySave.busy}>
+              Save category
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
       <Modal open={deleting !== null} onClose={() => setDeleting(null)}>
         <div style={{ width: 420, maxWidth: "100%" }}>
-          <div style={{ ...textStyle("title3"), color: colors.ink }}>Delete {deleting?.name}?</div>
+          <div style={{ ...textStyle("title3"), color: colors.ink, overflowWrap: "anywhere" }}>
+            Delete {deleting?.name}?
+          </div>
           <p
             style={{ ...textStyle("body"), color: colors.inkMuted, margin: `${spacing[3]}px 0 0` }}
           >
-            No products use this category, so nothing else changes. Its subcategories are removed
-            with it.
+            {deleting?.kind === "subcategory"
+              ? "No products use this subcategory, so nothing else changes."
+              : "No products use this category, so nothing else changes. Its subcategories are removed with it."}
           </p>
           <div
             style={{
@@ -393,15 +682,8 @@ export default function CategoriesSettings() {
             <Button
               type="button"
               variant="danger"
-              onClick={() => {
-                if (!deleting) return;
-                const target = deleting;
-                setDeleting(null);
-                void deleteCategory(target.id).then((deleteError) => {
-                  if (deleteError) setNotice(deleteError);
-                  void reload();
-                });
-              }}
+              loading={deleteSave.busy}
+              onClick={() => void confirmDelete()}
             >
               Delete
             </Button>

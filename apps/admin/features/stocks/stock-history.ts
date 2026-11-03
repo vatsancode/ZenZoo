@@ -1,4 +1,5 @@
 import type { Unit } from "./stocks";
+import { wholeNumbersOnly } from "../../lib/unitRules";
 
 // Sample purchase and consumption history. There's no stock-movement
 // capability on the backend yet, so these are generated from the item's SKU:
@@ -148,7 +149,7 @@ export function currentBatches(item: StockItem, includeEmpty = false): Batch[] {
 
 export function consumptionHistory(item: StockItem): Movement[] {
   const random = seededRandom(`consumption-${item.sku}`);
-  const whole = item.unit === "pcs";
+  const whole = wholeNumbersOnly(item.unit ?? "");
   const rows: Movement[] = [];
   let age = Math.floor(random() * 2);
   for (let index = 0; index < 10; index++) {

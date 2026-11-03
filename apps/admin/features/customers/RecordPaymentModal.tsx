@@ -5,6 +5,7 @@ import { Button, Checkbox, Input, Modal, Select, textStyle } from "@zenzoo/ui-we
 import { useEffect, useState } from "react";
 import type { TillPaymentOptions } from "../../lib/till";
 import { formatPrice } from "../../lib/stock-display";
+import { useSingleFlight } from "../../lib/useSingleFlight";
 
 export interface CollectInput {
   amount: number;
@@ -50,7 +51,7 @@ export default function RecordPaymentModal({
   const [note, setNote] = useState("");
   const [keepExtra, setKeepExtra] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run: runSave } = useSingleFlight();
   const [serverError, setServerError] = useState<string | null>(null);
 
   // Each time it opens, start fresh: the full amount owed (if any) is the natural thing to receive.
@@ -62,7 +63,6 @@ export default function RecordPaymentModal({
     setNote("");
     setKeepExtra(false);
     setShowErrors(false);
-    setSaving(false);
     setServerError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -81,23 +81,22 @@ export default function RecordPaymentModal({
             : "Tick the box to keep this as store credit."
           : null;
 
-  async function save() {
-    if (problem) {
-      setShowErrors(true);
-      return;
-    }
-    if (saving) return;
-    setSaving(true);
-    setServerError(null);
-    const failure = await onSave({
-      amount: value,
-      methodId: method,
-      accountId,
-      note: note.trim() || undefined,
-      keepExtraAsCredit: extra > 0 ? true : undefined,
+  function save() {
+    return runSave(async () => {
+      if (problem) {
+        setShowErrors(true);
+        return;
+      }
+      setServerError(null);
+      const failure = await onSave({
+        amount: value,
+        methodId: method,
+        accountId,
+        note: note.trim() || undefined,
+        keepExtraAsCredit: extra > 0 ? true : undefined,
+      });
+      if (failure) setServerError(failure);
     });
-    setSaving(false);
-    if (failure) setServerError(failure);
   }
 
   return (

@@ -36,9 +36,14 @@ export const PERMISSION_AREAS = [
   {
     id: "settings",
     label: "Settings",
-    note: "Categories, accounts, payment methods and the audit log.",
+    note: "Categories, units, payment methods and the audit log.",
   },
   { id: "users", label: "Users and roles", note: "Who can sign in and what they can do." },
+  {
+    id: "accounts",
+    label: "Accounts and money",
+    note: "Cash and bank accounts, transfers, and every money in and out.",
+  },
 ] as const;
 
 export type PermissionArea = (typeof PERMISSION_AREAS)[number]["id"];
@@ -84,7 +89,7 @@ let roles: Role[] = [
     id: "manager",
     name: "Manager",
     description: "Runs the shop day to day. Can't manage users.",
-    permissions: withLevels("edit", { users: "none", settings: "view" }),
+    permissions: withLevels("edit", { users: "none", settings: "view", accounts: "view" }),
   },
   {
     id: "cashier",
@@ -168,15 +173,57 @@ const emailOk = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim(
 
 export const MIN_PASSWORD_LENGTH = 8;
 
-const PASSWORD_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+/** Keeps only what a phone number can hold as it is typed: digits, spaces, and a "+" at the very start. */
+export function cleanPhoneInput(value: string): string {
+  const body = value.replace(/[^\d ]/g, "");
+  return value.startsWith("+") ? `+${body}` : body;
+}
 
-/** A random password to hand to a new (or reset) user - meets passwordStrengthProblem by construction. */
-export function generatePassword(): string {
-  let password = "";
-  for (let i = 0; i < 10; i += 1) {
-    password += PASSWORD_CHARS[Math.floor(Math.random() * PASSWORD_CHARS.length)];
+const PASSWORD_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
+const PASSWORD_DIGITS = "23456789";
+const PASSWORD_CHARS = PASSWORD_LETTERS + PASSWORD_DIGITS;
+const GENERATED_PASSWORD_LENGTH = 12;
+
+/**
+ * A uniformly random integer in [0, max) from the browser's secure random source.
+ * Bytes at or above the largest multiple of `max` are thrown away so no value is
+ * slightly more likely than another (a plain `byte % max` would favour some).
+ */
+function secureRandomInt(max: number): number {
+  const crypto = globalThis.crypto;
+  if (!crypto?.getRandomValues) {
+    throw new Error("This browser can't generate a secure password.");
   }
-  return password;
+  const limit = 256 - (256 % max);
+  const bytes = new Uint8Array(1);
+  let value: number;
+  do {
+    crypto.getRandomValues(bytes);
+    value = bytes[0] ?? limit;
+  } while (value >= limit);
+  return value % max;
+}
+
+function pick(chars: string): string {
+  return chars.charAt(secureRandomInt(chars.length));
+}
+
+/**
+ * A random password to hand to a new (or reset) user. It meets passwordStrengthProblem
+ * by construction: one letter and one digit are placed first, the rest come from the
+ * full pool, then everything is shuffled. Look-alike characters (O, 0, 1, I, l) are left out.
+ */
+export function generatePassword(): string {
+  const chars = [pick(PASSWORD_LETTERS), pick(PASSWORD_DIGITS)];
+  while (chars.length < GENERATED_PASSWORD_LENGTH) chars.push(pick(PASSWORD_CHARS));
+  // Fisher-Yates, so the letter and digit don't always sit at the start.
+  for (let i = chars.length - 1; i > 0; i -= 1) {
+    const j = secureRandomInt(i + 1);
+    const swapped = chars[i] ?? "";
+    chars[i] = chars[j] ?? "";
+    chars[j] = swapped;
+  }
+  return chars.join("");
 }
 
 /** What is wrong with a password being set *for* someone (no "current password" involved) - null when it is fine. */

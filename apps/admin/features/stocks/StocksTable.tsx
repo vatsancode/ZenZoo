@@ -27,8 +27,9 @@ import { listCurrentStock } from "../../lib/realStock";
 import { formatPrice, stockStatus } from "../../lib/stock-display";
 import type { CategoryResponse } from "../../lib/catalogue";
 import { lookupCategories, lookupUnits } from "../../lib/lookups";
-import { unitOptions, type Unit as RealUnit } from "../settings/units";
+import { addUnit, unitOptions, type Unit as RealUnit } from "../settings/units";
 import AddStockSheet, { type StockFormInput } from "../../components/AddStockSheet";
+import { addQuantities } from "@zenzoo/pricing";
 
 // A single price, or "low - high" when a product's variants are priced differently.
 function priceLabel(product: RealProduct): string {
@@ -51,7 +52,10 @@ function productHref(product: RealProduct): string {
 
 export default function StocksTable() {
   const { colors, spacing } = useTheme();
-  const canEdit = useAccess().can("stocks", "edit");
+  const { can } = useAccess();
+  const canEdit = can("stocks", "edit");
+  // Adding a unit or category is a Settings write, whatever the role may do in Stocks.
+  const canCreateLookups = can("settings", "edit");
   const [products, setProducts] = useState<RealProduct[] | null>(null);
   // null while loading - distinct from an empty {}, so a row with real
   // stock can't flash "Out of stock" before the real count has arrived.
@@ -150,12 +154,23 @@ export default function StocksTable() {
     return null;
   }
 
+  async function handleCreateUnit(input: {
+    code: string;
+    name: string;
+    allowDecimals: boolean;
+  }): Promise<{ id: string } | { error: string }> {
+    const created = await addUnit(input.code, input.name, input.allowDecimals);
+    if (typeof created === "string") return { error: created };
+    setUnits(await lookupUnits());
+    return { id: created.id };
+  }
+
   const existingNames = (products ?? [])
     .filter((product) => product.id !== editing?.id)
     .map((product) => product.name);
 
   const onHandFor = (product: RealProduct) =>
-    product.variants.reduce((sum, variant) => sum + (stock?.[variant.id] ?? 0), 0);
+    addQuantities(...product.variants.map((variant) => stock?.[variant.id] ?? 0));
 
   const filtered = useMemo(() => {
     if (!products) return [];
@@ -291,6 +306,10 @@ export default function StocksTable() {
         product={editing}
         unitOptions={unitOptions(units)}
         categories={categories}
+        canCreateUnit={canCreateLookups}
+        canCreateCategory={canCreateLookups}
+        onCreateUnit={handleCreateUnit}
+        onCategoryCreated={(row) => setCategories((current) => [...current, row])}
         onClose={closeSheet}
         onSubmit={handleSubmit}
       />

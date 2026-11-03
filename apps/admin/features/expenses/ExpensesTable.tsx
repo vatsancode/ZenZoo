@@ -8,11 +8,13 @@ import {
   DatePicker,
   IconButton,
   Input,
+  LoadError,
   Modal,
   Notice,
   Pagination,
   Select,
   Sheet,
+  SkeletonTable,
   Table,
   Tabs,
   textStyle,
@@ -46,6 +48,8 @@ import ExpenseFilterSheet, { NO_EXPENSE_FILTERS, type ExpenseFilters } from "./E
 import FilterPills, { type FilterGroup } from "../../components/FilterPills";
 import FormField from "../../components/FormField";
 import StatTile, { StatRow } from "../../components/StatTile";
+import { useSingleFlight } from "../../lib/useSingleFlight";
+import { cleanName } from "../../lib/text";
 
 /** A line as typed: the amount stays a string until the bill is saved. */
 interface LineRow {
@@ -98,7 +102,9 @@ export default function ExpensesTable() {
   const [payAccountId, setPayAccountId] = useState("");
   const [payDate, setPayDate] = useState("");
   const [payError, setPayError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run: runSave } = useSingleFlight();
+  const { busy: payingNow, run: runPay } = useSingleFlight();
+  const { busy: deletingNow, run: runDelete } = useSingleFlight();
   const [notice, setNotice] = useState<string | null>(null);
 
   // The form's fields.
@@ -113,13 +119,26 @@ export default function ExpensesTable() {
   const [lines, setLines] = useState<LineRow[]>([blankLine()]);
   const [touched, setTouched] = useState(false);
 
+  // Set when a fetch below failed. Before the list has loaded that replaces the table; after a
+  // save it is a note above it, since the save itself went through.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reloading, setReloading] = useState(false);
+
   async function reload() {
-    setExpenses([...(await listExpenses())]);
-    setCategories((await listExpenseCategories()).map((item) => item.name));
-    setVendors([...(await lookupVendors())]);
-    const real = await lookupAccounts();
-    rememberPaymentNames([], real);
-    setAccounts(real);
+    setReloading(true);
+    try {
+      setExpenses([...(await listExpenses())]);
+      setCategories((await listExpenseCategories()).map((item) => item.name));
+      setVendors([...(await lookupVendors())]);
+      const real = await lookupAccounts();
+      rememberPaymentNames([], real);
+      setAccounts(real);
+      setLoadFailed(false);
+    } catch {
+      setLoadFailed(true);
+    } finally {
+      setReloading(false);
+    }
   }
 
   const accountOptions = accounts
@@ -279,56 +298,55 @@ export default function ExpensesTable() {
   };
   const valid = Object.values(problems).every((item) => item === null);
 
-  async function submit() {
-    setTouched(true);
-    if (!valid || !editing || saving) return;
-    setSaving(true);
-    // Categories typed in on the fly are created for real before the bill is filed under them.
-    const ids = await resolveExpenseCategories(lines.map((row) => row.category));
-    if (typeof ids === "string") {
-      setSaving(false);
-      setNotice(ids);
-      return;
-    }
-    const input: ExpenseInput = {
-      date,
-      payee,
-      reference,
-      note,
-      status,
-      dueDate: status === "pending" ? dueDate : "",
-      accountId: status === "paid" ? accountId : "",
-      paidDate: status === "paid" ? paidDate : "",
-      lines: lines.map((row) => ({
-        description: row.description,
-        categoryId: ids.get(row.category.trim().toLowerCase()) ?? "",
-        amount: lineAmount(row),
-      })),
-    };
-    let message: string | null;
-    if (editing === "new") {
-      const result = await addExpense(input);
-      message = typeof result === "string" ? result : null;
-    } else {
-      message = await editExpense(editing, input);
-    }
-    setSaving(false);
-    if (message) {
-      setNotice(message);
-      return;
-    }
-    if (editing === "new") {
-      setPage(1);
-      setNotice(
-        status === "pending"
-          ? `Bill of ${formatPrice(formTotal)} added to pay later.`
-          : `Expense of ${formatPrice(formTotal)} added.`,
-      );
-    } else {
-      setNotice("Expense updated.");
-    }
-    setEditing(null);
-    void reload();
+  function submit() {
+    return runSave(async () => {
+      setTouched(true);
+      if (!valid || !editing) return;
+      // Categories typed in on the fly are created for real before the bill is filed under them.
+      const ids = await resolveExpenseCategories(lines.map((row) => row.category));
+      if (typeof ids === "string") {
+        setNotice(ids);
+        return;
+      }
+      const input: ExpenseInput = {
+        date,
+        payee,
+        reference,
+        note,
+        status,
+        dueDate: status === "pending" ? dueDate : "",
+        accountId: status === "paid" ? accountId : "",
+        paidDate: status === "paid" ? paidDate : "",
+        lines: lines.map((row) => ({
+          description: row.description,
+          categoryId: ids.get(cleanName(row.category).toLowerCase()) ?? "",
+          amount: lineAmount(row),
+        })),
+      };
+      let message: string | null;
+      if (editing === "new") {
+        const result = await addExpense(input);
+        message = typeof result === "string" ? result : null;
+      } else {
+        message = await editExpense(editing, input);
+      }
+      if (message) {
+        setNotice(message);
+        return;
+      }
+      if (editing === "new") {
+        setPage(1);
+        setNotice(
+          status === "pending"
+            ? `Bill of ${formatPrice(formTotal)} added to pay later.`
+            : `Expense of ${formatPrice(formTotal)} added.`,
+        );
+      } else {
+        setNotice("Expense updated.");
+      }
+      setEditing(null);
+      void reload();
+    });
   }
 
   function openPay(expense: Expense) {
@@ -338,7 +356,7 @@ export default function ExpensesTable() {
     setPayError(null);
   }
 
-  async function confirmPay() {
+  function confirmPay() {
     if (!paying) return;
     if (payAccountId === "") {
       setPayError("Choose the account it was paid from.");
@@ -348,22 +366,26 @@ export default function ExpensesTable() {
       setPayError("Choose the date it was paid.");
       return;
     }
-    const message = await payExpense(paying, payAccountId, payDate);
-    if (message) {
-      setPayError(message);
-      return;
-    }
-    setNotice(`${formatPrice(paying.total)} marked as paid from ${accountName(payAccountId)}.`);
-    setPaying(null);
-    void reload();
+    return runPay(async () => {
+      const message = await payExpense(paying, payAccountId, payDate);
+      if (message) {
+        setPayError(message);
+        return;
+      }
+      setNotice(`${formatPrice(paying.total)} marked as paid from ${accountName(payAccountId)}.`);
+      setPaying(null);
+      void reload();
+    });
   }
 
-  async function confirmDelete() {
+  function confirmDelete() {
     if (!deleting) return;
-    const message = await deleteExpense(deleting);
-    setDeleting(null);
-    setNotice(message ?? "Expense deleted.");
-    void reload();
+    return runDelete(async () => {
+      const message = await deleteExpense(deleting);
+      setDeleting(null);
+      setNotice(message ?? "Expense deleted.");
+      void reload();
+    });
   }
 
   // Picking a name that is not a vendor yet creates the vendor (name only; the rest can be
@@ -602,10 +624,25 @@ export default function ExpensesTable() {
 
       {notice ? <Notice>{notice}</Notice> : null}
 
-      {expenses === null ? (
-        <div style={{ ...textStyle("callout"), color: colors.inkMuted, padding: spacing[6] }}>
-          Loading expenses...
-        </div>
+      {loadFailed && expenses !== null ? (
+        <LoadError
+          message="Couldn't refresh the expenses."
+          onRetry={() => void reload()}
+          retrying={reloading}
+        />
+      ) : null}
+
+      {expenses === null && loadFailed ? (
+        <LoadError
+          message="Couldn't load the expenses."
+          onRetry={() => void reload()}
+          retrying={reloading}
+        />
+      ) : expenses === null ? (
+        <SkeletonTable
+          columns={canEdit ? columns : columns.filter((column) => column.key !== "actions")}
+          rows={5}
+        />
       ) : filtered.length === 0 ? (
         <div style={{ ...textStyle("callout"), color: colors.inkMuted, padding: spacing[6] }}>
           No expenses for this view.
@@ -936,7 +973,12 @@ export default function ExpensesTable() {
             <Button type="button" variant="secondary" onClick={() => setDeleting(null)}>
               Keep it
             </Button>
-            <Button type="button" variant="danger" onClick={() => void confirmDelete()}>
+            <Button
+              type="button"
+              variant="danger"
+              loading={deletingNow}
+              onClick={() => void confirmDelete()}
+            >
               Delete
             </Button>
           </div>
@@ -1005,7 +1047,12 @@ export default function ExpensesTable() {
             <Button type="button" variant="secondary" onClick={() => setPaying(null)}>
               Cancel
             </Button>
-            <Button type="button" variant="primary" onClick={() => void confirmPay()}>
+            <Button
+              type="button"
+              variant="primary"
+              loading={payingNow}
+              onClick={() => void confirmPay()}
+            >
               Mark paid
             </Button>
           </div>

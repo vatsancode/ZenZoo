@@ -1,4 +1,5 @@
 import { redirectToSignInIfUnauthorized } from "../../lib/auth";
+import { apiFetch } from "../../lib/apiFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -89,7 +90,7 @@ export function roleSummary(role: Role): string {
 
 /** Lists this tenant's roles from the real API - requires at least "users:view". */
 export async function listRoles(): Promise<Role[]> {
-  const response = await fetch(`${API_URL}/roles`, { credentials: "include" });
+  const response = await apiFetch(`${API_URL}/roles`, { credentials: "include" });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
     throw new Error(await parseError(response));
@@ -100,7 +101,7 @@ export async function listRoles(): Promise<Role[]> {
 
 /** Creates a role for this tenant - requires "users:edit". Returns an error message, or null on success. */
 export async function addRole(input: RoleInput): Promise<string | null> {
-  const response = await fetch(`${API_URL}/roles`, {
+  const response = await apiFetch(`${API_URL}/roles`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -115,7 +116,7 @@ export async function addRole(input: RoleInput): Promise<string | null> {
 
 /** Edits an existing (non-Owner) role - requires "users:edit". Returns an error message, or null on success. */
 export async function editRole(id: string, input: RoleInput): Promise<string | null> {
-  const response = await fetch(`${API_URL}/roles/${id}`, {
+  const response = await apiFetch(`${API_URL}/roles/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -130,7 +131,7 @@ export async function editRole(id: string, input: RoleInput): Promise<string | n
 
 /** Deletes a role - requires "users:delete". Returns an error message, or null on success. */
 export async function removeRole(id: string): Promise<string | null> {
-  const response = await fetch(`${API_URL}/roles/${id}`, {
+  const response = await apiFetch(`${API_URL}/roles/${id}`, {
     method: "DELETE",
     credentials: "include",
   });

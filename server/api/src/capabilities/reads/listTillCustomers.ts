@@ -2,6 +2,7 @@ import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { CUSTOMER_SELECT, toCustomerDto, type CustomerDto } from "../customers/dto";
 import { customerBalances } from "../customers/ledger";
+import { customerSpends } from "../customers/spend";
 
 /**
  * The till's customer picker - active customers only, under "pos:view" so a
@@ -24,7 +25,12 @@ export const listTillCustomers = defineCapability<void, CustomerDto[]>({
         actor.tenantId,
         rows.map((row) => row.id),
       );
-      return rows.map((row) => toCustomerDto(row, balances.get(row.id) ?? 0));
+      const spends = await customerSpends(
+        tx,
+        actor.tenantId,
+        rows.map((row) => row.id),
+      );
+      return rows.map((row) => toCustomerDto(row, balances.get(row.id) ?? 0, spends.get(row.id)));
     });
   },
 });

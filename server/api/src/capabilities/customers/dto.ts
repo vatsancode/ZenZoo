@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import type { CapabilityActor } from "@zenzoo/types";
 import type { TenantTx } from "../../shared/tenantContext";
+import { NO_SPEND, type CustomerSpend } from "./spend";
 
 /** Tenant-wide, not store-scoped - customers has no store_id, so one customer is known at every store. */
 export interface CustomerDto {
@@ -15,6 +16,12 @@ export interface CustomerDto {
   since: string;
   /** What they owe the shop (above 0) or hold as store credit (below 0), as "250.00" / "-100.00". */
   balance: string;
+  /** Completed sales to them, across every store. */
+  purchases: number;
+  /** What they spent after refunds and credit given back, as "1250.00". */
+  spent: string;
+  /** Their latest purchase as YYYY-MM-DD; null if they never bought. */
+  lastPurchase: string | null;
 }
 
 export interface CustomerInput {
@@ -47,8 +54,15 @@ export const CUSTOMER_SELECT = {
   created_at: true,
 } as const;
 
-/** `balancePaise` is their ledger balance (see ledger.ts); a customer with no entries owes nothing. */
-export function toCustomerDto(row: CustomerRow, balancePaise = 0): CustomerDto {
+/**
+ * `balancePaise` is their ledger balance (see ledger.ts) and `spend` their purchases (see spend.ts);
+ * a customer with no entries owes nothing and has bought nothing.
+ */
+export function toCustomerDto(
+  row: CustomerRow,
+  balancePaise = 0,
+  spend: CustomerSpend = NO_SPEND,
+): CustomerDto {
   return {
     id: row.id,
     name: row.name,
@@ -59,6 +73,9 @@ export function toCustomerDto(row: CustomerRow, balancePaise = 0): CustomerDto {
     status: row.status === "archived" ? "archived" : "active",
     since: row.created_at.toISOString().slice(0, 10),
     balance: (balancePaise / 100).toFixed(2),
+    purchases: spend.purchases,
+    spent: (spend.spentPaise / 100).toFixed(2),
+    lastPurchase: spend.lastPurchase,
   };
 }
 

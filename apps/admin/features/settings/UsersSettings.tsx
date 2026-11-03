@@ -5,6 +5,7 @@ import {
   Badge,
   Button,
   Card,
+  Icon,
   IconButton,
   Input,
   Modal,
@@ -19,6 +20,7 @@ import { useAccess } from "../../lib/access";
 import {
   MIN_PASSWORD_LENGTH,
   addUser,
+  cleanPhoneInput,
   editUser,
   generatePassword,
   listUsers,
@@ -41,6 +43,7 @@ import {
 } from "./roles";
 import FormField from "../../components/FormField";
 import PageHeader from "../../components/PageHeader";
+import { useSingleFlight } from "../../lib/useSingleFlight";
 
 const TABS = [
   { id: "users", label: "Users" },
@@ -126,21 +129,27 @@ export default function UsersSettings() {
     setUserError(null);
   }
 
-  async function submitUser() {
-    const input = { name, email, phone, roleId, password };
-    const problem =
-      userForm === "new"
-        ? await addUser(input)
-        : userForm
-          ? await editUser(userForm.id, input)
-          : null;
-    if (problem) {
-      setUserError(problem);
-      return;
-    }
-    setNotice(userForm === "new" ? `${name.trim()} added.` : `${name.trim()} updated.`);
-    setUserForm(null);
-    await reload();
+  const userSave = useSingleFlight();
+  const resetSave = useSingleFlight();
+  const roleSave = useSingleFlight();
+
+  function submitUser() {
+    return userSave.run(async () => {
+      const input = { name, email, phone, roleId, password };
+      const problem =
+        userForm === "new"
+          ? await addUser(input)
+          : userForm
+            ? await editUser(userForm.id, input)
+            : null;
+      if (problem) {
+        setUserError(problem);
+        return;
+      }
+      setNotice(userForm === "new" ? `${name.trim()} added.` : `${name.trim()} updated.`);
+      setUserForm(null);
+      await reload();
+    });
   }
 
   function openReset(user: User) {
@@ -151,13 +160,15 @@ export default function UsersSettings() {
     setResetCopied(false);
   }
 
-  async function submitReset() {
-    const problem = resetTarget ? await resetUserPassword(resetTarget.id, resetPassword) : null;
-    if (problem) {
-      setResetError(problem);
-      return;
-    }
-    setResetDone(true);
+  function submitReset() {
+    return resetSave.run(async () => {
+      const problem = resetTarget ? await resetUserPassword(resetTarget.id, resetPassword) : null;
+      if (problem) {
+        setResetError(problem);
+        return;
+      }
+      setResetDone(true);
+    });
   }
 
   async function copyToClipboard(value: string, onDone: () => void) {
@@ -177,21 +188,23 @@ export default function UsersSettings() {
     setRoleError(null);
   }
 
-  async function submitRole() {
-    const input = { name: roleName, description: roleNote, permissions };
-    const problem =
-      roleForm === "new"
-        ? await addRole(input)
-        : roleForm
-          ? await editRole(roleForm.id, input)
-          : null;
-    if (problem) {
-      setRoleError(problem);
-      return;
-    }
-    setNotice(roleForm === "new" ? `${roleName.trim()} added.` : `${roleName.trim()} updated.`);
-    setRoleForm(null);
-    await reload();
+  function submitRole() {
+    return roleSave.run(async () => {
+      const input = { name: roleName, description: roleNote, permissions };
+      const problem =
+        roleForm === "new"
+          ? await addRole(input)
+          : roleForm
+            ? await editRole(roleForm.id, input)
+            : null;
+      if (problem) {
+        setRoleError(problem);
+        return;
+      }
+      setNotice(roleForm === "new" ? `${roleName.trim()} added.` : `${roleName.trim()} updated.`);
+      setRoleForm(null);
+      await reload();
+    });
   }
 
   // Users are still a stand-in (see users.ts) with roleId values that predate
@@ -296,7 +309,7 @@ export default function UsersSettings() {
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: spacing[3] }}>
                     <Switch
-                      disabled={!canEdit}
+                      disabled={!canEdit || user.isOwner}
                       checked={user.status === "active"}
                       aria-label={
                         user.status === "active" ? `Turn ${user.name} off` : `Turn ${user.name} on`
@@ -425,6 +438,7 @@ export default function UsersSettings() {
             <FormField id="user-name" label="NAME" span={12}>
               <Input
                 id="user-name"
+                maxLength={200}
                 autoFocus
                 autoComplete="off"
                 value={name}
@@ -437,6 +451,7 @@ export default function UsersSettings() {
             <FormField id="user-email" label="EMAIL" span={12}>
               <Input
                 id="user-email"
+                maxLength={255}
                 type="email"
                 autoComplete="off"
                 value={email}
@@ -449,18 +464,23 @@ export default function UsersSettings() {
             <FormField id="user-phone" label="PHONE (OPTIONAL)" span={12}>
               <Input
                 id="user-phone"
+                maxLength={20}
                 inputMode="tel"
                 autoComplete="off"
                 value={phone}
-                onChange={(event) => setPhone(event.target.value)}
+                onChange={(event) => setPhone(cleanPhoneInput(event.target.value))}
               />
             </FormField>
             <FormField id="user-role" label="ROLE" span={12}>
               <Select
-                options={roles.map((role) => ({ value: role.id, label: role.name }))}
+                options={roles
+                  .filter(
+                    (role) => !role.locked || (userForm !== "new" && userForm?.roleId === role.id),
+                  )
+                  .map((role) => ({ value: role.id, label: role.name }))}
                 value={roleId}
                 placeholder="Choose a role"
-                searchable={false}
+                disabled={userForm !== "new" && userForm?.isOwner}
                 aria-label="Role"
                 onChange={(next) => {
                   setRoleId(next);
@@ -527,7 +547,7 @@ export default function UsersSettings() {
             <Button type="button" variant="secondary" onClick={() => setUserForm(null)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary">
+            <Button type="submit" variant="primary" loading={userSave.busy}>
               {userForm === "new" ? "Add user" : "Save changes"}
             </Button>
           </div>
@@ -541,9 +561,11 @@ export default function UsersSettings() {
         }}
       >
         <div style={{ width: 460, maxWidth: "100%" }}>
-          <div style={{ ...textStyle("title3"), color: colors.ink }}>
-            Reset password for {resetTarget?.name}
-          </div>
+          {resetDone ? null : (
+            <div style={{ ...textStyle("title3"), color: colors.ink }}>
+              Reset password for {resetTarget?.name}
+            </div>
+          )}
 
           {resetDone ? (
             <div
@@ -554,23 +576,58 @@ export default function UsersSettings() {
                 marginTop: spacing[6],
               }}
             >
-              <p style={{ ...textStyle("body"), color: colors.inkMuted, margin: 0 }}>
-                {resetTarget?.name}&apos;s old password no longer works. Copy this one and share it
-                with them now - it won&apos;t be shown again.
-              </p>
-              <div style={{ display: "flex", gap: spacing[2] }}>
-                <Input
-                  readOnly
-                  autoComplete="off"
-                  style={{ fontFamily: "monospace" }}
-                  value={resetPassword}
-                />
-                <IconButton
-                  icon={resetCopied ? "check" : "copy"}
-                  tone={resetCopied ? "success" : "default"}
-                  label={resetCopied ? "Copied" : "Copy password"}
-                  onClick={() => copyToClipboard(resetPassword, () => setResetCopied(true))}
-                />
+              <div
+                aria-hidden
+                style={{
+                  alignSelf: "center",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 56,
+                  height: 56,
+                  borderRadius: radius.full,
+                  backgroundColor: colors.surfaceSunken,
+                  color: colors.success,
+                }}
+              >
+                <Icon name="check" size={28} />
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ ...textStyle("title3"), color: colors.ink }} role="status">
+                  Password changed
+                </div>
+                <p style={{ ...textStyle("body"), color: colors.inkMuted, margin: 0 }}>
+                  {resetTarget?.name}&apos;s password was changed. Their old password no longer
+                  works.
+                </p>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: spacing[2] }}>
+                <div
+                  style={{
+                    ...textStyle("caption"),
+                    color: colors.inkMuted,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  New password - use this from now on
+                </div>
+                <div style={{ display: "flex", gap: spacing[2] }}>
+                  <Input
+                    readOnly
+                    autoComplete="off"
+                    style={{ fontFamily: "monospace" }}
+                    value={resetPassword}
+                  />
+                  <IconButton
+                    icon={resetCopied ? "check" : "copy"}
+                    tone={resetCopied ? "success" : "default"}
+                    label={resetCopied ? "Copied" : "Copy password"}
+                    onClick={() => copyToClipboard(resetPassword, () => setResetCopied(true))}
+                  />
+                </div>
+                <div style={{ ...textStyle("footnote"), color: colors.warning }}>
+                  Copy it and share it with {resetTarget?.name} now. It won&apos;t be shown again.
+                </div>
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <Button type="button" variant="primary" onClick={() => setResetTarget(null)}>
@@ -636,7 +693,7 @@ export default function UsersSettings() {
                 <Button type="button" variant="secondary" onClick={() => setResetTarget(null)}>
                   Cancel
                 </Button>
-                <Button type="submit" variant="primary">
+                <Button type="submit" variant="primary" loading={resetSave.busy}>
                   Reset password
                 </Button>
               </div>
@@ -647,7 +704,7 @@ export default function UsersSettings() {
 
       <Modal open={roleForm !== null} onClose={() => setRoleForm(null)}>
         <form
-          style={{ width: 560, maxWidth: "100%" }}
+          style={{ width: 760, maxWidth: "100%" }}
           onSubmit={(event) => {
             event.preventDefault();
             if (roleReadOnly) setRoleForm(null);
@@ -679,6 +736,7 @@ export default function UsersSettings() {
             <FormField id="role-name" label="NAME" span={12}>
               <Input
                 id="role-name"
+                maxLength={50}
                 autoFocus
                 autoComplete="off"
                 placeholder="e.g. Store helper"
@@ -693,6 +751,7 @@ export default function UsersSettings() {
             <FormField id="role-note" label="DESCRIPTION (OPTIONAL)" span={12}>
               <Input
                 id="role-note"
+                maxLength={200}
                 autoComplete="off"
                 value={roleNote}
                 disabled={roleReadOnly}
@@ -716,6 +775,9 @@ export default function UsersSettings() {
                   maxHeight: 340,
                   overflowY: "auto",
                   borderTop: `1px solid ${colors.border}`,
+                  scrollbarWidth: "thin",
+                  scrollbarColor: `${colors.border} transparent`,
+                  paddingRight: spacing[3],
                 }}
               >
                 {PERMISSION_AREAS.map((area) => (
@@ -723,7 +785,7 @@ export default function UsersSettings() {
                     key={area.id}
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "minmax(0, 1fr) 200px",
+                      gridTemplateColumns: "minmax(0, 1fr) 260px",
                       alignItems: "center",
                       columnGap: spacing[4],
                       minHeight: 60,
@@ -772,7 +834,7 @@ export default function UsersSettings() {
               {roleReadOnly ? "Close" : "Cancel"}
             </Button>
             {roleForm && !roleReadOnly ? (
-              <Button type="submit" variant="primary">
+              <Button type="submit" variant="primary" loading={roleSave.busy}>
                 {roleForm === "new" ? "Add role" : "Save changes"}
               </Button>
             ) : null}

@@ -1,5 +1,6 @@
 import { redirectToSignInIfUnauthorized } from "./auth";
 import type { AccessLevel, PermissionArea } from "../features/settings/users";
+import { apiFetch } from "./apiFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -12,7 +13,7 @@ export interface CurrentUser {
 
 /** The actually-signed-in person's own name, role and permissions, from the real session - not a hardcoded id. */
 export async function getCurrentUser(): Promise<CurrentUser | null> {
-  const response = await fetch(`${API_URL}/me`, { credentials: "include" });
+  const response = await apiFetch(`${API_URL}/me`, { credentials: "include" });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
     return null;

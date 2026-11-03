@@ -1,5 +1,7 @@
 import { redirectToSignInIfUnauthorized } from "../../lib/auth";
 import { logAudit } from "../../lib/audit";
+import { apiFetch } from "../../lib/apiFetch";
+import { cleanName } from "../../lib/text";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -49,7 +51,7 @@ const audit = (
 
 /** Lists this tenant's expense categories, "Other" last - requires at least "expenses:view". */
 export async function listExpenseCategories(): Promise<ExpenseCategory[]> {
-  const response = await fetch(`${API_URL}/expense-categories`, { credentials: "include" });
+  const response = await apiFetch(`${API_URL}/expense-categories`, { credentials: "include" });
   if (!response.ok) {
     redirectToSignInIfUnauthorized(response);
     throw new Error(await parseError(response));
@@ -59,7 +61,7 @@ export async function listExpenseCategories(): Promise<ExpenseCategory[]> {
 
 /** Adds a category; returns the new one, or an error message - requires "expenses:edit". */
 export async function addExpenseCategory(name: string): Promise<ExpenseCategory | string> {
-  const response = await fetch(`${API_URL}/expense-categories`, {
+  const response = await apiFetch(`${API_URL}/expense-categories`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -79,7 +81,7 @@ export async function renameExpenseCategory(
   category: ExpenseCategory,
   to: string,
 ): Promise<string | null> {
-  const response = await fetch(`${API_URL}/expense-categories/${category.id}`, {
+  const response = await apiFetch(`${API_URL}/expense-categories/${category.id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -96,7 +98,7 @@ export async function renameExpenseCategory(
 
 /** Deletes an unused category; returns an error message, or null - requires "expenses:delete". */
 export async function deleteExpenseCategory(category: ExpenseCategory): Promise<string | null> {
-  const response = await fetch(`${API_URL}/expense-categories/${category.id}`, {
+  const response = await apiFetch(`${API_URL}/expense-categories/${category.id}`, {
     method: "DELETE",
     credentials: "include",
   });
@@ -116,8 +118,10 @@ export async function deleteExpenseCategory(category: ExpenseCategory): Promise<
 export async function resolveExpenseCategories(
   names: string[],
 ): Promise<Map<string, string> | string> {
-  const ids = new Map((await listExpenseCategories()).map((item) => [item.name.toLowerCase(), item.id]));
-  for (const name of new Set(names.map((item) => item.trim()).filter(Boolean))) {
+  const ids = new Map(
+    (await listExpenseCategories()).map((item) => [item.name.toLowerCase(), item.id]),
+  );
+  for (const name of new Set(names.map(cleanName).filter(Boolean))) {
     if (ids.has(name.toLowerCase())) continue;
     const created = await addExpenseCategory(name);
     if (typeof created === "string") return created;

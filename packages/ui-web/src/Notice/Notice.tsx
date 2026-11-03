@@ -21,6 +21,8 @@ export function Notice({ children, style }: NoticeProps) {
         backgroundColor: colors.surfaceSunken,
         borderRadius: radius.md,
         padding: spacing[4],
+        // A long unbroken name inside a message wraps instead of running off the box.
+        overflowWrap: "anywhere",
         ...style,
       }}
     >

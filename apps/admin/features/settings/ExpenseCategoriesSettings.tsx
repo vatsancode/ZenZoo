@@ -4,6 +4,8 @@ import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Card, IconButton, Input, Modal, Notice, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
 import { useAccess } from "../../lib/access";
+import { NAME_MAX, cleanName } from "../../lib/text";
+import { useSingleFlight } from "../../lib/useSingleFlight";
 import {
   addExpenseCategory,
   deleteExpenseCategory,
@@ -21,12 +23,17 @@ export default function ExpenseCategoriesSettings() {
   const canEdit = can("expenses", "edit");
   const canDelete = can("expenses", "delete");
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
+  const [query, setQuery] = useState("");
+  const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ from: ExpenseCategory; to: string } | null>(null);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<ExpenseCategory | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const addSave = useSingleFlight();
+  const renameSave = useSingleFlight();
+  const deleteSave = useSingleFlight();
 
   async function reload() {
     setCategories(await listExpenseCategories());
@@ -42,38 +49,62 @@ export default function ExpenseCategoriesSettings() {
     return () => clearTimeout(timer);
   }, [notice]);
 
-  async function create() {
-    const result = await addExpenseCategory(newName);
-    if (typeof result === "string") {
-      setAddError(result);
-      return;
-    }
-    setNotice(`${newName.trim()} added.`);
+  function openCreate() {
     setNewName("");
     setAddError(null);
-    void reload();
+    setCreating(true);
   }
 
-  async function saveRename() {
-    if (!renaming) return;
-    const message = await renameExpenseCategory(renaming.from, renaming.to);
-    if (message) {
-      setRenameError(message);
-      return;
-    }
-    setNotice(`Renamed to ${renaming.to.trim()}. Expenses filed under it follow the new name.`);
-    setRenaming(null);
-    setRenameError(null);
-    void reload();
+  function closeCreate() {
+    setCreating(false);
+    setNewName("");
+    setAddError(null);
   }
 
-  async function confirmDelete() {
-    if (!deleting) return;
-    const message = await deleteExpenseCategory(deleting);
-    setDeleting(null);
-    if (message) setNotice(message);
-    void reload();
+  function create() {
+    return addSave.run(async () => {
+      const result = await addExpenseCategory(newName);
+      if (typeof result === "string") {
+        setAddError(result);
+        return;
+      }
+      setNotice(`${cleanName(newName)} added.`);
+      closeCreate();
+      void reload();
+    });
   }
+
+  function saveRename() {
+    return renameSave.run(async () => {
+      if (!renaming) return;
+      const message = await renameExpenseCategory(renaming.from, renaming.to);
+      if (message) {
+        setRenameError(message);
+        return;
+      }
+      setNotice(
+        `Renamed to ${cleanName(renaming.to)}. Expenses filed under it follow the new name.`,
+      );
+      setRenaming(null);
+      setRenameError(null);
+      void reload();
+    });
+  }
+
+  function confirmDelete() {
+    return deleteSave.run(async () => {
+      if (!deleting) return;
+      const message = await deleteExpenseCategory(deleting);
+      setDeleting(null);
+      if (message) setNotice(message);
+      void reload();
+    });
+  }
+
+  const needle = query.trim().toLowerCase();
+  const visibleCategories = needle
+    ? categories.filter((category) => category.name.toLowerCase().includes(needle))
+    : categories;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: spacing[6] }}>
@@ -86,40 +117,39 @@ export default function ExpenseCategoriesSettings() {
 
       {notice ? <Notice>{notice}</Notice> : null}
 
-      {canEdit ? (
-        <div style={{ display: "flex", alignItems: "flex-start", gap: spacing[3], maxWidth: 520 }}>
-          <div style={{ flex: 1 }}>
-            <Input
-              autoComplete="off"
-              placeholder="New category, e.g. Insurance"
-              aria-label="New expense category"
-              aria-invalid={addError ? true : undefined}
-              value={newName}
-              onChange={(event) => {
-                setNewName(event.target.value);
-                setAddError(null);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void create();
-              }}
-            />
-            {addError ? (
-              <div
-                role="alert"
-                style={{ ...textStyle("footnote"), color: colors.danger, marginTop: spacing[2] }}
-              >
-                {addError}
-              </div>
-            ) : null}
-          </div>
-          <Button type="button" variant="primary" onClick={() => void create()}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: spacing[3],
+        }}
+      >
+        <div style={{ maxWidth: 360, width: "100%" }}>
+          <Input
+            type="search"
+            autoComplete="off"
+            placeholder="Search categories..."
+            aria-label="Search expense categories"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
+        {canEdit ? (
+          <Button type="button" variant="primary" onClick={openCreate}>
             Add category
           </Button>
+        ) : null}
+      </div>
+
+      {needle && visibleCategories.length === 0 ? (
+        <div style={{ ...textStyle("callout"), color: colors.inkMuted }}>
+          No categories match "{query.trim()}".
         </div>
       ) : null}
 
       <Card style={{ padding: `${spacing[2]}px ${spacing[6]}px` }}>
-        {categories.map((category, index) => {
+        {visibleCategories.map((category, index) => {
           const { name } = category;
           const usage = category;
           const locked = category.isCatchAll;
@@ -151,6 +181,7 @@ export default function ExpenseCategoriesSettings() {
                       autoFocus
                       autoComplete="off"
                       aria-label="Category name"
+                      maxLength={NAME_MAX}
                       value={renaming.to}
                       aria-invalid={renameError ? true : undefined}
                       onChange={(event) => {
@@ -162,7 +193,12 @@ export default function ExpenseCategoriesSettings() {
                         if (event.key === "Escape") setRenaming(null);
                       }}
                     />
-                    <Button type="button" variant="primary" onClick={() => void saveRename()}>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      loading={renameSave.busy}
+                      onClick={() => void saveRename()}
+                    >
                       Save
                     </Button>
                     <Button
@@ -184,8 +220,16 @@ export default function ExpenseCategoriesSettings() {
                 </div>
               ) : (
                 <>
-                  <div>
-                    <div style={{ ...textStyle("bodyMedium"), color: colors.ink }}>{name}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        ...textStyle("bodyMedium"),
+                        color: colors.ink,
+                        overflowWrap: "anywhere",
+                      }}
+                    >
+                      {name}
+                    </div>
                     <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
                       {usage.items === 0
                         ? "Not used yet"
@@ -205,7 +249,7 @@ export default function ExpenseCategoriesSettings() {
                       />
                       {canDelete ? (
                         <IconButton
-                          icon="close"
+                          icon="trash"
                           label={
                             usage.items > 0
                               ? `${name} is in use and can't be deleted`
@@ -231,7 +275,9 @@ export default function ExpenseCategoriesSettings() {
 
       <Modal open={deleting !== null} onClose={() => setDeleting(null)}>
         <div style={{ width: 420, maxWidth: "100%" }}>
-          <div style={{ ...textStyle("title3"), color: colors.ink }}>Delete {deleting?.name}?</div>
+          <div style={{ ...textStyle("title3"), color: colors.ink, overflowWrap: "anywhere" }}>
+            Delete {deleting?.name}?
+          </div>
           <p
             style={{ ...textStyle("body"), color: colors.inkMuted, margin: `${spacing[3]}px 0 0` }}
           >
@@ -248,11 +294,66 @@ export default function ExpenseCategoriesSettings() {
             <Button type="button" variant="secondary" onClick={() => setDeleting(null)}>
               Keep it
             </Button>
-            <Button type="button" variant="danger" onClick={() => void confirmDelete()}>
+            <Button
+              type="button"
+              variant="danger"
+              loading={deleteSave.busy}
+              onClick={() => void confirmDelete()}
+            >
               Delete
             </Button>
           </div>
         </div>
+      </Modal>
+
+      <Modal open={creating} onClose={closeCreate}>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void create();
+          }}
+          style={{ width: 420, maxWidth: "100%" }}
+        >
+          <div style={{ ...textStyle("title3"), color: colors.ink }}>New expense category</div>
+          <div style={{ marginTop: spacing[4] }}>
+            <Input
+              autoFocus
+              autoComplete="off"
+              placeholder="e.g. Insurance"
+              maxLength={NAME_MAX}
+              aria-label="Category name"
+              aria-invalid={addError ? true : undefined}
+              value={newName}
+              onChange={(event) => {
+                setNewName(event.target.value);
+                setAddError(null);
+              }}
+            />
+            {addError ? (
+              <div
+                role="alert"
+                style={{ ...textStyle("footnote"), color: colors.danger, marginTop: spacing[2] }}
+              >
+                {addError}
+              </div>
+            ) : null}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: spacing[3],
+              marginTop: spacing[6],
+            }}
+          >
+            <Button type="button" variant="secondary" onClick={closeCreate}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" loading={addSave.busy}>
+              Save category
+            </Button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

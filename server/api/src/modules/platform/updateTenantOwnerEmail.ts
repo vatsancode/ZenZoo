@@ -25,7 +25,8 @@ export async function updateTenantOwnerEmail(
     `;
     const row = rows[0];
     if (!row) {
-      throw new Error("platform_update_tenant_owner_email returned no row");
+      console.error("platform_update_tenant_owner_email returned no row");
+      throw new Error("We couldn't update the email. Please try again.");
     }
     return { userId: row.user_id, email: row.email };
   } catch (error) {
@@ -34,7 +35,7 @@ export async function updateTenantOwnerEmail(
     // the underlying constraint name instead (see createUser.ts for the
     // same pattern).
     const message = error instanceof Error ? error.message : "";
-    if (/users_email_key|unique constraint/i.test(message)) {
+    if (/users_email_key|unique constraint|23505/i.test(message)) {
       throw new Error("Someone with that email already exists.");
     }
     throw error;

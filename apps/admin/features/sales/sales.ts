@@ -3,6 +3,7 @@ import {
   parseTypedDiscount,
   priceCart,
   returnValue,
+  subtractQuantity,
   toPaise,
   toRupees,
   type PriceLineInput,
@@ -34,6 +35,8 @@ export interface CartLine {
   customPrice?: boolean;
   /** What was typed for a custom price. */
   priceValue?: string;
+  /** What was typed for a weighed or measured quantity (1.25 kg), kept as typed while editing. */
+  quantityValue?: string;
 }
 
 export type { Customer } from "../../lib/customers";
@@ -318,7 +321,7 @@ export function unitRefundOf(sale: Sale, line: SaleLine): number {
  */
 export function returnableOf(line: SaleLine): number {
   if (line.service) return 0;
-  return Math.max(line.quantity - (line.returned ?? 0), 0);
+  return Math.max(subtractQuantity(line.quantity, line.returned ?? 0), 0);
 }
 
 export function canReturnSale(sale: Sale): boolean {

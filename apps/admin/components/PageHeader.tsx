@@ -13,8 +13,9 @@ export default function PageHeader({
   backLabel,
   action,
 }: {
-  title: string;
-  subtitle?: string;
+  /** Usually text; a placeholder while the page's data is loading. */
+  title: ReactNode;
+  subtitle?: ReactNode;
   backHref: string;
   backLabel: string;
   /** Sits at the right edge, level with the title. */

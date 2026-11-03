@@ -1,3 +1,5 @@
+import { toQuantity } from "../../shared/quantity";
+
 export interface CurrentStockDto {
   variantId: string;
   onHand: number;
@@ -25,8 +27,8 @@ export interface StockMovementDto {
 interface BatchRow {
   id: string;
   barcode: string;
-  received_quantity: number;
-  available_quantity: number;
+  received_quantity: { toString(): string };
+  available_quantity: { toString(): string };
   unit_cost: { toString(): string };
   received_at: Date;
 }
@@ -34,7 +36,7 @@ interface BatchRow {
 interface StockMovementRow {
   id: string;
   movement_type: string;
-  quantity: number;
+  quantity: { toString(): string };
   batch_id: string;
   reference_type: string | null;
   reason: string | null;
@@ -45,8 +47,8 @@ export function toBatchDto(row: BatchRow): BatchDto {
   return {
     id: row.id,
     barcode: row.barcode,
-    receivedQuantity: row.received_quantity,
-    availableQuantity: row.available_quantity,
+    receivedQuantity: toQuantity(row.received_quantity),
+    availableQuantity: toQuantity(row.available_quantity),
     unitCost: row.unit_cost.toString(),
     receivedAt: row.received_at.toISOString(),
   };
@@ -56,7 +58,7 @@ export function toStockMovementDto(row: StockMovementRow): StockMovementDto {
   return {
     id: row.id,
     movementType: row.movement_type,
-    quantity: row.quantity,
+    quantity: toQuantity(row.quantity),
     batchId: row.batch_id,
     referenceType: row.reference_type,
     reason: row.reason,

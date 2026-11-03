@@ -1,6 +1,7 @@
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
+import { addQuantities, toQuantity } from "../../shared/quantity";
 
 export interface ListTillItemsInput {
   storeId: string;
@@ -19,6 +20,8 @@ export interface TillItemDto {
   /** Made-to-order items priced per order - price is entered at the till. */
   customPrice: boolean;
   unit: string;
+  /** Whether the quantity may have decimals - weighed or measured goods. */
+  unitAllowsDecimals: boolean;
   /** Units on hand across all batches; null for made-to-order items, which aren't counted. */
   onHand: number | null;
   /** Cost of the batch the next sale would draw from (oldest first), for the profit preview; null when none. */
@@ -60,7 +63,7 @@ export const listTillItems = defineCapability<ListTillItemsInput, TillItemDto[]>
               name: true,
               sku: true,
               base_price: true,
-              units: { select: { code: true } },
+              units: { select: { code: true, allow_decimals: true } },
               inventory_batches: {
                 where: { available_quantity: { gt: 0 } },
                 orderBy: { received_at: "asc" },
@@ -85,8 +88,11 @@ export const listTillItems = defineCapability<ListTillItemsInput, TillItemDto[]>
             price: variant.base_price.toString(),
             customPrice: sellable.pricing_mode === "custom",
             unit: variant.units.code,
+            unitAllowsDecimals: variant.units.allow_decimals,
             onHand: isProduct
-              ? variant.inventory_batches.reduce((sum, batch) => sum + batch.available_quantity, 0)
+              ? addQuantities(
+                  ...variant.inventory_batches.map((batch) => toQuantity(batch.available_quantity)),
+                )
               : null,
             nextUnitCost: variant.inventory_batches[0]?.unit_cost.toString() ?? null,
           };

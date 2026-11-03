@@ -13,6 +13,8 @@ import {
 import { formatPrice } from "../../lib/stock-display";
 import InfoTip from "../../components/InfoTip";
 import ProfitBreakdown from "./ProfitBreakdown";
+import { addQuantities } from "@zenzoo/pricing";
+import QuantityStepper from "./QuantityStepper";
 
 /** A rupee / percent toggle that sits beside a discount box. */
 export function UnitToggle({
@@ -64,28 +66,7 @@ const COLUMNS = "minmax(0, 1fr) 128px 96px 160px 112px 36px";
 export default function PosLines({ lines, onLineChange, onRemove, onClear }: PosLinesProps) {
   const { colors, radius, spacing } = useTheme();
   const [hovered, setHovered] = useState<string | null>(null);
-  const units = lines.reduce((sum, line) => sum + line.quantity, 0);
-
-  const stepButton = (text: string, aria: string, onClick: () => void, disabled = false) => (
-    <button
-      type="button"
-      aria-label={aria}
-      disabled={disabled}
-      onClick={onClick}
-      style={{
-        ...textStyle("bodyMedium"),
-        width: 32,
-        height: 32,
-        border: "none",
-        borderRadius: radius.full,
-        background: "transparent",
-        color: disabled ? colors.inkFaint : colors.inkMuted,
-        cursor: disabled ? "not-allowed" : "pointer",
-      }}
-    >
-      {text}
-    </button>
-  );
+  const units = addQuantities(...lines.map((line) => line.quantity));
 
   return (
     <Card>
@@ -190,38 +171,11 @@ export default function PosLines({ lines, onLineChange, onRemove, onClear }: Pos
                   </div>
                 </div>
 
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    width: "max-content",
-                    padding: spacing[1],
-                    border: `1px solid ${colors.border}`,
-                    borderRadius: radius.full,
-                  }}
-                >
-                  {stepButton("−", `Decrease ${line.name}`, () =>
-                    line.quantity <= 1
-                      ? onRemove(line.sku)
-                      : onLineChange(line.sku, { quantity: line.quantity - 1 }),
-                  )}
-                  <span
-                    style={{
-                      ...textStyle("data"),
-                      width: 32,
-                      textAlign: "center",
-                      color: colors.ink,
-                    }}
-                  >
-                    {line.quantity}
-                  </span>
-                  {stepButton(
-                    "+",
-                    `Increase ${line.name}`,
-                    () => onLineChange(line.sku, { quantity: line.quantity + 1 }),
-                    line.quantity >= line.stock,
-                  )}
-                </div>
+                <QuantityStepper
+                  line={line}
+                  onChange={(patch) => onLineChange(line.sku, patch)}
+                  onRemove={() => onRemove(line.sku)}
+                />
 
                 {line.customPrice ? (
                   <Input

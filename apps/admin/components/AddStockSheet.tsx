@@ -6,7 +6,9 @@ import { useEffect, useState, type KeyboardEvent } from "react";
 import { priceProblem, quantityProblem, toPrice } from "../features/stocks/stock-validation";
 import type { CategoryResponse } from "../lib/catalogue";
 import type { RealProduct } from "../lib/realProducts";
+import CategoryPicker from "./CategoryPicker";
 import FormField from "./FormField";
+import { useSingleFlight } from "../lib/useSingleFlight";
 
 /** Everything this form collects, flat - the caller decides which real actions to call with it. */
 export interface StockFormInput {
@@ -31,6 +33,20 @@ interface AddStockSheetProps {
   unitOptions: { value: string; label: string }[];
   /** This store's full category tree, flat - fetched by the caller, live. */
   categories: CategoryResponse[];
+  /**
+   * Quick-create of a unit / category from the dropdowns. Each is offered only when its flag is
+   * set - the caller passes the Settings write permission, not Stocks'. A unit is created when
+   * the product is saved and returns the new id, or the server's reason it failed. A category is
+   * saved as soon as it is named; the caller adds the new row to `categories`.
+   */
+  canCreateUnit?: boolean;
+  canCreateCategory?: boolean;
+  onCreateUnit?: (input: {
+    code: string;
+    name: string;
+    allowDecimals: boolean;
+  }) => Promise<{ id: string } | { error: string }>;
+  onCategoryCreated: (row: CategoryResponse) => void;
   onClose: () => void;
   /** Returns the SKU that clashed and why, or null on success. */
   onSubmit: (input: StockFormInput) => Promise<{ sku: string; error: string } | null>;
@@ -53,6 +69,10 @@ export default function AddStockSheet({
   product = null,
   unitOptions,
   categories,
+  canCreateUnit = false,
+  canCreateCategory = false,
+  onCreateUnit,
+  onCategoryCreated,
   onClose,
   onSubmit,
 }: AddStockSheetProps) {
@@ -68,18 +88,17 @@ export default function AddStockSheet({
   const [purchasePrice, setPurchasePrice] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [subcategoryId, setSubcategoryId] = useState("");
+  // A typed-in unit code that isn't in the list yet is created on save.
+  const [newUnitName, setNewUnitName] = useState("");
+  const [newUnitDecimals, setNewUnitDecimals] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [skuError, setSkuError] = useState<{ sku: string; message: string } | null>(null);
   const [touched, setTouched] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const { busy: submitting, run: runSave } = useSingleFlight();
 
   const topLevelCategories = categories.filter((category) => category.parentId === null);
-  const categoryOptions = topLevelCategories.map((category) => ({
-    value: category.id,
-    label: category.name,
-  }));
-  const subcategoryOptions = categories
-    .filter((category) => category.parentId === categoryId)
-    .map((category) => ({ value: category.id, label: category.name }));
+
+  const pendingUnit = unitId !== "" && !unitOptions.some((option) => option.value === unitId);
 
   const isEditing = product !== null;
   // A product with more than its one starting variant keeps each variant's
@@ -103,10 +122,14 @@ export default function AddStockSheet({
       setPurchasePrice("");
       setCategoryId("");
       setSubcategoryId("");
+      setNewUnitName("");
+      setNewUnitDecimals(false);
+      setCreateError(null);
       setSkuError(null);
       setTouched(false);
-      setSubmitting(false);
     } else if (product) {
+      // Only when the sheet opens or switches product - not when the lists change, which would
+      // overwrite what the user has typed since (e.g. after adding a category here).
       setName(product.name);
       setHasVariants(product.variantCount > 1);
       if (soleVariant) {
@@ -119,25 +142,28 @@ export default function AddStockSheet({
         matchedCategory?.parentId === null ? matchedCategory.id : matchedCategory?.parentId;
       setCategoryId(topLevelId ?? "");
       setSubcategoryId(matchedCategory?.parentId !== null ? (matchedCategory?.id ?? "") : "");
-    } else {
-      setUnitId((current) => current || unitOptions[0]?.value || "");
-      setCategoryId((current) => {
-        if (current) return current;
-        const others = topLevelCategories.find(
-          (category) => category.name.toLowerCase() === "others",
-        );
-        return others?.id ?? topLevelCategories[0]?.id ?? "";
-      });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, product]);
+
+  // A new product starts on the first unit and on "Others" (or the first category), filled in
+  // once the lists arrive. `current ||` keeps whatever the user has already chosen.
+  useEffect(() => {
+    if (!open || product) return;
+    setUnitId((current) => current || unitOptions[0]?.value || "");
+    setCategoryId((current) => {
+      if (current) return current;
+      const others = topLevelCategories.find(
+        (category) => category.name.toLowerCase() === "others",
+      );
+      return others?.id ?? topLevelCategories[0]?.id ?? "";
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, product, unitOptions, categories]);
 
-  function changeCategory(next: string) {
-    setCategoryId(next);
-    setSubcategoryId("");
-  }
-
-  const unitCode = unitOptions.find((option) => option.value === unitId)?.label ?? "";
+  const unitCode = pendingUnit
+    ? ""
+    : (unitOptions.find((option) => option.value === unitId)?.label ?? "");
 
   const nameTaken = existingNames.some(
     (existing) => existing.trim().toLowerCase() === name.trim().toLowerCase(),
@@ -156,7 +182,17 @@ export default function AddStockSheet({
   const quantityError =
     editingVariants || isEditing || quantity.trim() === ""
       ? null
-      : quantityProblem(quantity, unitCode, true);
+      : (quantityProblem(quantity, unitCode, true) ??
+        (pendingUnit && !newUnitDecimals && !Number.isInteger(Number(quantity))
+          ? `${unitId} is counted in whole numbers.`
+          : null));
+  const newUnitError = !pendingUnit
+    ? null
+    : !/^[A-Za-z0-9]{1,10}$/.test(unitId.trim())
+      ? "A unit code uses letters and numbers only, up to 10."
+      : newUnitName.trim() === ""
+        ? "Name the unit, like Dozen."
+        : null;
   const priceError = editingVariants ? null : priceProblem(price);
   // Purchase price only matters once a quantity is actually given.
   const purchasePriceError =
@@ -166,28 +202,47 @@ export default function AddStockSheet({
     skuError && skuError.sku.toLowerCase() === sku.trim().toLowerCase() ? skuError.message : null;
 
   const valid =
-    !nameError && !variantNameError && !quantityError && !priceError && !purchasePriceError && !categoryError;
+    !nameError && !variantNameError && !quantityError && !priceError && !purchasePriceError && !categoryError && !newUnitError;
 
-  async function submit() {
-    setTouched(true);
-    if (!valid || submitting) return;
-    setSubmitting(true);
-    const clash = await onSubmit({
-      name: name.trim(),
-      hasVariants,
-      variantName: variantName.trim(),
-      sku: sku.trim(),
-      price: toPrice(price),
-      openingUnitCost: toPrice(purchasePrice),
-      openingQuantity: quantity.trim() === "" ? 0 : Number(quantity),
-      unitId,
-      categoryId: subcategoryId || categoryId,
+  function submit() {
+    return runSave(async () => {
+      setTouched(true);
+      if (!valid) return;
+      setCreateError(null);
+
+      // A typed-in unit is created now. Swapping in the real id straight away means a retry
+      // after a failed save doesn't create it twice.
+      let finalUnitId = unitId;
+      if (pendingUnit) {
+        const created = await onCreateUnit?.({
+          code: unitId.trim(),
+          name: newUnitName.trim(),
+          allowDecimals: newUnitDecimals,
+        });
+        if (!created || "error" in created) {
+          setCreateError(created?.error ?? "You can't add units.");
+          return;
+        }
+        finalUnitId = created.id;
+        setUnitId(created.id);
+      }
+
+      const clash = await onSubmit({
+        name: name.trim(),
+        hasVariants,
+        variantName: variantName.trim(),
+        sku: sku.trim(),
+        price: toPrice(price),
+        openingUnitCost: toPrice(purchasePrice),
+        openingQuantity: quantity.trim() === "" ? 0 : Number(quantity),
+        unitId: finalUnitId,
+        categoryId: subcategoryId || categoryId,
+      });
+      if (clash) {
+        setSkuError({ sku: clash.sku, message: clash.error });
+        focusField("add-stock-sku");
+      }
     });
-    setSubmitting(false);
-    if (clash) {
-      setSkuError({ sku: clash.sku, message: clash.error });
-      focusField("add-stock-sku");
-    }
   }
 
   // Enter moves to the next field, or submits from the last one.
@@ -430,6 +485,8 @@ export default function AddStockSheet({
               id="add-stock-unit"
               options={unitOptions}
               value={unitId}
+              creatable={canCreateUnit}
+              createLabel="Add new unit"
               onChange={setUnitId}
               onKeyDown={enterFrom("add-stock-unit")}
             />
@@ -439,6 +496,45 @@ export default function AddStockSheet({
               </span>
             ) : null}
           </FormField>
+
+          {pendingUnit ? (
+            <>
+              <FormField
+                id="add-stock-new-unit-name"
+                label={`NAME FOR "${unitId.trim()}"`}
+                span={6}
+                error={touched ? newUnitError : null}
+              >
+                <Input
+                  id="add-stock-new-unit-name"
+                  autoComplete="off"
+                  placeholder="e.g. Dozen"
+                  value={newUnitName}
+                  disabled={submitting}
+                  aria-invalid={touched && newUnitError ? true : undefined}
+                  onChange={(event) => setNewUnitName(event.target.value)}
+                />
+              </FormField>
+              <div
+                style={{
+                  gridColumn: "span 6",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: spacing[3],
+                }}
+              >
+                <label htmlFor="add-stock-new-unit-decimals" style={{ ...textStyle("body"), color: colors.ink }}>
+                  Allows decimals
+                </label>
+                <Switch
+                  id="add-stock-new-unit-decimals"
+                  checked={newUnitDecimals}
+                  onChange={setNewUnitDecimals}
+                />
+              </div>
+            </>
+          ) : null}
 
           {hasVariants && !isEditing ? (
             <div
@@ -453,33 +549,30 @@ export default function AddStockSheet({
             </div>
           ) : null}
 
-          <FormField
-            id="add-stock-category"
-            label="CATEGORY"
+          <CategoryPicker
+            idPrefix="add-stock"
             span={6}
+            categories={categories}
+            categoryId={categoryId}
+            subcategoryId={subcategoryId}
+            canCreate={canCreateCategory}
             error={touched ? categoryError : null}
-          >
-            <Select
-              id="add-stock-category"
-              options={categoryOptions}
-              value={categoryId}
-              placeholder="Select a category"
-              aria-invalid={touched && categoryError ? true : undefined}
-              onChange={changeCategory}
-              onKeyDown={enterFrom("add-stock-category")}
-            />
-          </FormField>
-          <FormField id="add-stock-subcategory" label="SUBCATEGORY (OPTIONAL)" span={6}>
-            <Select
-              id="add-stock-subcategory"
-              options={[{ value: "", label: "None" }, ...subcategoryOptions]}
-              value={subcategoryId}
-              placeholder={categoryId ? "Select a subcategory" : "Choose a category first"}
-              disabled={categoryId === ""}
-              onChange={setSubcategoryId}
-              onKeyDown={enterFrom("add-stock-subcategory")}
-            />
-          </FormField>
+            disabled={submitting}
+            onCreated={onCategoryCreated}
+            onChange={(next) => {
+              setCategoryId(next.categoryId);
+              setSubcategoryId(next.subcategoryId);
+            }}
+            onFieldKeyDown={enterFrom}
+          />
+          {createError ? (
+            <div
+              role="alert"
+              style={{ ...textStyle("footnote"), gridColumn: "span 12", color: colors.danger }}
+            >
+              {createError}
+            </div>
+          ) : null}
         </div>
       </form>
     </Sheet>

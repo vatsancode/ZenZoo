@@ -2,6 +2,7 @@ import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { CUSTOMER_SELECT, toCustomerDto, type CustomerDto } from "../customers/dto";
 import { customerBalances } from "../customers/ledger";
+import { customerSpends } from "../customers/spend";
 
 export interface ListCustomersInput {
   /** Archived customers are hidden unless asked for - the till never asks. */
@@ -27,7 +28,12 @@ export const listCustomers = defineCapability<ListCustomersInput, CustomerDto[]>
         actor.tenantId,
         rows.map((row) => row.id),
       );
-      return rows.map((row) => toCustomerDto(row, balances.get(row.id) ?? 0));
+      const spends = await customerSpends(
+        tx,
+        actor.tenantId,
+        rows.map((row) => row.id),
+      );
+      return rows.map((row) => toCustomerDto(row, balances.get(row.id) ?? 0, spends.get(row.id)));
     });
   },
 });

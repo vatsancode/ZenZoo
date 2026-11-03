@@ -5,6 +5,7 @@ import { Button, Card, IconButton, Input, textStyle } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { signIn } from "../lib/auth";
+import { useSingleFlight } from "../lib/useSingleFlight";
 
 export default function SignInForm() {
   const { colors, spacing } = useTheme();
@@ -12,24 +13,24 @@ export default function SignInForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const { busy: loading, run: runSignIn } = useSingleFlight();
   const [error, setError] = useState<string | null>(null);
 
   const canSubmit = email.trim().length > 0 && password.length > 0 && !loading;
 
-  async function handleSubmit(event: FormEvent) {
+  function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!canSubmit) return;
 
-    setLoading(true);
-    setError(null);
-    const result = await signIn(email, password);
-    setLoading(false);
-    if (result.error) {
-      setError(result.error);
-      return;
-    }
-    router.push(result.kind === "platform_admin" ? "/platform/tenants" : "/");
+    return runSignIn(async () => {
+      setError(null);
+      const result = await signIn(email, password);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      router.push(result.kind === "platform_admin" ? "/platform/tenants" : "/");
+    });
   }
 
   return (

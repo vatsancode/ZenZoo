@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
+import { assertFits, cleanName } from "../../shared/names";
 import { UNIT_SELECT, toUnitDto, type UnitDto } from "../units/dto";
 
 export interface CreateUnitInput {
@@ -17,10 +18,12 @@ export const createUnit = defineCapability<CreateUnitInput, UnitDto>({
   requiredPermission: "settings:edit",
   async handler(actor, input) {
     const code = input.code.trim();
-    const name = input.name.trim();
+    const name = cleanName(input.name);
     if (!code) throw new Error("Enter a short code, like doz.");
     if (!name) throw new Error("Enter the unit's name, like Dozen.");
     if (!CODE_PATTERN.test(code)) throw new Error("A unit code can only use letters and numbers.");
+    assertFits(code, 10, "The short code");
+    assertFits(name, 100, "The unit name");
 
     try {
       return await runInTenantContext(actor, async (tx) => {

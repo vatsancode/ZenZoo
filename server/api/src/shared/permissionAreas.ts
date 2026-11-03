@@ -17,6 +17,7 @@ export const PERMISSION_AREAS = [
   "customers",
   "settings",
   "users",
+  "accounts",
 ] as const;
 export type PermissionArea = (typeof PERMISSION_AREAS)[number];
 

@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
+import { assertFits, cleanName, firstFreeCode } from "../../shared/names";
 import {
   PAYMENT_METHOD_SELECT,
   toPaymentMethodDto,
@@ -16,15 +17,17 @@ export const createPaymentMethod = defineCapability<CreatePaymentMethodInput, Pa
   kind: "action",
   requiredPermission: "settings:edit",
   async handler(actor, input) {
-    const name = input.name.trim();
+    const name = cleanName(input.name);
     if (!name) throw new Error("Enter a name for the payment method.");
+    assertFits(name, 100, "The payment method name");
 
-    // payment_methods_code_format_check: upper-case, [A-Z0-9_]+ only.
-    const code = name
-      .toUpperCase()
-      .replace(/[^A-Z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "");
-    if (!code) throw new Error("Enter a name for the payment method.");
+    // payment_methods_code_format_check: upper-case, [A-Z0-9_]+ only. A name with no English
+    // letters (Tamil, an emoji) leaves nothing, so it starts from METHOD instead.
+    const baseCode =
+      name
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "") || "METHOD";
 
     try {
       return await runInTenantContext(actor, async (tx) => {
@@ -33,6 +36,15 @@ export const createPaymentMethod = defineCapability<CreatePaymentMethodInput, Pa
           select: { id: true },
         });
         if (clash) throw new Error("There is already a payment method with that name.");
+
+        // Two different names can boil down to one code ("Gift voucher" / "Gift-voucher").
+        const code = await firstFreeCode(baseCode, "_", 30, async (candidate) => {
+          const taken = await tx.payment_methods.findFirst({
+            where: { tenant_id: actor.tenantId, code: candidate },
+            select: { id: true },
+          });
+          return taken !== null;
+        });
 
         const created = await tx.payment_methods.create({
           data: { tenant_id: actor.tenantId, name, code },

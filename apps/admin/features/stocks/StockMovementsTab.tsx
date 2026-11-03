@@ -18,6 +18,8 @@ const TONES: Record<MovementType, BadgeTone> = {
 
 const FILTERS = [
   { value: "all", label: "All" },
+  { value: "sold", label: "Sales" },
+  { value: "returned", label: "Returns" },
   { value: "purchased", label: "Purchases" },
   { value: "opening", label: "Opening stock" },
   { value: "removed", label: "Used/out" },
@@ -25,6 +27,8 @@ const FILTERS = [
 ];
 
 const FILTER_TYPES: Record<string, MovementType[]> = {
+  sold: ["Sale"],
+  returned: ["Return"],
   purchased: ["Purchased"],
   opening: ["Opening stock"],
   removed: ["Used/out"],
@@ -101,7 +105,7 @@ export default function StockMovementsTab({
       <StatRow>
         <StatTile label="Purchased" value={`${purchased} ${item.unit}`} hint="From received deliveries" />
         <StatTile label="Opening stock" value={`${opening} ${item.unit}`} hint="Starting balance, not a purchase" />
-        <StatTile label="Sold" value={`${sold} ${item.unit}`} hint="No sales capability yet" />
+        <StatTile label="Sold" value={`${sold} ${item.unit}`} hint="Sales minus returns" />
         <StatTile label="Used/out" value={`${removed} ${item.unit}`} hint={`${added} ${item.unit} added back`} />
       </StatRow>
 

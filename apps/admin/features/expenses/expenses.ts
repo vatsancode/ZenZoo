@@ -3,6 +3,7 @@ import { logAudit } from "../../lib/audit";
 import { accountLabel } from "../../lib/payment-options";
 import { formatDate, formatPrice } from "../../lib/stock-display";
 import { ensureStoreId } from "../../lib/storeContext";
+import { apiFetch } from "../../lib/apiFetch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -106,7 +107,7 @@ async function parseError(response: Response): Promise<string> {
 /** Every bill, newest first - requires at least "expenses:view". */
 export async function listExpenses(): Promise<Expense[]> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/expenses?storeId=${storeId}`, {
+  const response = await apiFetch(`${API_URL}/expenses?storeId=${storeId}`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -141,7 +142,7 @@ const labelOf = (expense: Expense) =>
 /** Adds a bill - requires "expenses:edit". Returns the bill, or an error message. */
 export async function addExpense(input: ExpenseInput): Promise<Expense | string> {
   const storeId = await ensureStoreId();
-  const response = await fetch(`${API_URL}/expenses`, {
+  const response = await apiFetch(`${API_URL}/expenses`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -165,7 +166,7 @@ export async function addExpense(input: ExpenseInput): Promise<Expense | string>
 
 /** Saves changes to a bill - requires "expenses:edit". Returns an error message, or null. */
 export async function editExpense(previous: Expense, input: ExpenseInput): Promise<string | null> {
-  const response = await fetch(`${API_URL}/expenses/${previous.id}`, {
+  const response = await apiFetch(`${API_URL}/expenses/${previous.id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -193,7 +194,7 @@ export async function payExpense(
   accountId: string,
   paidDate: string,
 ): Promise<string | null> {
-  const response = await fetch(`${API_URL}/expenses/${previous.id}/pay`, {
+  const response = await apiFetch(`${API_URL}/expenses/${previous.id}/pay`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -217,7 +218,7 @@ export async function payExpense(
 
 /** Deletes a bill; a paid one's money goes back into its account - requires "expenses:delete". */
 export async function deleteExpense(expense: Expense): Promise<string | null> {
-  const response = await fetch(`${API_URL}/expenses/${expense.id}`, {
+  const response = await apiFetch(`${API_URL}/expenses/${expense.id}`, {
     method: "DELETE",
     credentials: "include",
   });

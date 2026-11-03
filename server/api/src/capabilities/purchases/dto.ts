@@ -1,3 +1,5 @@
+import { addQuantities, subtractQuantity, toQuantity } from "../../shared/quantity";
+
 export interface PurchaseBatchDto {
   quantity: number;
   receivedAt: string;
@@ -9,6 +11,9 @@ export interface PurchaseItemDto {
   /** "<product name> - <variant name>", so the frontend needs no second lookup per line. */
   name: string;
   sku: string | null;
+  /** The variant's unit code, and whether its quantities may have decimals. */
+  unit: string;
+  unitAllowsDecimals: boolean;
   quantity: number;
   unitCost: string;
   discountAmount: string;
@@ -46,13 +51,18 @@ export interface PurchaseDto {
 interface PurchaseItemRow {
   id: string;
   variant_id: string;
-  quantity: number;
+  quantity: { toString(): string };
   unit_cost: { toString(): string };
   discount_amount: { toString(): string };
   tax_amount: { toString(): string };
   line_total: { toString(): string };
-  variants: { name: string; sku: string | null; sellables: { name: string } };
-  inventory_batches: { received_quantity: number; received_at: Date }[];
+  variants: {
+    name: string;
+    sku: string | null;
+    sellables: { name: string };
+    units: { code: string; allow_decimals: boolean };
+  };
+  inventory_batches: { received_quantity: { toString(): string }; received_at: Date }[];
 }
 
 interface PurchaseRow {
@@ -72,24 +82,26 @@ interface PurchaseRow {
 }
 
 function toPurchaseItemDto(row: PurchaseItemRow): PurchaseItemDto {
-  const receivedQuantity = row.inventory_batches.reduce(
-    (sum, batch) => sum + batch.received_quantity,
-    0,
+  const receivedQuantity = addQuantities(
+    ...row.inventory_batches.map((batch) => toQuantity(batch.received_quantity)),
   );
+  const quantity = toQuantity(row.quantity);
   return {
     id: row.id,
     variantId: row.variant_id,
     name: `${row.variants.sellables.name} - ${row.variants.name}`,
     sku: row.variants.sku,
-    quantity: row.quantity,
+    unit: row.variants.units.code,
+    unitAllowsDecimals: row.variants.units.allow_decimals,
+    quantity,
     unitCost: row.unit_cost.toString(),
     discountAmount: row.discount_amount.toString(),
     taxAmount: row.tax_amount.toString(),
     lineTotal: row.line_total.toString(),
     receivedQuantity,
-    pendingQuantity: Math.max(row.quantity - receivedQuantity, 0),
+    pendingQuantity: Math.max(subtractQuantity(quantity, receivedQuantity), 0),
     batches: row.inventory_batches.map((batch) => ({
-      quantity: batch.received_quantity,
+      quantity: toQuantity(batch.received_quantity),
       receivedAt: batch.received_at.toISOString(),
     })),
   };
@@ -124,7 +136,14 @@ export const PURCHASE_ITEM_SELECT = {
   discount_amount: true,
   tax_amount: true,
   line_total: true,
-  variants: { select: { name: true, sku: true, sellables: { select: { name: true } } } },
+  variants: {
+    select: {
+      name: true,
+      sku: true,
+      sellables: { select: { name: true } },
+      units: { select: { code: true, allow_decimals: true } },
+    },
+  },
   inventory_batches: { select: { received_quantity: true, received_at: true } },
 } as const;
 

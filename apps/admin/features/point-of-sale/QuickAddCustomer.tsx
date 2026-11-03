@@ -5,6 +5,8 @@ import { Button, Input, Modal, textStyle } from "@zenzoo/ui-web";
 import { useEffect, useState } from "react";
 import type { Customer } from "../../lib/customers";
 import FormField from "../../components/FormField";
+import { useSingleFlight } from "../../lib/useSingleFlight";
+import { cleanPhoneInput } from "../settings/users";
 
 export interface QuickAddCustomerProps {
   /** What the cashier typed in the customer box - a phone number or a name. null = closed. */
@@ -29,33 +31,32 @@ export default function QuickAddCustomer({
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [touched, setTouched] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run: runSave } = useSingleFlight();
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (typed === null) return;
     const phoneTyped = looksLikePhone(typed);
     setName(phoneTyped ? "" : typed.trim());
-    setPhone(phoneTyped ? typed.trim() : "");
+    setPhone(phoneTyped ? cleanPhoneInput(typed.trim()) : "");
     setTouched(false);
-    setSaving(false);
     setError(null);
   }, [typed]);
 
   const nameError = name.trim() === "" ? "Enter the customer's name." : null;
 
-  async function submit() {
-    setTouched(true);
-    if (nameError || saving) return;
-    setSaving(true);
-    setError(null);
-    const result = await onSave(name, phone);
-    setSaving(false);
-    if (typeof result === "string") {
-      setError(result);
-      return;
-    }
-    onAdded(result);
+  function submit() {
+    return runSave(async () => {
+      setTouched(true);
+      if (nameError) return;
+      setError(null);
+      const result = await onSave(name, phone);
+      if (typeof result === "string") {
+        setError(result);
+        return;
+      }
+      onAdded(result);
+    });
   }
 
   return (
@@ -100,7 +101,7 @@ export default function QuickAddCustomer({
             value={phone}
             aria-invalid={error ? true : undefined}
             onChange={(event) => {
-              setPhone(event.target.value);
+              setPhone(cleanPhoneInput(event.target.value));
               setError(null);
             }}
           />

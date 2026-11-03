@@ -5,16 +5,19 @@ import {
   Badge,
   Button,
   Input,
+  LoadError,
   Pagination,
+  SkeletonTable,
   Table,
   textStyle,
   type TableColumn,
 } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { displayStatusLabel, displayStatusTone, listPurchases, type Purchase } from "./purchases";
 import { formatDate, formatPrice } from "../../lib/stock-display";
 import { useAccess } from "../../lib/access";
+import { useSingleFlight } from "../../lib/useSingleFlight";
 import { lookupVendors, type VendorLookup } from "../../lib/lookups";
 
 export default function PurchasesTable() {
@@ -27,10 +30,26 @@ export default function PurchasesTable() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  const [loadFailed, setLoadFailed] = useState(false);
+  const { busy: loading, run: runLoad } = useSingleFlight();
+
+  const load = useCallback(
+    () =>
+      runLoad(async () => {
+        setLoadFailed(false);
+        try {
+          setPurchases(await listPurchases());
+        } catch {
+          setLoadFailed(true);
+        }
+      }),
+    [runLoad],
+  );
+
   useEffect(() => {
-    listPurchases().then(setPurchases);
+    void load();
     lookupVendors().then(setVendors);
-  }, []);
+  }, [load]);
 
   const vendorName = useMemo(() => {
     const names = new Map(vendors.map((vendor) => [vendor.id, vendor.name]));
@@ -122,8 +141,14 @@ export default function PurchasesTable() {
         ) : null}
       </div>
 
-      {purchases === null ? (
-        message("Loading purchases...")
+      {purchases === null && loadFailed ? (
+        <LoadError
+          message="Couldn't load the purchases."
+          onRetry={() => void load()}
+          retrying={loading}
+        />
+      ) : purchases === null ? (
+        <SkeletonTable columns={columns} rows={5} />
       ) : filtered.length === 0 ? (
         message("No purchases match your search.")
       ) : (
