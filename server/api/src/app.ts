@@ -4,6 +4,7 @@ import type { CapabilityResult } from "@zenzoo/types";
 import { requirePlatformAdmin } from "./auth/platform-admin";
 import { requireTenantUser } from "./auth/requireTenantUser";
 import { getActor } from "./auth/actor";
+import { handleMcpPost, methodNotAllowed } from "./mcp/server";
 import { signIn } from "./auth/signIn";
 import { SESSION_COOKIE_NAME } from "./auth/session";
 import { listTenants } from "./modules/platform/listTenants";
@@ -182,6 +183,10 @@ export function createApp(): Express {
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
+
+  app.post("/mcp", handleMcpPost);
+  app.get("/mcp", methodNotAllowed);
+  app.delete("/mcp", methodNotAllowed);
 
   app.post("/auth/sign-in", async (req, res) => {
     const { email, password } = req.body as Partial<{ email: string; password: string }>;

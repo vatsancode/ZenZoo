@@ -149,6 +149,13 @@ export default function SettingsHome() {
       description: "Who can sign in, and what each role is allowed to see and do.",
       detail: `${counts.users} users · ${counts.roles} roles`,
     },
+    {
+      href: "/settings/ai-connectors",
+      icon: "plug",
+      name: "AI connectors",
+      description: "Let an AI assistant like Claude read your shop's data to answer your questions.",
+      detail: "Not connected yet",
+    },
   ];
 
   return (

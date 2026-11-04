@@ -28,6 +28,7 @@ export type IconName =
   | "eyeOff"
   | "settings"
   | "plus"
+  | "plug"
   | "layout";
 
 // Outline icons on a 24px grid, drawn in the current text colour.
@@ -149,6 +150,13 @@ const SHAPES: Record<IconName, ReactNode> = {
     </>
   ),
   plus: <path d="M12 5v14M5 12h14" />,
+  plug: (
+    <>
+      <path d="M9 3v5M15 3v5" />
+      <path d="M6 8h12v3a6 6 0 0 1-12 0z" />
+      <path d="M12 17v4" />
+    </>
+  ),
   settings: (
     <>
       <circle cx="12" cy="12" r="3" />
