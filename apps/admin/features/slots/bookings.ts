@@ -304,6 +304,37 @@ export async function removeBlock(id: string): Promise<void> {
   writeBlocks(readBlocks().filter((row) => row.id !== id));
 }
 
+/** Moves a booking to another day, time or employee. Returns it, or a message when that time is taken. */
+export async function rescheduleBooking(
+  id: string,
+  to: { employeeId: string; date: string; start: number },
+): Promise<Booking | string> {
+  await pause();
+  const rows = readBookings();
+  const current = rows.find((row) => row.id === id);
+  if (!current) return "That booking no longer exists.";
+  const end = to.start + current.minutes;
+  const taken =
+    rows.some(
+      (row) =>
+        row.id !== id &&
+        holdsTime(row) &&
+        row.employeeId === to.employeeId &&
+        row.date === to.date &&
+        overlaps(row.start, row.start + row.minutes, to.start, end),
+    ) ||
+    readBlocks().some(
+      (row) =>
+        row.employeeId === to.employeeId &&
+        row.date === to.date &&
+        overlaps(row.start, row.end, to.start, end),
+    );
+  if (taken) return "That time was just taken. Pick another slot.";
+  const updated = { ...current, ...to };
+  writeBookings(rows.map((row) => (row.id === id ? updated : row)));
+  return updated;
+}
+
 /** What `addBlocks` could not block: a booking is already in that time. */
 export interface SkippedBlock {
   employeeId: string;

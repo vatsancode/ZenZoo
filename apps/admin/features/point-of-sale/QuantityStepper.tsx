@@ -55,9 +55,7 @@ export default function QuantityStepper({ line, onChange, onRemove }: QuantitySt
           : onChange({ quantity: subtractQuantity(line.quantity, 1), quantityValue: undefined }),
       )}
       {wholeNumbersOnly(line.unit) ? (
-        <span
-          style={{ ...textStyle("data"), width: 32, textAlign: "center", color: colors.ink }}
-        >
+        <span style={{ ...textStyle("data"), width: 32, textAlign: "center", color: colors.ink }}>
           {line.quantity}
         </span>
       ) : (

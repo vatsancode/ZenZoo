@@ -20,7 +20,12 @@ interface PosCartPanelProps {
  * The cart as a narrow list, one line per item: its quantity, name and total. Click a line to open
  * it and change the quantity, type a price (for a custom-priced item) or give it a discount.
  */
-export default function PosCartPanel({ lines, onLineChange, onRemove, onClear }: PosCartPanelProps) {
+export default function PosCartPanel({
+  lines,
+  onLineChange,
+  onRemove,
+  onClear,
+}: PosCartPanelProps) {
   const { colors, radius, spacing } = useTheme();
   const [openSku, setOpenSku] = useState<string | null>(null);
   const units = addQuantities(...lines.map((line) => line.quantity));
@@ -142,7 +147,11 @@ export default function PosCartPanel({ lines, onLineChange, onRemove, onClear }:
                       </span>
                       {off > 0 ? (
                         <span
-                          style={{ ...textStyle("caption"), display: "block", color: colors.warning }}
+                          style={{
+                            ...textStyle("caption"),
+                            display: "block",
+                            color: colors.warning,
+                          }}
                         >
                           - {formatPrice(off)}
                         </span>

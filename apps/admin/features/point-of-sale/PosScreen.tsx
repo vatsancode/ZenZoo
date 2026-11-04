@@ -32,6 +32,11 @@ export default function PosScreen() {
             changes={sale.changes}
             onDismissChanges={sale.dismissChanges}
           />
+          <PosSaleComplete
+            sale={sale.finished}
+            change={sale.change}
+            onDismiss={sale.dismissFinished}
+          />
           <PosSearch units={sale.units} inCart={sale.inCart} onAdd={sale.addToCart} />
           <PosLines
             lines={sale.lines}
@@ -51,8 +56,6 @@ export default function PosScreen() {
           onComplete={sale.complete}
         />
       </div>
-
-      <PosSaleComplete sale={sale.finished} change={sale.change} onNewSale={sale.newSale} />
     </div>
   );
 }

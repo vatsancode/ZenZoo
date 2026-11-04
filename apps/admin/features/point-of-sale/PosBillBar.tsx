@@ -102,9 +102,7 @@ export default function PosBillBar({
         >
           Total
         </div>
-        <div style={{ ...textStyle("title1"), color: colors.ink }}>
-          {formatPrice(totals.total)}
-        </div>
+        <div style={{ ...textStyle("title1"), color: colors.ink }}>{formatPrice(totals.total)}</div>
       </div>
 
       <Button

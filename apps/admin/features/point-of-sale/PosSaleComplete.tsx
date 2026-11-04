@@ -1,9 +1,9 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Button, Modal, textStyle } from "@zenzoo/ui-web";
-import { accountLabel, paymentMethodLabel } from "../../lib/payment-options";
-import { formatDate, formatPrice } from "../../lib/stock-display";
+import { textStyle } from "@zenzoo/ui-web";
+import { useEffect } from "react";
+import { formatPrice } from "../../lib/stock-display";
 import type { Sale } from "../sales/sales";
 
 interface PosSaleCompleteProps {
@@ -11,89 +11,56 @@ interface PosSaleCompleteProps {
   sale: Sale | null;
   /** Change handed back to the customer, in rupees. */
   change: number;
-  onNewSale: () => void;
+  onDismiss: () => void;
 }
 
-/** The receipt shown once a sale is saved, with a button to start the next one. */
-export default function PosSaleComplete({ sale, change, onNewSale }: PosSaleCompleteProps) {
-  const { colors, spacing } = useTheme();
+/** A line above the cart confirming the last sale; the next sale is already open underneath. */
+export default function PosSaleComplete({ sale, change, onDismiss }: PosSaleCompleteProps) {
+  const { colors, radius, spacing } = useTheme();
 
+  // Keep it up long enough to hand over the change, then clear it away.
+  useEffect(() => {
+    if (!sale) return;
+    const timer = setTimeout(onDismiss, 15000);
+    return () => clearTimeout(timer);
+  }, [sale, onDismiss]);
+
+  if (!sale) return null;
   return (
-    <Modal open={sale !== null} onClose={onNewSale}>
-      {sale ? (
-        <div style={{ width: 420, maxWidth: "100%" }}>
-          <div style={{ ...textStyle("title3"), color: colors.ink }}>Sale complete</div>
-          <div style={{ ...textStyle("footnote"), color: colors.inkMuted, marginTop: spacing[1] }}>
-            {sale.number} · {formatDate(sale.date)} · {sale.customerName}
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: spacing[3],
-              marginTop: spacing[5],
-            }}
-          >
-            {sale.lines.map((line) => (
-              <div
-                key={line.sku}
-                style={{ display: "flex", justifyContent: "space-between", gap: spacing[4] }}
-              >
-                <span style={{ ...textStyle("body"), color: colors.ink }}>
-                  {line.name}
-                  <span style={{ color: colors.inkMuted }}> × {line.quantity}</span>
-                </span>
-                <span style={{ ...textStyle("data"), color: colors.ink }}>
-                  {formatPrice(line.quantity * line.unitPrice - line.discount)}
-                </span>
-              </div>
-            ))}
-            <hr
-              style={{
-                width: "100%",
-                height: 0,
-                margin: 0,
-                border: "none",
-                borderTop: `1px solid ${colors.border}`,
-              }}
-            />
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <span style={{ ...textStyle("bodyMedium"), color: colors.ink }}>Total</span>
-              <span style={{ ...textStyle("title2"), color: colors.ink }}>
-                {formatPrice(sale.total)}
-              </span>
-            </div>
-            <div style={{ ...textStyle("footnote"), color: colors.inkMuted }}>
-              {sale.creditUsed ? `${formatPrice(sale.creditUsed)} paid with store credit. ` : ""}
-              {sale.payments
-                .map(
-                  (payment) =>
-                    `${formatPrice(payment.amount)} by ${paymentMethodLabel(payment.method)} into ${accountLabel(payment.accountId)}.`,
-                )
-                .join(" ")}
-              {sale.dueAmount ? ` ${formatPrice(sale.dueAmount)} left on account.` : ""}
-              {sale.payments.length === 0 && !sale.dueAmount ? "No money taken." : ""}
-            </div>
-            {change > 0 ? (
-              <div
-                style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}
-              >
-                <span style={{ ...textStyle("bodyMedium"), color: colors.ink }}>Change given</span>
-                <span style={{ ...textStyle("title3"), color: colors.success }}>
-                  {formatPrice(change)}
-                </span>
-              </div>
-            ) : null}
-          </div>
-
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: spacing[6] }}>
-            <Button type="button" variant="primary" onClick={onNewSale}>
-              New sale
-            </Button>
-          </div>
-        </div>
-      ) : null}
-    </Modal>
+    <div
+      role="status"
+      style={{
+        ...textStyle("callout"),
+        color: colors.ink,
+        backgroundColor: colors.surfaceSunken,
+        border: `1px solid ${colors.success}`,
+        borderRadius: radius.md,
+        padding: spacing[4],
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: spacing[4],
+      }}
+    >
+      <span>
+        <span style={{ color: colors.success }}>Sale {sale.number} saved</span> ·{" "}
+        {formatPrice(sale.total)}
+        {change > 0 ? ` · Give back ${formatPrice(change)}` : ""}
+      </span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        style={{
+          ...textStyle("callout"),
+          border: "none",
+          background: "transparent",
+          color: colors.inkMuted,
+          cursor: "pointer",
+          flexShrink: 0,
+        }}
+      >
+        Dismiss
+      </button>
+    </div>
   );
 }

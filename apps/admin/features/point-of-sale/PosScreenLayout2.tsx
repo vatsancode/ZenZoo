@@ -32,6 +32,7 @@ export default function PosScreenLayout2() {
     if (sale.lines.length === 0) {
       setCheckingOut(false);
       setBillValue("");
+      setBillType("amount");
     }
   }, [sale.lines.length]);
 
@@ -60,6 +61,11 @@ export default function PosScreenLayout2() {
             loadError={sale.loadError}
             changes={sale.changes}
             onDismissChanges={sale.dismissChanges}
+          />
+          <PosSaleComplete
+            sale={sale.finished}
+            change={sale.change}
+            onDismiss={sale.dismissFinished}
           />
           <PosProductGrid units={sale.units} inCart={sale.inCart} onAdd={sale.addToCart} />
         </div>
@@ -96,7 +102,11 @@ export default function PosScreenLayout2() {
             }}
           >
             <div style={{ ...textStyle("title3"), color: colors.ink }}>Complete sale</div>
-            <IconButton icon="close" label="Back to the cart" onClick={() => setCheckingOut(false)} />
+            <IconButton
+              icon="close"
+              label="Back to the cart"
+              onClick={() => setCheckingOut(false)}
+            />
           </div>
           <PosCheckout
             key={sale.saleCount}
@@ -111,16 +121,6 @@ export default function PosScreenLayout2() {
           />
         </div>
       </Modal>
-
-      <PosSaleComplete
-        sale={sale.finished}
-        change={sale.change}
-        onNewSale={() => {
-          setBillValue("");
-          setBillType("amount");
-          sale.newSale();
-        }}
-      />
     </div>
   );
 }

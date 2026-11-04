@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { SUPPLIER_SELECT, toSupplierDto, type SupplierDto } from "../suppliers/dto";
@@ -7,6 +8,8 @@ export const listSuppliers = defineCapability<void, SupplierDto[]>({
   name: "listSuppliers",
   kind: "read",
   requiredPermission: "vendors:view",
+  description: "List all suppliers for this shop, newest first. Takes no input.",
+  input: z.void(),
   async handler(actor) {
     return runInTenantContext(actor, async (tx) => {
       // newest first - matches the admin UI's prior mock behavior of

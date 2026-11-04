@@ -1,8 +1,15 @@
 "use client";
 
 import { useTheme } from "@zenzoo/design-tokens";
-import { Input, textStyle } from "@zenzoo/ui-web";
-import { useMemo, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { Icon, Input, textStyle } from "@zenzoo/ui-web";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+} from "react";
 import { searchUnits, type SellableUnit } from "../sales/sales";
 import { formatPrice } from "../../lib/stock-display";
 
@@ -14,6 +21,12 @@ interface PosProductGridProps {
 }
 
 type Source = "all" | "quick" | "inventory" | "made";
+type View = "quick" | "categories";
+
+const VIEWS: { value: View; label: string }[] = [
+  { value: "quick", label: "Quick adds" },
+  { value: "categories", label: "Categories" },
+];
 
 const SOURCES: { value: Source; label: string; matches: (unit: SellableUnit) => boolean }[] = [
   { value: "all", label: "All items", matches: () => true },
@@ -31,14 +44,46 @@ const SOURCES: { value: Source; label: string; matches: (unit: SellableUnit) => 
 export default function PosProductGrid({ units, inCart, onAdd }: PosProductGridProps) {
   const { colors, radius, spacing } = useTheme();
   const [source, setSource] = useState<Source>("all");
+  const [view, setView] = useState<View>("quick");
+  const [category, setCategory] = useState("all");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [added, setAdded] = useState<string | null>(null);
 
+  const categories = useMemo(
+    () =>
+      [...new Set(units.map((unit) => unit.category).filter(Boolean))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [units],
+  );
+
   const shown = useMemo(() => {
-    const matchesSource = SOURCES.find((item) => item.value === source)?.matches ?? (() => true);
+    const matchesSource =
+      view === "categories"
+        ? (unit: SellableUnit) => category === "all" || unit.category === category
+        : (SOURCES.find((item) => item.value === source)?.matches ?? (() => true));
     const pool = query.trim() === "" ? units : searchUnits(units, query);
     return pool.filter(matchesSource);
-  }, [units, source, query]);
+  }, [units, view, category, source, query]);
+
+  // Close the menu on a click anywhere else, or Escape.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const away = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [menuOpen]);
 
   function pick(unit: SellableUnit) {
     if (unit.stock <= 0) return;
@@ -90,22 +135,109 @@ export default function PosProductGrid({ units, inCart, onAdd }: PosProductGridP
         style={{ height: 52, paddingInline: spacing[5] }}
       />
 
-      <div
-        role="group"
-        aria-label="Where the item comes from"
-        style={{ display: "flex", gap: spacing[2], overflowX: "auto", paddingBottom: spacing[1] }}
-      >
-        {SOURCES.map((item) => (
+      <div style={{ display: "flex", alignItems: "center", gap: spacing[4] }}>
+        <div ref={menuRef} style={{ position: "relative", flex: "none" }}>
           <button
-            key={item.value}
             type="button"
-            aria-pressed={source === item.value}
-            onClick={() => setSource(item.value)}
-            style={chip(source === item.value)}
+            aria-haspopup="listbox"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+            style={{
+              ...textStyle("bodyMedium"),
+              display: "inline-flex",
+              alignItems: "center",
+              gap: spacing[1],
+              border: "none",
+              background: "transparent",
+              color: colors.ink,
+              cursor: "pointer",
+              padding: 0,
+              whiteSpace: "nowrap",
+            }}
           >
-            {item.label}
+            {VIEWS.find((item) => item.value === view)?.label}
+            <Icon name="chevronDown" size={16} />
           </button>
-        ))}
+          {menuOpen ? (
+            <div
+              role="listbox"
+              aria-label="Filter by"
+              style={{
+                position: "absolute",
+                top: "calc(100% + 8px)",
+                left: 0,
+                zIndex: 10,
+                minWidth: 160,
+                padding: spacing[1],
+                borderRadius: radius.md,
+                border: `1px solid ${colors.border}`,
+                backgroundColor: colors.surfaceRaised,
+              }}
+            >
+              {VIEWS.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  role="option"
+                  aria-selected={view === item.value}
+                  onClick={() => {
+                    setView(item.value);
+                    setMenuOpen(false);
+                  }}
+                  style={{
+                    ...textStyle("callout"),
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: `${spacing[2]}px ${spacing[3]}px`,
+                    border: "none",
+                    borderRadius: radius.sm,
+                    background: view === item.value ? colors.surfaceSunken : "transparent",
+                    color: view === item.value ? colors.ink : colors.inkMuted,
+                    cursor: "pointer",
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        <div
+          aria-hidden="true"
+          style={{ flex: "none", width: 1, height: 24, backgroundColor: colors.border }}
+        />
+
+        <div
+          role="group"
+          aria-label={view === "categories" ? "Category" : "Where the item comes from"}
+          style={{ display: "flex", gap: spacing[2], overflowX: "auto", paddingBottom: spacing[1] }}
+        >
+          {view === "categories"
+            ? ["all", ...categories].map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  aria-pressed={category === name}
+                  onClick={() => setCategory(name)}
+                  style={chip(category === name)}
+                >
+                  {name === "all" ? "All items" : name}
+                </button>
+              ))
+            : SOURCES.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  aria-pressed={source === item.value}
+                  onClick={() => setSource(item.value)}
+                  style={chip(source === item.value)}
+                >
+                  {item.label}
+                </button>
+              ))}
+        </div>
       </div>
 
       {/* Spoken to screen readers only; sighted cashiers see the count badge on the tile. */}

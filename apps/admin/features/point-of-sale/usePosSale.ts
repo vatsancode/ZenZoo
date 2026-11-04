@@ -1,7 +1,7 @@
 "use client";
 
 import { addQuantities } from "@zenzoo/pricing";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { rememberPaymentNames } from "../../lib/payment-options";
 import { cartTotals, tillUnits, type CartLine, type Sale, type SellableUnit } from "../sales/sales";
 import { formatPrice } from "../../lib/stock-display";
@@ -215,6 +215,9 @@ export function usePosSale() {
     setChanges(null);
     setChange(details.changeGiven);
     setFinished(result.sale);
+    // The next sale opens straight away; the receipt line above the cart can be dismissed.
+    setLines([]);
+    setSaleCount((count) => count + 1);
     // Stock really dropped on the server - show the true numbers.
     void loadItems().catch(() => undefined);
     // What the customer owes or holds has changed.
@@ -222,12 +225,7 @@ export function usePosSale() {
     return null;
   }
 
-  function newSale() {
-    setChanges(null);
-    setLines([]);
-    setFinished(null);
-    setSaleCount((count) => count + 1);
-  }
+  const dismissFinished = useCallback(() => setFinished(null), []);
 
   async function addCustomer(name: string, phone: string) {
     const result = await quickAddCustomer(name, phone);
@@ -264,7 +262,7 @@ export function usePosSale() {
     changeLine,
     removeLine,
     complete,
-    newSale,
+    dismissFinished,
     addCustomer,
     creditBalanceOf,
     dueBalanceOf,

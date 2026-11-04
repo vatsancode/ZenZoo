@@ -618,6 +618,7 @@ model tenant_memberships {
   updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
   role_id                 String                    @db.Uuid
   membership_store_access membership_store_access[]
+  agent_tokens            agent_tokens[]
   roles                   roles                     @relation(fields: [tenant_id, role_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "tenant_memberships_role_fk")
   tenants                 tenants                   @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                   users?                    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -647,6 +648,7 @@ model tenants {
   customers               customers[]
   inventory_batches       inventory_batches[]
   membership_store_access membership_store_access[]
+  agent_tokens            agent_tokens[]
   payment_accounts        payment_accounts[]
   account_ledger          account_ledger[]
   payment_methods         payment_methods[]
@@ -895,4 +897,21 @@ model account_ledger {
 
   @@index([tenant_id, store_id, created_at(sort: Desc), id(sort: Desc)], map: "idx_account_ledger_store_created")
   @@index([tenant_id, account_id, created_at(sort: Desc), id(sort: Desc)], map: "idx_account_ledger_account_created")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model agent_tokens {
+  id                 String             @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id          String             @db.Uuid
+  membership_id      String             @db.Uuid
+  name               String             @db.VarChar(100)
+  token_prefix       String             @db.VarChar(12)
+  token_hash         String             @unique(map: "agent_tokens_token_hash_unique") @db.VarChar(64)
+  created_at         DateTime           @default(now()) @db.Timestamptz(6)
+  revoked_at         DateTime?          @db.Timestamptz(6)
+  tenant_memberships tenant_memberships @relation(fields: [tenant_id, membership_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "agent_tokens_membership_fk")
+  tenants            tenants            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([membership_id], map: "idx_agent_tokens_membership_id")
+  @@index([tenant_id], map: "idx_agent_tokens_tenant_id")
 }

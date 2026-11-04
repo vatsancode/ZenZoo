@@ -27,6 +27,7 @@ import {
   listBookings,
   holdsTime,
   removeBlock,
+  rescheduleBooking,
   setBookingStatus,
   BOOKING_STATUS_LABELS,
   type Booking,
@@ -177,6 +178,21 @@ export default function SlotsBoard() {
     setBookings((current) => current.map((row) => (row.id === result.id ? result : row)));
     setOpenBooking(null);
     setNotice(`${result.customerName}: ${BOOKING_STATUS_LABELS[status].toLowerCase()}.`);
+  }
+
+  async function reschedule(
+    booking: Booking,
+    to: { employeeId: string; date: string; start: number },
+  ): Promise<string | null> {
+    const result = await rescheduleBooking(booking.id, to);
+    if (typeof result === "string") return result;
+    setBookings((current) => current.map((row) => (row.id === result.id ? result : row)));
+    setDate(result.date);
+    setOpenBooking(null);
+    setNotice(
+      `Moved ${result.customerName} to ${dayLabel(result.date)} at ${timeLabel(result.start)}.`,
+    );
+    return null;
   }
 
   async function freeBlock(target: TimeBlock) {
@@ -339,6 +355,9 @@ export default function SlotsBoard() {
         booking={openBooking}
         block={openBlock}
         employees={employees ?? []}
+        bookings={bookings}
+        blocks={blocks}
+        onReschedule={reschedule}
         onClose={() => {
           setOpenBooking(null);
           setOpenBlock(null);

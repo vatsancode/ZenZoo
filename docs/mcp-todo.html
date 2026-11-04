@@ -1,0 +1,219 @@
+<title>ZenZoo MCP Plan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one narrow column, a progress header, then task rows grouped by phase; each row opens to its prompt. */
+:root {
+  --bg: #f3f5f6;
+  --surface: #ffffff;
+  --ink: #16212b;
+  --muted: #5d6b78;
+  --line: #d9e0e5;
+  --accent: #0b6e69;
+  --accent-ink: #ffffff;
+  --doing: #b86a00;
+  --done: #2f7d4f;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11181d; --surface: #182229; --ink: #e6edf1; --muted: #93a2ae; --line: #2b3943;
+    --accent: #4fc3b9; --accent-ink: #08201e; --doing: #e0a043; --done: #62c488;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11181d; --surface: #182229; --ink: #e6edf1; --muted: #93a2ae; --line: #2b3943;
+  --accent: #4fc3b9; --accent-ink: #08201e; --doing: #e0a043; --done: #62c488;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5;
+  padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+header { display: flex; flex-direction: column; gap: 14px; }
+h1 { font-size: 24px; font-weight: 600; margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); margin: 0; max-width: 62ch; }
+.rules { display: flex; flex-wrap: wrap; gap: 6px; padding: 0; margin: 0; list-style: none; }
+.rules li { font-family: var(--font-mono); font-size: 12px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); }
+.bar { display: flex; flex-direction: column; gap: 6px; }
+.track { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; display: flex; }
+.track i { display: block; height: 100%; }
+.track .d { background: var(--done); }
+.track .g { background: var(--doing); }
+.count { font-family: var(--font-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+section.group { display: flex; flex-direction: column; gap: 8px; }
+h2 { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 2px; }
+.task { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.row { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; }
+.state { flex: none; width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--line); background: transparent; cursor: pointer; display: grid; place-items: center; color: var(--accent-ink); font-size: 13px; font-weight: 600; padding: 0; }
+.state[data-s="doing"] { border-color: var(--doing); background: linear-gradient(90deg, var(--doing) 50%, transparent 50%); }
+.state[data-s="done"] { border-color: var(--done); background: var(--done); }
+.state:disabled { cursor: default; opacity: 0.6; }
+.body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.title { font-weight: 500; margin: 0; }
+.task[data-s="done"] .title { color: var(--muted); text-decoration: line-through; }
+.detail { color: var(--muted); font-size: 14px; margin: 0; }
+.tag { font-family: var(--font-mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.tag[data-s="doing"] { color: var(--doing); }
+.tag[data-s="done"] { color: var(--done); }
+details { border-top: 1px solid var(--line); }
+summary { padding: 9px 14px; cursor: pointer; font-size: 13px; color: var(--accent); font-weight: 500; }
+.prompt-wrap { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 8px; }
+pre { margin: 0; padding: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
+.copy { align-self: flex-start; font: inherit; font-size: 13px; font-weight: 500; padding: 7px 14px; border-radius: 6px; border: 0; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+.empty, .note { color: var(--muted); border: 1px dashed var(--line); border-radius: 8px; padding: 18px; margin: 0; }
+button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<main>
+  <header>
+    <h1>ZenZoo MCP Plan</h1>
+    <p class="sub">Expose the capability layer as a read-only MCP server. Pick a task, copy its prompt into Claude Code, then mark it done.</p>
+    <ul class="rules">
+      <li>kind === "read" only</li>
+      <li>zod: MCP only, not Express</li>
+      <li>token auth</li>
+      <li>no actions yet</li>
+    </ul>
+    <div class="bar">
+      <div class="track" aria-hidden="true"><i class="d" id="bar-d"></i><i class="g" id="bar-g"></i></div>
+      <div class="count" id="count">Loading tasks…</div>
+    </div>
+    <div class="filters" id="filters" role="group" aria-label="Filter tasks"></div>
+  </header>
+  <div id="list"><p class="empty">Tasks will appear here once the plan is loaded.</p></div>
+</main>
+
+<script>
+(function () {
+  var STATES = ["todo", "doing", "done"];
+  var LABEL = { todo: "To do", doing: "In progress", done: "Done" };
+  var tasks = [];
+  var filter = "all";
+  var db = null;
+  var canWrite = true;
+  var loaded = false;
+
+  var listEl = document.getElementById("list");
+  var countEl = document.getElementById("count");
+  var filtersEl = document.getElementById("filters");
+
+  function el(tag, attrs, kids) {
+    var n = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) {
+      if (k === "text") n.textContent = attrs[k];
+      else n.setAttribute(k, attrs[k]);
+    });
+    (kids || []).forEach(function (c) { if (c) n.appendChild(c); });
+    return n;
+  }
+
+  function renderFilters() {
+    filtersEl.textContent = "";
+    ["all", "todo", "doing", "done"].forEach(function (f) {
+      var n = tasks.filter(function (t) { return f === "all" || t.status === f; }).length;
+      var b = el("button", { type: "button", class: "chip", "aria-pressed": String(filter === f), text: (f === "all" ? "All" : LABEL[f]) + " " + n });
+      b.addEventListener("click", function () { filter = f; render(); });
+      filtersEl.appendChild(b);
+    });
+  }
+
+  function copyText(text, btn) {
+    function ok() { btn.textContent = "Copied"; setTimeout(function () { btn.textContent = "Copy prompt"; }, 1600); }
+    function fallback() {
+      var pre = btn.parentNode.querySelector("pre");
+      var r = document.createRange(); r.selectNodeContents(pre);
+      var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      btn.textContent = "Press Ctrl+C";
+    }
+    try { navigator.clipboard.writeText(text).then(ok, fallback); } catch (e) { fallback(); }
+  }
+
+  function cycle(t) {
+    var next = STATES[(STATES.indexOf(t.status) + 1) % 3];
+    t.status = next;
+    render();
+    db.doc("tasks/" + t.id).update({ status: next }).catch(function () {
+      canWrite = false; render();
+    });
+  }
+
+  function taskNode(t) {
+    var s = el("button", { type: "button", class: "state", "data-s": t.status, "aria-label": t.title + ": " + LABEL[t.status] + ". Click to change.", text: t.status === "done" ? "✓" : "" });
+    if (!canWrite) s.disabled = true;
+    s.addEventListener("click", function () { cycle(t); });
+    var body = el("div", { class: "body" }, [
+      el("p", { class: "title", text: t.title }),
+      el("p", { class: "detail", text: t.detail || "" }),
+      el("span", { class: "tag", "data-s": t.status, text: LABEL[t.status] })
+    ]);
+    var card = el("div", { class: "task", "data-s": t.status }, [el("div", { class: "row" }, [s, body])]);
+    if (t.prompt) {
+      var btn = el("button", { type: "button", class: "copy", text: "Copy prompt" });
+      btn.addEventListener("click", function () { copyText(t.prompt, btn); });
+      card.appendChild(el("details", {}, [
+        el("summary", { text: "Prompt" }),
+        el("div", { class: "prompt-wrap" }, [el("pre", { text: t.prompt }), btn])
+      ]));
+    }
+    return card;
+  }
+
+  function render() {
+    renderFilters();
+    var done = tasks.filter(function (t) { return t.status === "done"; }).length;
+    var doing = tasks.filter(function (t) { return t.status === "doing"; }).length;
+    var total = tasks.length || 1;
+    document.getElementById("bar-d").style.width = (done / total * 100) + "%";
+    document.getElementById("bar-g").style.width = (doing / total * 100) + "%";
+    if (loaded) countEl.textContent = tasks.length ? done + " of " + tasks.length + " done" + (doing ? " · " + doing + " in progress" : "") + (canWrite ? "" : " · read only") : "No tasks yet";
+
+    listEl.textContent = "";
+    if (!tasks.length) {
+      listEl.appendChild(el("p", { class: "empty", text: loaded ? "No tasks yet. Ask Claude in your ZenZoo session to load the MCP plan." : "Tasks will appear here once the plan is loaded." }));
+      return;
+    }
+    var groups = [];
+    tasks.forEach(function (t) {
+      if (filter !== "all" && t.status !== filter) return;
+      var g = groups.find(function (x) { return x.name === t.group; });
+      if (!g) { g = { name: t.group, items: [] }; groups.push(g); }
+      g.items.push(t);
+    });
+    if (!groups.length) { listEl.appendChild(el("p", { class: "empty", text: "Nothing in this view." })); return; }
+    groups.forEach(function (g) {
+      var sec = el("section", { class: "group" }, [el("h2", { text: g.name })]);
+      g.items.forEach(function (t) { sec.appendChild(taskNode(t)); });
+      listEl.appendChild(sec);
+    });
+  }
+
+  render();
+
+  var timer = setTimeout(function () { if (!loaded) countEl.textContent = "Can't reach saved tasks yet."; }, 10000);
+
+  (async function () {
+    try {
+      var user = await window.claude.use("user");
+      if (user) { var w = await user.can("data.write"); if (w === false) canWrite = false; }
+      db = await window.claude.use("db");
+    } catch (e) { db = null; }
+    if (!db) { clearTimeout(timer); countEl.textContent = "Saved tasks aren't available in this view."; return; }
+    db.collection("tasks").orderBy("order").onSnapshot(function (snap) {
+      clearTimeout(timer);
+      loaded = true;
+      tasks = snap.docs.map(function (d) { var v = d.data(); v.id = d.id; return v; });
+      render();
+    }, function () { clearTimeout(timer); loaded = true; countEl.textContent = "Couldn't load tasks."; });
+  })();
+})();
+</script>

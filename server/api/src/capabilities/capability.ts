@@ -1,3 +1,4 @@
+import type { ZodType } from "zod";
 import { hasAnyPermission } from "../auth/actor";
 import type { CapabilityActor, CapabilityResult } from "@zenzoo/types";
 
@@ -64,6 +65,16 @@ export interface CapabilityDefinition<Input, Output> {
   name: string;
   kind: "read" | "action";
   /**
+   * What this does, written for an AI agent choosing between tools. Read only by the MCP server;
+   * a capability without one is not offered there.
+   */
+  description?: string;
+  /**
+   * The shape of `input`, for the MCP server to publish. Express and execute() never parse with it -
+   * the routes keep validating however they do today.
+   */
+  input?: ZodType<Input, unknown>;
+  /**
    * Checked before anything else runs - see server/api/auth. A list means "any one of these":
    * only for a read that several areas' screens share (see capabilities/lookups), never to
    * widen what one area can reach.
@@ -77,6 +88,8 @@ export interface CapabilityDefinition<Input, Output> {
 export interface Capability<Input, Output> {
   name: string;
   kind: "read" | "action";
+  description?: string;
+  input?: ZodType<Input, unknown>;
   execute: (actor: CapabilityActor, input: Input) => Promise<CapabilityResult<Output>>;
 }
 
@@ -92,6 +105,8 @@ export function defineCapability<Input, Output>(
   return {
     name: definition.name,
     kind: definition.kind,
+    description: definition.description,
+    input: definition.input,
     async execute(actor, input) {
       const required = [definition.requiredPermission].flat();
       const allowed = await hasAnyPermission(actor, required);

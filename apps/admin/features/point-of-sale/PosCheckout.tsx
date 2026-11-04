@@ -343,109 +343,118 @@ export default function PosCheckout({
           </span>
         </div>
       ) : (
-      /* The bill: what it adds up to, the discount on all of it, and the total to take. */
-      <div>
-        <Label>Bill</Label>
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: spacing[4],
-            padding: spacing[5],
-            backgroundColor: colors.surfaceSunken,
-            borderRadius: radius.lg,
-          }}
-        >
-          {row("Subtotal", formatPrice(totals.subtotal))}
-          {totals.lineDiscounts > 0
-            ? row("Item discounts", `- ${formatPrice(totals.lineDiscounts)}`)
-            : null}
-
+        /* The bill: what it adds up to, the discount on all of it, and the total to take. */
+        <div>
+          <Label>Bill</Label>
           <div
             style={{
               display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: spacing[3],
+              flexDirection: "column",
+              gap: spacing[4],
+              padding: spacing[5],
+              backgroundColor: colors.surfaceSunken,
+              borderRadius: radius.lg,
             }}
           >
-            <label htmlFor="bill-discount" style={{ ...textStyle("body"), color: colors.inkMuted }}>
-              Bill discount
-            </label>
-            <div style={{ display: "flex", alignItems: "center", gap: spacing[2] }}>
-              {totals.billDiscount > 0 ? (
-                <span style={{ ...textStyle("footnote"), color: colors.success }}>
-                  - {formatPrice(totals.billDiscount)}
-                </span>
-              ) : null}
-              <div style={{ width: 80 }}>
-                <Input
-                  id="bill-discount"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  placeholder="0"
-                  aria-label="Discount on the whole bill"
-                  value={billValue}
-                  disabled={!hasLines}
-                  style={{ height: 36, borderColor: colors.border, textAlign: "right" }}
-                  onChange={(event) => {
-                    if (/^\d*\.?\d*$/.test(event.target.value)) setBillValue(event.target.value);
-                  }}
-                />
-              </div>
-              <UnitToggle type={billType} onChange={setBillType} />
-            </div>
-          </div>
+            {row("Subtotal", formatPrice(totals.subtotal))}
+            {totals.lineDiscounts > 0
+              ? row("Item discounts", `- ${formatPrice(totals.lineDiscounts)}`)
+              : null}
 
-          <hr
-            style={{
-              width: "100%",
-              height: 0,
-              margin: 0,
-              border: "none",
-              borderTop: `1px solid ${colors.border}`,
-            }}
-          />
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-            <span
+            <div
               style={{
-                ...textStyle("bodyMedium"),
-                color: colors.ink,
-                display: "inline-flex",
+                display: "flex",
                 alignItems: "center",
-                gap: spacing[2],
+                justifyContent: "space-between",
+                gap: spacing[3],
               }}
             >
-              Total
-              {hasLines ? (
-                <InfoTip label="Profit on this sale" mode="click" width={260}>
-                  <ProfitBreakdown
-                    title="Profit on this sale"
-                    profit={saleProfit(lines, billValue, billType)}
-                    note="After every discount, including the bill discount."
-                  />
-                </InfoTip>
-              ) : null}
-            </span>
-            <span style={{ ...textStyle("title1"), color: colors.ink }}>
-              {formatPrice(totals.total)}
-            </span>
-          </div>
-          {creditUsed > 0 ? (
-            <>
-              {row("Store credit", `- ${formatPrice(creditUsed)}`)}
-              <div
-                style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}
+              <label
+                htmlFor="bill-discount"
+                style={{ ...textStyle("body"), color: colors.inkMuted }}
               >
-                <span style={{ ...textStyle("bodyMedium"), color: colors.ink }}>To pay now</span>
-                <span style={{ ...textStyle("title2"), color: colors.ink }}>
-                  {formatPrice(payNow)}
-                </span>
+                Bill discount
+              </label>
+              <div style={{ display: "flex", alignItems: "center", gap: spacing[2] }}>
+                {totals.billDiscount > 0 ? (
+                  <span style={{ ...textStyle("footnote"), color: colors.success }}>
+                    - {formatPrice(totals.billDiscount)}
+                  </span>
+                ) : null}
+                <div style={{ width: 80 }}>
+                  <Input
+                    id="bill-discount"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    placeholder="0"
+                    aria-label="Discount on the whole bill"
+                    value={billValue}
+                    disabled={!hasLines}
+                    style={{ height: 36, borderColor: colors.border, textAlign: "right" }}
+                    onChange={(event) => {
+                      if (/^\d*\.?\d*$/.test(event.target.value)) setBillValue(event.target.value);
+                    }}
+                  />
+                </div>
+                <UnitToggle type={billType} onChange={setBillType} />
               </div>
-            </>
-          ) : null}
+            </div>
+
+            <hr
+              style={{
+                width: "100%",
+                height: 0,
+                margin: 0,
+                border: "none",
+                borderTop: `1px solid ${colors.border}`,
+              }}
+            />
+            <div
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}
+            >
+              <span
+                style={{
+                  ...textStyle("bodyMedium"),
+                  color: colors.ink,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: spacing[2],
+                }}
+              >
+                Total
+                {hasLines ? (
+                  <InfoTip label="Profit on this sale" mode="click" width={260}>
+                    <ProfitBreakdown
+                      title="Profit on this sale"
+                      profit={saleProfit(lines, billValue, billType)}
+                      note="After every discount, including the bill discount."
+                    />
+                  </InfoTip>
+                ) : null}
+              </span>
+              <span style={{ ...textStyle("title1"), color: colors.ink }}>
+                {formatPrice(totals.total)}
+              </span>
+            </div>
+            {creditUsed > 0 ? (
+              <>
+                {row("Store credit", `- ${formatPrice(creditUsed)}`)}
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "baseline",
+                  }}
+                >
+                  <span style={{ ...textStyle("bodyMedium"), color: colors.ink }}>To pay now</span>
+                  <span style={{ ...textStyle("title2"), color: colors.ink }}>
+                    {formatPrice(payNow)}
+                  </span>
+                </div>
+              </>
+            ) : null}
+          </div>
         </div>
-      </div>
       )}
 
       {/* Only shown when this customer holds store credit, and there is something to pay. */}
