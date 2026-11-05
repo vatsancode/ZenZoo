@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -17,13 +18,14 @@ export const createRole = defineCapability<CreateRoleInput, RoleDto>({
   requiredPermission: "users:edit",
   async handler(actor, input) {
     const name = cleanRoleName(input.name);
-    if (!name) throw new Error("Give the role a name.");
+    if (!name) throw new UserFacingError("Give the role a name.");
     const lengthProblem = roleLengthProblem(name, input.description.trim());
-    if (lengthProblem) throw new Error(lengthProblem);
+    if (lengthProblem) throw new UserFacingError(lengthProblem);
 
     try {
       return await runInTenantContext(actor, async (tx) => {
-        if (await roleNameTaken(tx, actor.tenantId, name)) throw new Error(ROLE_NAME_TAKEN);
+        if (await roleNameTaken(tx, actor.tenantId, name))
+          throw new UserFacingError(ROLE_NAME_TAKEN);
 
         // Two steps, not a nested create: role_permissions' composite FK
         // (tenant_id, role_id) isn't something Prisma's nested-write shape
@@ -51,7 +53,7 @@ export const createRole = defineCapability<CreateRoleInput, RoleDto>({
     } catch (error) {
       // roles_name_unique - see roles' own notes in docs/db-design.md
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new Error(ROLE_NAME_TAKEN);
+        throw new UserFacingError(ROLE_NAME_TAKEN);
       }
       throw error;
     }

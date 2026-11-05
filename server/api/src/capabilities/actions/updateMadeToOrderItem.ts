@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -33,7 +34,7 @@ export const updateMadeToOrderItem = defineCapability<UpdateMadeToOrderItemInput
           },
           select: { id: true },
         });
-        if (!existing) throw new Error("That item doesn't exist.");
+        if (!existing) throw new UserFacingError("That item doesn't exist.");
         await assertMadeToOrderWritable(tx, actor, input.storeId, fields, input.id);
 
         await tx.sellables.update({

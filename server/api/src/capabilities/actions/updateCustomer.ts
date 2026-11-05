@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import {
@@ -30,7 +31,7 @@ export const updateCustomer = defineCapability<UpdateCustomerInput, CustomerDto>
           where: { id: input.id, tenant_id: actor.tenantId },
           select: { status: true },
         });
-        if (!existing) throw new Error("That customer doesn't exist.");
+        if (!existing) throw new UserFacingError("That customer doesn't exist.");
         // An archived customer's phone isn't held, so only check when they're active.
         if (existing.status === "active") await assertPhoneFree(tx, actor, fields.phone, input.id);
 

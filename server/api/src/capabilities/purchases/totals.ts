@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { toPaise, toThousandths } from "@zenzoo/pricing";
 export interface PurchaseLineInput {
   variantId: string;
@@ -63,14 +64,14 @@ export function computeTotals(
   adjustmentAmount: number,
   billTax = 0,
 ): ComputedTotals {
-  if (!Number.isFinite(billTax) || billTax < 0) throw new Error("Tax can't be negative.");
-  if (!Number.isFinite(adjustmentAmount)) throw new Error("Enter a valid discount.");
+  if (!Number.isFinite(billTax) || billTax < 0) throw new UserFacingError("Tax can't be negative.");
+  if (!Number.isFinite(adjustmentAmount)) throw new UserFacingError("Enter a valid discount.");
 
   const nets = items.map((item) => {
     const discountAmount = item.discountAmount ?? 0;
     const gross = lineGross(item.quantity, item.unitCost);
     if (discountAmount > gross) {
-      throw new Error("A line's discount can't be more than its own quantity × cost.");
+      throw new UserFacingError("A line's discount can't be more than its own quantity × cost.");
     }
     return gross - discountAmount;
   });
@@ -96,7 +97,7 @@ export function computeTotals(
   const discountAmount = round2(lines.reduce((sum, line) => sum + line.discountAmount, 0));
   const taxAmount = round2(lines.reduce((sum, line) => sum + line.taxAmount, 0));
   const totalAmount = round2(subtotalAmount - discountAmount + taxAmount + adjustmentAmount);
-  if (totalAmount < 0) throw new Error("The discount is more than the purchase value.");
+  if (totalAmount < 0) throw new UserFacingError("The discount is more than the purchase value.");
 
   return { lines, subtotalAmount, discountAmount, taxAmount, totalAmount };
 }

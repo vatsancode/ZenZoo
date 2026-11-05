@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -22,14 +23,14 @@ export const updateProduct = defineCapability<UpdateProductInput, ProductDto>({
   requiredPermission: "stocks:edit",
   async handler(actor, input) {
     const name = input.name.trim();
-    if (!name) throw new Error("Give the product a name.");
+    if (!name) throw new UserFacingError("Give the product a name.");
 
     return runInTenantContext(actor, async (tx) => {
       const existing = await tx.sellables.findFirst({
         where: { id: input.id, tenant_id: actor.tenantId },
         select: { store_id: true },
       });
-      if (!existing) throw new Error("That product doesn't exist.");
+      if (!existing) throw new UserFacingError("That product doesn't exist.");
       await assertStoreAccess(actor, existing.store_id);
 
       {
@@ -37,7 +38,7 @@ export const updateProduct = defineCapability<UpdateProductInput, ProductDto>({
           where: { id: input.categoryId, tenant_id: actor.tenantId, store_id: existing.store_id },
           select: { id: true },
         });
-        if (!category) throw new Error("That category doesn't exist.");
+        if (!category) throw new UserFacingError("That category doesn't exist.");
       }
 
       const updated = await tx.sellables.update({

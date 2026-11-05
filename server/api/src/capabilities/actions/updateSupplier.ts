@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { SUPPLIER_SELECT, toSupplierDto, type SupplierDto } from "../suppliers/dto";
@@ -21,7 +22,7 @@ export const updateSupplier = defineCapability<UpdateSupplierInput, SupplierDto>
   requiredPermission: "vendors:edit",
   async handler(actor, input) {
     if (typeof input.name !== "string" || !input.name.trim()) {
-      throw new Error("Give the supplier a name.");
+      throw new UserFacingError("Give the supplier a name.");
     }
     assertSupplierFields(input);
     const name = input.name.trim();
@@ -31,7 +32,7 @@ export const updateSupplier = defineCapability<UpdateSupplierInput, SupplierDto>
         where: { id: input.id, tenant_id: actor.tenantId },
         select: { id: true },
       });
-      if (!existing) throw new Error("That supplier doesn't exist.");
+      if (!existing) throw new UserFacingError("That supplier doesn't exist.");
 
       const taxId = blankToNull(input.taxId)?.toUpperCase() ?? null;
       await assertTaxIdFree(tx, actor.tenantId, taxId, input.id);

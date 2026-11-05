@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -21,7 +22,7 @@ export const createExpenseCategory = defineCapability<
   requiredPermission: "expenses:edit",
   async handler(actor, input) {
     const name = cleanName(input.name);
-    if (!name) throw new Error("Enter a name.");
+    if (!name) throw new UserFacingError("Enter a name.");
     assertFits(name, 100, "The category name");
 
     try {
@@ -35,7 +36,7 @@ export const createExpenseCategory = defineCapability<
     } catch (error) {
       // expense_categories_tenant_name_unique (case-insensitive)
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new Error("This category already exists.");
+        throw new UserFacingError("This category already exists.");
       }
       throw error;
     }

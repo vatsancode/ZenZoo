@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { isWholeList, sortByPlacement } from "../../shared/placement";
@@ -25,7 +26,7 @@ export const reorderUnits = defineCapability<ReorderUnitsInput, UnitDto[]>({
           existing.map((row) => row.id),
         )
       ) {
-        throw new Error("The list has changed. Refresh the page and try again.");
+        throw new UserFacingError("The list has changed. Refresh the page and try again.");
       }
 
       for (const [index, id] of orderedIds.entries()) {

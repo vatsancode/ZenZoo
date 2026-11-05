@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -27,7 +28,7 @@ export const updateExpense = defineCapability<UpdateExpenseInput, ExpenseDto>({
           where: { id: input.id, tenant_id: actor.tenantId },
           select: { store_id: true },
         });
-        if (!existing) throw new Error("That expense doesn't exist.");
+        if (!existing) throw new UserFacingError("That expense doesn't exist.");
         await assertStoreAccess(actor, existing.store_id);
 
         await tx.expense_lines.deleteMany({

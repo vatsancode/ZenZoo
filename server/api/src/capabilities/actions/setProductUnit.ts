@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -25,14 +26,14 @@ export const setProductUnit = defineCapability<SetProductUnitInput, ProductDto>(
         where: { id: input.id, tenant_id: actor.tenantId },
         select: { store_id: true },
       });
-      if (!existing) throw new Error("That product doesn't exist.");
+      if (!existing) throw new UserFacingError("That product doesn't exist.");
       await assertStoreAccess(actor, existing.store_id);
 
       const unit = await tx.units.findFirst({
         where: { id: input.unitId, tenant_id: actor.tenantId, status: "active" },
         select: { id: true },
       });
-      if (!unit) throw new Error("Choose a unit.");
+      if (!unit) throw new UserFacingError("Choose a unit.");
 
       await tx.variants.updateMany({
         where: { sellable_id: input.id, tenant_id: actor.tenantId },

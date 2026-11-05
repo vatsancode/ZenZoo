@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -30,9 +31,9 @@ export const createTransfer = defineCapability<CreateTransferInput, TransferDto>
     await assertStoreAccess(actor, input.storeId);
 
     if (input.fromAccountId === input.toAccountId) {
-      throw new Error("Choose two different accounts.");
+      throw new UserFacingError("Choose two different accounts.");
     }
-    if (!(input.amount > 0)) throw new Error("Enter an amount more than zero.");
+    if (!(input.amount > 0)) throw new UserFacingError("Enter an amount more than zero.");
     // A note is free text, so it is only trimmed - the person's own spacing stays.
     const note = input.note?.trim() || null;
     if (note) assertFits(note, 500, "The note");
@@ -47,7 +48,8 @@ export const createTransfer = defineCapability<CreateTransferInput, TransferDto>
           },
           select: { id: true },
         });
-        if (accounts.length !== 2) throw new Error("One of these accounts doesn't exist.");
+        if (accounts.length !== 2)
+          throw new UserFacingError("One of these accounts doesn't exist.");
 
         const created = await tx.account_transfers.create({
           data: {
@@ -67,7 +69,7 @@ export const createTransfer = defineCapability<CreateTransferInput, TransferDto>
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (/not enough balance/i.test(message)) {
-        throw new Error("That account doesn't have enough balance for this transfer.");
+        throw new UserFacingError("That account doesn't have enough balance for this transfer.");
       }
       throw error;
     }

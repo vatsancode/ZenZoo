@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 
@@ -17,14 +18,15 @@ export const deleteExpenseCategory = defineCapability<DeleteExpenseCategoryInput
       });
       // Already gone - deleting twice is a no-op success, same as deleteCategory.
       if (!existing) return { id: input.id };
-      if (existing.is_catch_all) throw new Error(`"Other" is the catch-all and can't be deleted.`);
+      if (existing.is_catch_all)
+        throw new UserFacingError(`"Other" is the catch-all and can't be deleted.`);
 
       // expense_lines_category_fk (ON DELETE RESTRICT) backs this up at the database level.
       const used = await tx.expense_lines.count({
         where: { tenant_id: actor.tenantId, expense_category_id: input.id },
       });
       if (used > 0) {
-        throw new Error(
+        throw new UserFacingError(
           `${used} ${used === 1 ? "item is" : "items are"} filed under this category. Rename it instead.`,
         );
       }

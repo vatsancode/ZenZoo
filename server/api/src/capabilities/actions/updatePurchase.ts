@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -23,10 +24,11 @@ export const updatePurchase = defineCapability<UpdatePurchaseInput, PurchaseDto>
   kind: "action",
   requiredPermission: "purchases:edit",
   async handler(actor, input) {
-    if (input.items.length === 0) throw new Error("Add at least one line to the purchase.");
+    if (input.items.length === 0)
+      throw new UserFacingError("Add at least one line to the purchase.");
     for (const item of input.items) {
-      if (item.quantity <= 0) throw new Error("Quantity must be more than zero.");
-      if (item.unitCost < 0) throw new Error("Cost can't be negative.");
+      if (item.quantity <= 0) throw new UserFacingError("Quantity must be more than zero.");
+      if (item.unitCost < 0) throw new UserFacingError("Cost can't be negative.");
     }
 
     const totals = computeTotals(input.items, input.adjustmentAmount ?? 0, input.taxAmount ?? 0);
@@ -38,24 +40,25 @@ export const updatePurchase = defineCapability<UpdatePurchaseInput, PurchaseDto>
           where: { id: input.id, tenant_id: actor.tenantId },
           select: { store_id: true, status: true },
         });
-        if (!existing) throw new Error("That purchase doesn't exist.");
+        if (!existing) throw new UserFacingError("That purchase doesn't exist.");
         await assertStoreAccess(actor, existing.store_id);
         if (existing.status !== "draft") {
-          throw new Error("Only a draft purchase can be edited.");
+          throw new UserFacingError("Only a draft purchase can be edited.");
         }
 
         const supplier = await tx.suppliers.findFirst({
           where: { id: input.supplierId, tenant_id: actor.tenantId },
           select: { id: true },
         });
-        if (!supplier) throw new Error("That supplier doesn't exist.");
+        if (!supplier) throw new UserFacingError("That supplier doesn't exist.");
 
         for (const line of totals.lines) {
           const variant = await tx.variants.findFirst({
             where: { id: line.variantId, tenant_id: actor.tenantId, store_id: existing.store_id },
             select: { id: true },
           });
-          if (!variant) throw new Error("One of these products doesn't belong to this store.");
+          if (!variant)
+            throw new UserFacingError("One of these products doesn't belong to this store.");
         }
 
         await tx.purchases.update({
@@ -97,7 +100,9 @@ export const updatePurchase = defineCapability<UpdatePurchaseInput, PurchaseDto>
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new Error("This supplier already has a purchase with that reference number.");
+        throw new UserFacingError(
+          "This supplier already has a purchase with that reference number.",
+        );
       }
       throw error;
     }

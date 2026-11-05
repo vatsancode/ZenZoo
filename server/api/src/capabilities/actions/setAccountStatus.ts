@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -18,7 +19,7 @@ export const setAccountStatus = defineCapability<SetAccountStatusInput, AccountD
         where: { id: input.id, tenant_id: actor.tenantId },
         select: { store_id: true },
       });
-      if (!existing) throw new Error("That account doesn't exist.");
+      if (!existing) throw new UserFacingError("That account doesn't exist.");
       await assertStoreAccess(actor, existing.store_id);
 
       if (input.disabled) {
@@ -30,7 +31,7 @@ export const setAccountStatus = defineCapability<SetAccountStatusInput, AccountD
             status: "active",
           },
         });
-        if (othersActive === 0) throw new Error("At least one account has to stay on.");
+        if (othersActive === 0) throw new UserFacingError("At least one account has to stay on.");
       }
 
       const updated = await tx.payment_accounts.update({

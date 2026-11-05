@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -22,14 +23,14 @@ export const deleteUnit = defineCapability<DeleteUnitInput, { id: string }>({
 
         // The unit every product can fall back on - it can be switched off but never deleted.
         if (existing.system_key === "pieces") {
-          throw new Error(`${existing.name} is built in and can't be deleted.`);
+          throw new UserFacingError(`${existing.name} is built in and can't be deleted.`);
         }
 
         const productCount = await tx.variants.count({
           where: { tenant_id: actor.tenantId, unit_id: input.id },
         });
         if (productCount > 0) {
-          throw new Error(
+          throw new UserFacingError(
             `${existing.name} is used by ${productCount} product${productCount === 1 ? "" : "s"}. Switch it off instead.`,
           );
         }
@@ -40,7 +41,7 @@ export const deleteUnit = defineCapability<DeleteUnitInput, { id: string }>({
     } catch (error) {
       // variants_unit_fk: a product took the unit between the count and the delete.
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
-        throw new Error("A product is using this unit now. Switch it off instead.");
+        throw new UserFacingError("A product is using this unit now. Switch it off instead.");
       }
       throw error;
     }

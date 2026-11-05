@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 export interface UserDto {
   id: string;
   name: string;
@@ -30,7 +31,9 @@ export function toUserDto(row: MembershipRow, actorUserId: string, ownerUserId: 
   const user = row.users;
   if (!user) {
     console.error("Expected an active membership to have a user attached");
-    throw new Error("Something is wrong with this user's record. Please contact support.");
+    throw new UserFacingError(
+      "Something is wrong with this user's record. Please contact support.",
+    );
   }
   return {
     id: user.id,

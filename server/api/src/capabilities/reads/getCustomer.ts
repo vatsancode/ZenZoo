@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -25,7 +26,7 @@ export const getCustomer = defineCapability<GetCustomerInput, CustomerDto>({
         where: { id: input.id, tenant_id: actor.tenantId },
         select: CUSTOMER_SELECT,
       });
-      if (!row) throw new Error("That customer doesn't exist.");
+      if (!row) throw new UserFacingError("That customer doesn't exist.");
       return toCustomerDto(
         row,
         await customerBalance(tx, actor.tenantId, row.id),

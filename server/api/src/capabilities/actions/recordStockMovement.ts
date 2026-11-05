@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -36,7 +37,7 @@ export const recordStockMovement = defineCapability<RecordStockMovementInput, St
         where: { id: input.variantId, tenant_id: actor.tenantId },
         select: { store_id: true, units: { select: { code: true, allow_decimals: true } } },
       });
-      if (!variant) throw new Error("That variant doesn't exist.");
+      if (!variant) throw new UserFacingError("That variant doesn't exist.");
       await assertStoreAccess(actor, variant.store_id);
       // Counting may honestly find none left; adding or removing needs something to move.
       assertQuantity(input.quantity, variant.units.allow_decimals, {
@@ -45,9 +46,10 @@ export const recordStockMovement = defineCapability<RecordStockMovementInput, St
       });
 
       if (input.batchId === null) {
-        if (input.action !== "add") throw new Error("Only adding stock can start a new batch.");
+        if (input.action !== "add")
+          throw new UserFacingError("Only adding stock can start a new batch.");
         if (input.unitCost == null || input.unitCost < 0) {
-          throw new Error("Give the new batch a cost per unit.");
+          throw new UserFacingError("Give the new batch a cost per unit.");
         }
 
         // A batch with no purchase or return behind it is only legal when
@@ -78,7 +80,7 @@ export const recordStockMovement = defineCapability<RecordStockMovementInput, St
         },
         select: { available_quantity: true },
       });
-      if (!batch) throw new Error("That batch doesn't exist.");
+      if (!batch) throw new UserFacingError("That batch doesn't exist.");
       const available = toQuantity(batch.available_quantity);
 
       let movementType: "ADJUSTMENT_IN" | "ADJUSTMENT_OUT";
@@ -88,7 +90,7 @@ export const recordStockMovement = defineCapability<RecordStockMovementInput, St
         quantity = input.quantity;
       } else if (input.action === "remove") {
         if (input.quantity > available) {
-          throw new Error(
+          throw new UserFacingError(
             available === 0
               ? "This batch has no stock left."
               : `Only ${available} left in this batch.`,
@@ -99,7 +101,9 @@ export const recordStockMovement = defineCapability<RecordStockMovementInput, St
       } else {
         const delta = subtractQuantity(input.quantity, available);
         if (delta === 0) {
-          throw new Error("That matches what we already have, so there is nothing to fix.");
+          throw new UserFacingError(
+            "That matches what we already have, so there is nothing to fix.",
+          );
         }
         movementType = delta > 0 ? "ADJUSTMENT_IN" : "ADJUSTMENT_OUT";
         quantity = Math.abs(delta);

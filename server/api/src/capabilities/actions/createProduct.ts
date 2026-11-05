@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -41,15 +42,17 @@ export const createProduct = defineCapability<CreateProductInput, ProductDto>({
     await assertStoreAccess(actor, input.storeId);
 
     const name = input.name.trim();
-    if (!name) throw new Error("Give the product a name.");
-    if (input.variants.length === 0) throw new Error("A product needs at least one variant.");
+    if (!name) throw new UserFacingError("Give the product a name.");
+    if (input.variants.length === 0)
+      throw new UserFacingError("A product needs at least one variant.");
     for (const variant of input.variants) {
-      if (!variant.name.trim()) throw new Error("Give every variant a name.");
-      if (variant.basePrice < 0) throw new Error("Price can't be negative.");
+      if (!variant.name.trim()) throw new UserFacingError("Give every variant a name.");
+      if (variant.basePrice < 0) throw new UserFacingError("Price can't be negative.");
       if (variant.openingQuantity) {
-        if (variant.openingQuantity < 0) throw new Error("Opening stock can't be negative.");
+        if (variant.openingQuantity < 0)
+          throw new UserFacingError("Opening stock can't be negative.");
         if (variant.openingUnitCost == null || variant.openingUnitCost < 0) {
-          throw new Error("Give the opening stock a cost per unit.");
+          throw new UserFacingError("Give the opening stock a cost per unit.");
         }
       }
     }
@@ -64,14 +67,15 @@ export const createProduct = defineCapability<CreateProductInput, ProductDto>({
             where: { id: input.categoryId, tenant_id: actor.tenantId, store_id: input.storeId },
             select: { id: true },
           });
-          if (!category) throw new Error("That category doesn't exist.");
+          if (!category) throw new UserFacingError("That category doesn't exist.");
 
           const unitIds = [...new Set(input.variants.map((variant) => variant.unitId))];
           const units = await tx.units.findMany({
             where: { id: { in: unitIds }, tenant_id: actor.tenantId, status: "active" },
             select: { id: true },
           });
-          if (units.length !== unitIds.length) throw new Error("Choose a unit for every variant.");
+          if (units.length !== unitIds.length)
+            throw new UserFacingError("Choose a unit for every variant.");
 
           // "Keep importing all new inventory items" - see setCatalogueAutoImport.
           const store = await tx.stores.findFirstOrThrow({
@@ -135,7 +139,7 @@ export const createProduct = defineCapability<CreateProductInput, ProductDto>({
         // idx_variants_tenant_sku_unique - SKU is unique tenant-wide, not just within this product
         if (isSkuClash(error)) {
           if (generatesSku && attempt < GENERATED_SKU_ATTEMPTS) continue;
-          throw new Error("That SKU is already used by another product.");
+          throw new UserFacingError("That SKU is already used by another product.");
         }
         throw error;
       }

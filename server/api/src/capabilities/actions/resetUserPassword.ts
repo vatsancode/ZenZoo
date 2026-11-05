@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { hashPassword } from "../../shared/password";
@@ -27,7 +28,7 @@ export const resetUserPassword = defineCapability<ResetUserPasswordInput, { id: 
   requiredPermission: "users:edit",
   async handler(actor, input) {
     const problem = passwordStrengthProblem(input.password);
-    if (problem) throw new Error(problem);
+    if (problem) throw new UserFacingError(problem);
 
     return runInTenantContext(actor, async (tx) => {
       // input.id is the USER's id, the same id listUsers/createUser hand
@@ -36,7 +37,7 @@ export const resetUserPassword = defineCapability<ResetUserPasswordInput, { id: 
         where: { tenant_id: actor.tenantId, user_id: input.id, status: { not: "removed" } },
         select: { user_id: true },
       });
-      if (!membership?.user_id) throw new Error("That user no longer exists.");
+      if (!membership?.user_id) throw new UserFacingError("That user no longer exists.");
 
       const passwordHash = await hashPassword(input.password);
       await tx.users.update({

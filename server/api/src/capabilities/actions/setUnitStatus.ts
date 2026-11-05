@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { UNIT_SELECT, toUnitDto, type UnitDto } from "../units/dto";
@@ -17,13 +18,13 @@ export const setUnitStatus = defineCapability<SetUnitStatusInput, UnitDto>({
         where: { id: input.id, tenant_id: actor.tenantId },
         select: { id: true },
       });
-      if (!existing) throw new Error("That unit doesn't exist.");
+      if (!existing) throw new UserFacingError("That unit doesn't exist.");
 
       if (input.disabled) {
         const othersActive = await tx.units.count({
           where: { id: { not: input.id }, tenant_id: actor.tenantId, status: "active" },
         });
-        if (othersActive === 0) throw new Error("At least one unit has to stay on.");
+        if (othersActive === 0) throw new UserFacingError("At least one unit has to stay on.");
       }
 
       const updated = await tx.units.update({

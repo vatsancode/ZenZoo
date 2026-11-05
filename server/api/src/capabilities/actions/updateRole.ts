@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -18,22 +19,23 @@ export const updateRole = defineCapability<UpdateRoleInput, RoleDto>({
   requiredPermission: "users:edit",
   async handler(actor, input) {
     const name = cleanRoleName(input.name);
-    if (!name) throw new Error("Give the role a name.");
+    if (!name) throw new UserFacingError("Give the role a name.");
     const lengthProblem = roleLengthProblem(name, input.description.trim());
-    if (lengthProblem) throw new Error(lengthProblem);
+    if (lengthProblem) throw new UserFacingError(lengthProblem);
 
     return runInTenantContext(actor, async (tx) => {
       const existing = await tx.roles.findFirst({
         where: { id: input.id, tenant_id: actor.tenantId },
         select: { is_owner_role: true },
       });
-      if (!existing) throw new Error("That role no longer exists.");
+      if (!existing) throw new UserFacingError("That role no longer exists.");
       // trg_fn_roles_protect_owner_role / trg_fn_role_permissions_protect_owner_role
       // (docs/db-design.md) would reject this anyway - checked here first for a
       // message that reads like the rest of this capability's errors, not a
       // raw Postgres exception.
-      if (existing.is_owner_role) throw new Error("The Owner role can't be changed.");
-      if (await roleNameTaken(tx, actor.tenantId, name, input.id)) throw new Error(ROLE_NAME_TAKEN);
+      if (existing.is_owner_role) throw new UserFacingError("The Owner role can't be changed.");
+      if (await roleNameTaken(tx, actor.tenantId, name, input.id))
+        throw new UserFacingError(ROLE_NAME_TAKEN);
 
       try {
         await tx.roles.update({
@@ -42,7 +44,7 @@ export const updateRole = defineCapability<UpdateRoleInput, RoleDto>({
         });
       } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-          throw new Error(ROLE_NAME_TAKEN);
+          throw new UserFacingError(ROLE_NAME_TAKEN);
         }
         throw error;
       }

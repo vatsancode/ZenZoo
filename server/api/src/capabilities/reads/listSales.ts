@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import type { CapabilityActor } from "@zenzoo/types";
 import { z } from "zod";
 import { defineCapability } from "../capability";
@@ -33,7 +34,7 @@ export async function listSalesInTx(
     ["to", input.to],
   ] as const) {
     if (value !== undefined && !DAY.test(value))
-      throw new Error(`"${name}" must be a date like 2026-10-15.`);
+      throw new UserFacingError(`"${name}" must be a date like 2026-10-15.`);
   }
   const limit = Math.min(Math.max(Math.floor(Number(input.limit) || DEFAULT_LIMIT), 1), MAX_LIMIT);
 

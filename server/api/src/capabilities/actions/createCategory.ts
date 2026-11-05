@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -20,7 +21,7 @@ export const createCategory = defineCapability<CreateCategoryInput, CategoryDto>
     await assertStoreAccess(actor, input.storeId);
 
     const name = cleanName(input.name);
-    if (!name) throw new Error("Give the category a name.");
+    if (!name) throw new UserFacingError("Give the category a name.");
     assertFits(name, 100, "The category name");
 
     try {
@@ -32,9 +33,9 @@ export const createCategory = defineCapability<CreateCategoryInput, CategoryDto>
             where: { id: input.parentId, tenant_id: actor.tenantId, store_id: input.storeId },
             select: { parent_id: true },
           });
-          if (!parent) throw new Error("That parent category doesn't exist.");
+          if (!parent) throw new UserFacingError("That parent category doesn't exist.");
           if (parent.parent_id) {
-            throw new Error("A subcategory can't have its own subcategories.");
+            throw new UserFacingError("A subcategory can't have its own subcategories.");
           }
         }
 
@@ -52,7 +53,7 @@ export const createCategory = defineCapability<CreateCategoryInput, CategoryDto>
     } catch (error) {
       // idx_categories_top_level_name_unique / idx_categories_subcategory_name_unique
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new Error("There is already a category with that name.");
+        throw new UserFacingError("There is already a category with that name.");
       }
       throw error;
     }

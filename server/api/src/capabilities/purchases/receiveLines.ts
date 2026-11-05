@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import type { CapabilityActor } from "@zenzoo/types";
 import type { TenantTx } from "../../shared/tenantContext";
 import { generateBarcode } from "./barcode";
@@ -33,19 +34,19 @@ export async function receiveLines(
   input: ReceiveLinesInput,
 ): Promise<void> {
   const lines = input.lines.filter((line) => line.quantity > 0);
-  if (lines.length === 0) throw new Error("Enter how much arrived.");
+  if (lines.length === 0) throw new UserFacingError("Enter how much arrived.");
 
   const purchase = await tx.purchases.findFirst({
     where: { id: input.purchaseId, tenant_id: actor.tenantId },
     select: { store_id: true, status: true },
   });
-  if (!purchase) throw new Error("That purchase doesn't exist.");
+  if (!purchase) throw new UserFacingError("That purchase doesn't exist.");
 
   if (purchase.status === "draft") {
-    throw new Error("Place the order before receiving stock.");
+    throw new UserFacingError("Place the order before receiving stock.");
   }
   if (purchase.status === "cancelled") {
-    throw new Error("This purchase was cancelled.");
+    throw new UserFacingError("This purchase was cancelled.");
   }
 
   const deliveryDate = new Date(input.deliveryDate);
@@ -61,7 +62,7 @@ export async function receiveLines(
         inventory_batches: { select: { received_quantity: true } },
       },
     });
-    if (!item) throw new Error("One of these lines doesn't belong to this purchase.");
+    if (!item) throw new UserFacingError("One of these lines doesn't belong to this purchase.");
     await assertVariantQuantities(tx, [{ variantId: item.variant_id, quantity: line.quantity }]);
 
     const alreadyReceived = addQuantities(
@@ -69,7 +70,7 @@ export async function receiveLines(
     );
     const pending = subtractQuantity(toQuantity(item.quantity), alreadyReceived);
     if (line.quantity > pending) {
-      throw new Error(`Only ${pending} still to come on one of these lines.`);
+      throw new UserFacingError(`Only ${pending} still to come on one of these lines.`);
     }
 
     const batch = await tx.inventory_batches.create({

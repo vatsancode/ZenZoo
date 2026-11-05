@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -33,7 +34,7 @@ export const createPurchasePayment = defineCapability<
   kind: "action",
   requiredPermission: "purchases:edit",
   async handler(actor, input) {
-    if (!(input.amount > 0)) throw new Error("Enter an amount more than zero.");
+    if (!(input.amount > 0)) throw new UserFacingError("Enter an amount more than zero.");
 
     try {
       return await runInTenantContext(actor, async (tx) => {
@@ -41,7 +42,7 @@ export const createPurchasePayment = defineCapability<
           where: { id: input.purchaseId, tenant_id: actor.tenantId },
           select: { store_id: true },
         });
-        if (!purchase) throw new Error("That purchase doesn't exist.");
+        if (!purchase) throw new UserFacingError("That purchase doesn't exist.");
         await assertStoreAccess(actor, purchase.store_id);
 
         const created = await tx.purchase_payments.create({
@@ -64,10 +65,10 @@ export const createPurchasePayment = defineCapability<
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (/not enough balance/i.test(message)) {
-        throw new Error("That account doesn't have enough balance for this payment.");
+        throw new UserFacingError("That account doesn't have enough balance for this payment.");
       }
       if (/can only be recorded against an ordered or received purchase/i.test(message)) {
-        throw new Error("Place the order before recording a payment.");
+        throw new UserFacingError("Place the order before recording a payment.");
       }
       throw error;
     }

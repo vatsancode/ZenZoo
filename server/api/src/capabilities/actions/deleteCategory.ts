@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -33,7 +34,7 @@ export const deleteCategory = defineCapability<DeleteCategoryInput, { id: string
         where: { category_id: { in: [input.id, ...children.map((c) => c.id)] } },
       });
       if (productCount > 0) {
-        throw new Error(
+        throw new UserFacingError(
           `${productCount} product${productCount === 1 ? "" : "s"} ${productCount === 1 ? "is" : "are"} in this category or its subcategories. Move ${productCount === 1 ? "it" : "them"} first.`,
         );
       }

@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -25,7 +26,7 @@ export const setProductStatus = defineCapability<SetProductStatusInput, ProductD
         where: { id: input.id, tenant_id: actor.tenantId },
         select: { store_id: true },
       });
-      if (!existing) throw new Error("That product doesn't exist.");
+      if (!existing) throw new UserFacingError("That product doesn't exist.");
       await assertStoreAccess(actor, existing.store_id);
 
       const updated = await tx.sellables.update({

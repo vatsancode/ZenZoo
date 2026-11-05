@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -24,7 +25,7 @@ export const listStockMovements = defineCapability<ListStockMovementsInput, Stoc
         where: { id: input.variantId, tenant_id: actor.tenantId },
         select: { store_id: true },
       });
-      if (!variant) throw new Error("That variant doesn't exist.");
+      if (!variant) throw new UserFacingError("That variant doesn't exist.");
       await assertStoreAccess(actor, variant.store_id);
 
       const rows = await tx.stock_movements.findMany({

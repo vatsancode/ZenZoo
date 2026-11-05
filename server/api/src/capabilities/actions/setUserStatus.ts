@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { MEMBERSHIP_SELECT, toUserDto, type UserDto } from "../users/dto";
@@ -25,12 +26,12 @@ export const setUserStatus = defineCapability<SetUserStatusInput, UserDto>({
         where: { tenant_id: actor.tenantId, user_id: input.id, status: { not: "removed" } },
         select: { id: true, user_id: true },
       });
-      if (!membership) throw new Error("That user no longer exists.");
+      if (!membership) throw new UserFacingError("That user no longer exists.");
       if (input.disabled && membership.user_id === actor.userId) {
-        throw new Error("You can't turn off your own access.");
+        throw new UserFacingError("You can't turn off your own access.");
       }
       if (input.disabled && membership.user_id === (await getOwnerUserId(tx, actor.tenantId))) {
-        throw new Error(OWNER_CANT_DISABLE);
+        throw new UserFacingError(OWNER_CANT_DISABLE);
       }
 
       try {
@@ -50,7 +51,7 @@ export const setUserStatus = defineCapability<SetUserStatusInput, UserDto>({
         // this would be the tenant's last active owner.
         const message = error instanceof Error ? error.message : "";
         if (/must retain at least one active owner/i.test(message)) {
-          throw new Error("There has to be at least one active owner.");
+          throw new UserFacingError("There has to be at least one active owner.");
         }
         throw error;
       }

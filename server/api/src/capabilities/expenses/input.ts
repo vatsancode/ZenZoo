@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 export interface ExpenseLineInput {
   description?: string;
   categoryId: string;
@@ -37,35 +38,36 @@ const round = (value: number) => Math.round(value * 100) / 100;
 
 function toDay(value: string | undefined, message: string): Date | null {
   if (value === undefined || value === "") return null;
-  if (!ISO_DAY.test(value) || Number.isNaN(new Date(value).getTime())) throw new Error(message);
+  if (!ISO_DAY.test(value) || Number.isNaN(new Date(value).getTime()))
+    throw new UserFacingError(message);
   return new Date(value);
 }
 
 /** The rules every saved bill follows, as friendly sentences. The database repeats them as constraints. */
 export function cleanExpense(input: ExpenseInput): CleanExpense {
   const date = toDay(input.date, "Choose the date.");
-  if (!date) throw new Error("Choose the date.");
+  if (!date) throw new UserFacingError("Choose the date.");
 
   if (!Array.isArray(input.lines) || input.lines.length === 0) {
-    throw new Error("Add at least one item.");
+    throw new UserFacingError("Add at least one item.");
   }
   const lines = input.lines.map((line) => {
     const amount = round(Number(line.amount));
-    if (!line.categoryId) throw new Error("Every item needs a category.");
-    if (!(amount > 0)) throw new Error("Every item needs an amount more than zero.");
+    if (!line.categoryId) throw new UserFacingError("Every item needs a category.");
+    if (!(amount > 0)) throw new UserFacingError("Every item needs an amount more than zero.");
     return { description: (line.description ?? "").trim(), categoryId: line.categoryId, amount };
   });
   const total = round(lines.reduce((sum, line) => sum + line.amount, 0));
 
   if (input.status !== "paid" && input.status !== "pending") {
-    throw new Error("Choose paid or pending.");
+    throw new UserFacingError("Choose paid or pending.");
   }
 
   let paidDate: Date | null = null;
   let accountId: string | null = null;
   let dueDate: Date | null = null;
   if (input.status === "paid") {
-    if (!input.accountId) throw new Error("Choose the account it was paid from.");
+    if (!input.accountId) throw new UserFacingError("Choose the account it was paid from.");
     accountId = input.accountId;
     paidDate = toDay(input.paidDate, "Choose the date it was paid.") ?? date;
   } else {

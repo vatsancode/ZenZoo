@@ -1,3 +1,4 @@
+import { UserFacingError } from "./errors";
 import { quantityIssue } from "@zenzoo/pricing";
 import type { TenantTx } from "./tenantContext";
 
@@ -15,7 +16,7 @@ export function assertQuantity(
   options?: { allowZero?: boolean; unit?: string },
 ): void {
   const issue = quantityIssue(quantity, allowDecimals, options);
-  if (issue) throw new Error(issue);
+  if (issue) throw new UserFacingError(issue);
 }
 
 /**

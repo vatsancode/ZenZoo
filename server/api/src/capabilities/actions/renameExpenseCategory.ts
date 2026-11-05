@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -22,7 +23,7 @@ export const renameExpenseCategory = defineCapability<
   requiredPermission: "expenses:edit",
   async handler(actor, input) {
     const name = cleanName(input.name);
-    if (!name) throw new Error("Enter a name.");
+    if (!name) throw new UserFacingError("Enter a name.");
     assertFits(name, 100, "The category name");
 
     try {
@@ -31,8 +32,8 @@ export const renameExpenseCategory = defineCapability<
           where: { id: input.id, tenant_id: actor.tenantId },
           select: { is_catch_all: true },
         });
-        if (!existing) throw new Error("That category doesn't exist.");
-        if (existing.is_catch_all) throw new Error(`"Other" can't be renamed.`);
+        if (!existing) throw new UserFacingError("That category doesn't exist.");
+        if (existing.is_catch_all) throw new UserFacingError(`"Other" can't be renamed.`);
 
         const updated = await tx.expense_categories.update({
           where: { id: input.id },
@@ -43,7 +44,7 @@ export const renameExpenseCategory = defineCapability<
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new Error("This category already exists.");
+        throw new UserFacingError("This category already exists.");
       }
       throw error;
     }

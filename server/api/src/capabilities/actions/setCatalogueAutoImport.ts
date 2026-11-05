@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -28,7 +29,8 @@ export const setCatalogueAutoImport = defineCapability<
   requiredPermission: "catalogue:edit",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);
-    if (typeof input.on !== "boolean") throw new Error("Say whether auto-import is on or off.");
+    if (typeof input.on !== "boolean")
+      throw new UserFacingError("Say whether auto-import is on or off.");
 
     return runInTenantContext(actor, async (tx) => {
       await tx.stores.update({

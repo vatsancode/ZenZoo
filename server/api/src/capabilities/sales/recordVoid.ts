@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import type { CapabilityActor } from "@zenzoo/types";
 import type { TenantTx } from "../../shared/tenantContext";
 import { ConflictError } from "../capability";
@@ -29,14 +30,14 @@ export async function recordVoid(
   input: RecordVoidInput,
 ): Promise<SaleDto> {
   const reason = input.reason?.trim() ?? "";
-  if (!reason) throw new Error("Say why the sale is being cancelled.");
+  if (!reason) throw new UserFacingError("Say why the sale is being cancelled.");
 
   await lockSale(tx, input.saleId);
   const sale = await tx.sales.findFirst({
     where: { id: input.saleId, tenant_id: actor.tenantId, store_id: input.storeId },
     select: { status: true, customer_id: true },
   });
-  if (!sale) throw new Error("That sale doesn't exist.");
+  if (!sale) throw new UserFacingError("That sale doesn't exist.");
 
   // Cancelling twice (a double-click, a retry) is not an error - hand back the sale as it is.
   if (sale.status === "voided") {

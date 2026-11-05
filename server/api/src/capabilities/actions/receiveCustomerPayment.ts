@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { PricingError, toPaise } from "@zenzoo/pricing";
 import { defineCapability, ConflictError } from "../capability";
 import type { CapabilityActor } from "@zenzoo/types";
@@ -48,21 +49,21 @@ export async function receivePaymentInTx(
   try {
     amount = toPaise(input.amount);
   } catch (error) {
-    if (error instanceof PricingError) throw new Error("Enter the amount received.");
+    if (error instanceof PricingError) throw new UserFacingError("Enter the amount received.");
     throw error;
   }
-  if (!(amount > 0)) throw new Error("Enter an amount more than zero.");
+  if (!(amount > 0)) throw new UserFacingError("Enter an amount more than zero.");
 
   // A missing id must never reach a lookup: an undefined filter matches everything.
-  if (!input.customerId) throw new Error("Choose a customer.");
-  if (!input.paymentMethodId) throw new Error("Choose how they paid.");
-  if (!input.paymentAccountId) throw new Error("Choose the account the money went into.");
+  if (!input.customerId) throw new UserFacingError("Choose a customer.");
+  if (!input.paymentMethodId) throw new UserFacingError("Choose how they paid.");
+  if (!input.paymentAccountId) throw new UserFacingError("Choose the account the money went into.");
 
   const customer = await tx.customers.findFirst({
     where: { id: input.customerId, tenant_id: actor.tenantId },
     select: { id: true },
   });
-  if (!customer) throw new Error("That customer doesn't exist.");
+  if (!customer) throw new UserFacingError("That customer doesn't exist.");
 
   const method = await tx.payment_methods.findFirst({
     where: {
@@ -73,7 +74,7 @@ export async function receivePaymentInTx(
     },
     select: { id: true, code: true, name: true },
   });
-  if (!method) throw new Error("That payment method isn't available.");
+  if (!method) throw new UserFacingError("That payment method isn't available.");
   const account = await tx.payment_accounts.findFirst({
     where: {
       id: input.paymentAccountId,
@@ -83,7 +84,7 @@ export async function receivePaymentInTx(
     },
     select: { id: true, name: true },
   });
-  if (!account) throw new Error("That account isn't available.");
+  if (!account) throw new UserFacingError("That account isn't available.");
 
   // Their balance can't move under us between reading it and writing the payment.
   await lockCustomer(tx, customer.id);

@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -24,10 +25,10 @@ export const removeFromCatalogue = defineCapability<RemoveFromCatalogueInput, vo
         where: { id: input.id, tenant_id: actor.tenantId, store_id: input.storeId },
         select: { kind: true },
       });
-      if (!row) throw new Error("That item doesn't exist.");
+      if (!row) throw new UserFacingError("That item doesn't exist.");
       // A made-to-order item has no inventory to fall back to - removing it is deleting it, a separate action.
       if (row.kind !== "product")
-        throw new Error("Only inventory products can be removed this way.");
+        throw new UserFacingError("Only inventory products can be removed this way.");
       await tx.sellables.update({ where: { id: input.id }, data: { is_sellable: false } });
     });
   },

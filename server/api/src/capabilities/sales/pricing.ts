@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import {
   priceCart,
   PricingError,
@@ -68,14 +69,14 @@ function readDiscount(
 ): { discount: Discount; typed: { type: "amount" | "percent"; value: number } } | undefined {
   if (!input) return undefined;
   if (input.type !== "amount" && input.type !== "percent") {
-    throw new Error(`The ${what} discount must be an amount or a percentage.`);
+    throw new UserFacingError(`The ${what} discount must be an amount or a percentage.`);
   }
   const value = Number(input.value);
   if (!Number.isFinite(value) || value < 0)
-    throw new Error(`The ${what} discount isn't a valid number.`);
+    throw new UserFacingError(`The ${what} discount isn't a valid number.`);
   if (value === 0) return undefined;
   if (input.type === "percent") {
-    if (value > 100) throw new Error(`The ${what} discount can't be more than 100%.`);
+    if (value > 100) throw new UserFacingError(`The ${what} discount can't be more than 100%.`);
     return { discount: { type: "percent", percent: value }, typed: { type: "percent", value } };
   }
   return {
@@ -96,10 +97,10 @@ export async function priceSale(
   input: SalePricingInput,
 ): Promise<PricedSale> {
   if (!Array.isArray(input.lines) || input.lines.length === 0) {
-    throw new Error("Add an item to the sale first.");
+    throw new UserFacingError("Add an item to the sale first.");
   }
   if (input.lines.length > MAX_LINES)
-    throw new Error(`A sale can have at most ${MAX_LINES} lines.`);
+    throw new UserFacingError(`A sale can have at most ${MAX_LINES} lines.`);
 
   const variantIds = [...new Set(input.lines.map((line) => line.variantId))];
   const variants = await tx.variants.findMany({
@@ -128,26 +129,27 @@ export async function priceSale(
 
   const lines = input.lines.map((line): ResolvedLine => {
     const variant = byId.get(line.variantId);
-    if (!variant) throw new Error("One of the items doesn't exist in this store.");
+    if (!variant) throw new UserFacingError("One of the items doesn't exist in this store.");
     const sellable = variant.sellables;
     const label =
       sellable.variants.length > 1 ? `${sellable.name} - ${variant.name}` : sellable.name;
 
     // The catalogue is what the till may sell: sellable, and neither the item nor the variant switched off.
     if (!sellable.is_sellable || sellable.status !== "active" || variant.status !== "active") {
-      throw new Error(`${label} isn't available to sell.`);
+      throw new UserFacingError(`${label} isn't available to sell.`);
     }
     const quantityProblem = quantityIssue(line.quantity, variant.units.allow_decimals, {
       unit: variant.units.code,
     });
-    if (quantityProblem) throw new Error(`${label}: ${quantityProblem}`);
-    if (line.quantity > MAX_QUANTITY) throw new Error(`That is too many of ${label} for one sale.`);
+    if (quantityProblem) throw new UserFacingError(`${label}: ${quantityProblem}`);
+    if (line.quantity > MAX_QUANTITY)
+      throw new UserFacingError(`That is too many of ${label} for one sale.`);
 
     let unitPrice: Paise;
     if (sellable.pricing_mode === "custom") {
       const typed = Number(line.customPrice);
       if (line.customPrice === undefined || !Number.isFinite(typed) || typed <= 0) {
-        throw new Error(`Enter the price for ${label}.`);
+        throw new UserFacingError(`Enter the price for ${label}.`);
       }
       unitPrice = toPaise(typed);
     } else {
@@ -181,7 +183,7 @@ export async function priceSale(
       billDiscount: bill?.discount,
     });
   } catch (error) {
-    if (error instanceof PricingError) throw new Error(error.message);
+    if (error instanceof PricingError) throw new UserFacingError(error.message);
     throw error;
   }
 

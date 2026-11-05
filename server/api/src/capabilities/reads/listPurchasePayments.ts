@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -30,7 +31,7 @@ export const listPurchasePayments = defineCapability<
         where: { id: input.purchaseId, tenant_id: actor.tenantId },
         select: { store_id: true },
       });
-      if (!purchase) throw new Error("That purchase doesn't exist.");
+      if (!purchase) throw new UserFacingError("That purchase doesn't exist.");
       await assertStoreAccess(actor, purchase.store_id);
 
       const rows = await tx.purchase_payments.findMany({

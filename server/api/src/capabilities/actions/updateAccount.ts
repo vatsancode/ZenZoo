@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -25,16 +26,16 @@ export const updateAccount = defineCapability<UpdateAccountInput, AccountDto>({
   requiredPermission: "accounts:edit",
   async handler(actor, input) {
     const name = cleanName(input.name);
-    if (!name) throw new Error("Give the account a name.");
+    if (!name) throw new UserFacingError("Give the account a name.");
     assertFits(name, 200, "The account name");
-    if (input.openingBalance < 0) throw new Error("Opening balance can't be negative.");
+    if (input.openingBalance < 0) throw new UserFacingError("Opening balance can't be negative.");
 
     return runInTenantContext(actor, async (tx) => {
       const existing = await tx.payment_accounts.findFirst({
         where: { id: input.id, tenant_id: actor.tenantId },
         select: { store_id: true, opening_balance: true, opening_locked: true },
       });
-      if (!existing) throw new Error("That account doesn't exist.");
+      if (!existing) throw new UserFacingError("That account doesn't exist.");
       await assertStoreAccess(actor, existing.store_id);
 
       const clash = await tx.payment_accounts.findFirst({
@@ -46,20 +47,20 @@ export const updateAccount = defineCapability<UpdateAccountInput, AccountDto>({
         },
         select: { id: true },
       });
-      if (clash) throw new Error("An account with this name already exists.");
+      if (clash) throw new UserFacingError("An account with this name already exists.");
 
       const delta =
         Math.round((input.openingBalance - Number(existing.opening_balance)) * 100) / 100;
 
       if (delta !== 0) {
-        if (existing.opening_locked) throw new Error(OPENING_LOCKED);
+        if (existing.opening_locked) throw new UserFacingError(OPENING_LOCKED);
         try {
           // Moves the balance, writes the ledger row, and refuses again if a sale or transfer
           // locked the account a moment ago (it holds the account row while it checks).
           await tx.$executeRaw`SELECT public.adjust_account_balance(${input.id}::uuid, ${delta}::numeric, 'opening_correction', NULL)`;
         } catch (error) {
           if (error instanceof Error && /opening balance is locked/i.test(error.message)) {
-            throw new Error(OPENING_LOCKED);
+            throw new UserFacingError(OPENING_LOCKED);
           }
           throw error;
         }

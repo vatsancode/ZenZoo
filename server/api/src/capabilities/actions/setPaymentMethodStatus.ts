@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import {
@@ -24,13 +25,14 @@ export const setPaymentMethodStatus = defineCapability<
         where: { id: input.id, tenant_id: actor.tenantId },
         select: { id: true },
       });
-      if (!existing) throw new Error("That payment method doesn't exist.");
+      if (!existing) throw new UserFacingError("That payment method doesn't exist.");
 
       if (input.disabled) {
         const othersActive = await tx.payment_methods.count({
           where: { id: { not: input.id }, tenant_id: actor.tenantId, status: "active" },
         });
-        if (othersActive === 0) throw new Error("At least one payment method has to stay on.");
+        if (othersActive === 0)
+          throw new UserFacingError("At least one payment method has to stay on.");
       }
 
       const updated = await tx.payment_methods.update({

@@ -1,3 +1,4 @@
+import { UserFacingError } from "./errors";
 /** Trims and collapses repeated spaces, so "Tea    Coffee" and "Tea Coffee" are one name. */
 export function cleanName(raw: string): string {
   return raw.trim().replace(/\s+/g, " ");
@@ -14,7 +15,7 @@ function characterCount(text: string): number {
 /** Throws a plain sentence when `text` is longer than its column allows, e.g. "The category name can be at most 100 characters." */
 export function assertFits(text: string, max: number, what: string): void {
   if (characterCount(text) > max) {
-    throw new Error(`${what} can be at most ${max} characters.`);
+    throw new UserFacingError(`${what} can be at most ${max} characters.`);
   }
 }
 
@@ -60,5 +61,5 @@ export async function firstFreeCode(
     const candidate = trimmed + suffix;
     if (!(await isTaken(candidate))) return candidate;
   }
-  throw new Error("Couldn't make a code for that name. Try a different name.");
+  throw new UserFacingError("Couldn't make a code for that name. Try a different name.");
 }

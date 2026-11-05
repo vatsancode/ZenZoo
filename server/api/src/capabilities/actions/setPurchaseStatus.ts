@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -24,14 +25,14 @@ export const setPurchaseStatus = defineCapability<SetPurchaseStatusInput, Purcha
         where: { id: input.id, tenant_id: actor.tenantId },
         select: { store_id: true, status: true },
       });
-      if (!existing) throw new Error("That purchase doesn't exist.");
+      if (!existing) throw new UserFacingError("That purchase doesn't exist.");
       await assertStoreAccess(actor, existing.store_id);
 
       if (input.status === "ordered" && existing.status !== "draft") {
-        throw new Error("Only a draft purchase can be placed as an order.");
+        throw new UserFacingError("Only a draft purchase can be placed as an order.");
       }
       if (input.status === "cancelled" && !["draft", "ordered"].includes(existing.status)) {
-        throw new Error("A purchase that has already received stock can't be cancelled.");
+        throw new UserFacingError("A purchase that has already received stock can't be cancelled.");
       }
 
       const updated = await tx.purchases.update({

@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -24,7 +25,7 @@ export const getSale = defineCapability<GetSaleInput, SaleDto>({
     await assertStoreAccess(actor, input.storeId);
     return runInTenantContext(actor, async (tx) => {
       const sale = await findSale(tx, actor, input.storeId, input.id);
-      if (!sale) throw new Error("That sale doesn't exist.");
+      if (!sale) throw new UserFacingError("That sale doesn't exist.");
       return sale;
     });
   },

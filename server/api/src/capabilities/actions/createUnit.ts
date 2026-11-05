@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -19,9 +20,10 @@ export const createUnit = defineCapability<CreateUnitInput, UnitDto>({
   async handler(actor, input) {
     const code = input.code.trim();
     const name = cleanName(input.name);
-    if (!code) throw new Error("Enter a short code, like doz.");
-    if (!name) throw new Error("Enter the unit's name, like Dozen.");
-    if (!CODE_PATTERN.test(code)) throw new Error("A unit code can only use letters and numbers.");
+    if (!code) throw new UserFacingError("Enter a short code, like doz.");
+    if (!name) throw new UserFacingError("Enter the unit's name, like Dozen.");
+    if (!CODE_PATTERN.test(code))
+      throw new UserFacingError("A unit code can only use letters and numbers.");
     assertFits(code, 10, "The short code");
     assertFits(name, 100, "The unit name");
 
@@ -31,7 +33,7 @@ export const createUnit = defineCapability<CreateUnitInput, UnitDto>({
           where: { tenant_id: actor.tenantId, code: { equals: code, mode: "insensitive" } },
           select: { id: true },
         });
-        if (clash) throw new Error("A unit with this code already exists.");
+        if (clash) throw new UserFacingError("A unit with this code already exists.");
 
         const created = await tx.units.create({
           data: { tenant_id: actor.tenantId, code, name, allow_decimals: input.allowDecimals },
@@ -42,7 +44,7 @@ export const createUnit = defineCapability<CreateUnitInput, UnitDto>({
     } catch (error) {
       // units_tenant_code_unique
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new Error("A unit with this code already exists.");
+        throw new UserFacingError("A unit with this code already exists.");
       }
       throw error;
     }

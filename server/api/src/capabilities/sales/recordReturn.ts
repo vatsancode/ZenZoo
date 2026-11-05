@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { PricingError, quantityIssue, returnValue, toPaise, type Paise } from "@zenzoo/pricing";
 import type { CapabilityActor } from "@zenzoo/types";
 import type { TenantTx } from "../../shared/tenantContext";
@@ -61,7 +62,7 @@ export async function recordReturn(
   input: RecordReturnInput,
 ): Promise<SaleDto> {
   if (typeof input.id !== "string" || !UUID.test(input.id))
-    throw new Error("We couldn't save this return. Please try again.");
+    throw new UserFacingError("We couldn't save this return. Please try again.");
 
   // A retry of a return that already went through: hand back the sale as it is now.
   const existing = await tx.sale_returns.findFirst({
@@ -77,10 +78,10 @@ export async function recordReturn(
   }
 
   const reason = input.reason?.trim() ?? "";
-  if (!reason) throw new Error("Choose a reason for the return.");
-  if (reason.length > 500) throw new Error("That reason is too long.");
+  if (!reason) throw new UserFacingError("Choose a reason for the return.");
+  if (reason.length > 500) throw new UserFacingError("That reason is too long.");
   if (!Array.isArray(input.items) || input.items.length === 0) {
-    throw new Error("Choose what is coming back.");
+    throw new UserFacingError("Choose what is coming back.");
   }
 
   await lockSale(tx, input.saleId);
@@ -88,7 +89,7 @@ export async function recordReturn(
     where: { id: input.saleId, tenant_id: actor.tenantId, store_id: input.storeId },
     select: { status: true, customer_id: true },
   });
-  if (!sale) throw new Error("That sale doesn't exist.");
+  if (!sale) throw new UserFacingError("That sale doesn't exist.");
   if (sale.status !== "completed")
     throw new ConflictError("This sale has been cancelled, so nothing can be returned.");
 
@@ -137,10 +138,10 @@ export async function recordReturn(
 
   for (const request of input.items) {
     const line = lineById.get(request.saleItemId);
-    if (!line) throw new Error("One of the items isn't on this sale.");
+    if (!line) throw new UserFacingError("One of the items isn't on this sale.");
     if (seen.has(line.id)) {
       const name = line.variants.sellables.name;
-      throw new Error(`${name} is listed twice. Combine them into one line.`);
+      throw new UserFacingError(`${name} is listed twice. Combine them into one line.`);
     }
     seen.add(line.id);
 
@@ -149,10 +150,10 @@ export async function recordReturn(
         ? line.variants.name
         : `${line.variants.sellables.name} - ${line.variants.name}`;
     const quantityProblem = quantityIssue(request.quantity, line.variants.units.allow_decimals);
-    if (quantityProblem) throw new Error(`${label}: ${quantityProblem}`);
+    if (quantityProblem) throw new UserFacingError(`${label}: ${quantityProblem}`);
     // Made-to-order items have no stock to put back (and the return tables work per stock batch).
     if (line.sale_item_batches.length === 0) {
-      throw new Error(
+      throw new UserFacingError(
         `${label} is a service, not stock, so it can't be returned. Cancel the sale instead.`,
       );
     }
@@ -181,7 +182,7 @@ export async function recordReturn(
         request.quantity,
       );
     } catch (error) {
-      if (error instanceof PricingError) throw new Error(error.message);
+      if (error instanceof PricingError) throw new UserFacingError(error.message);
       throw error;
     }
 
@@ -220,7 +221,7 @@ export async function recordReturn(
   // The refund: how much, and how the customer is made whole.
   const mode = input.refund?.mode;
   if (mode !== "money" && mode !== "credit" && mode !== "none")
-    throw new Error("Choose how the customer is refunded.");
+    throw new UserFacingError("Choose how the customer is refunded.");
   let refund: Paise = 0;
   if (mode !== "none") {
     if (input.refund.amount === undefined || input.refund.amount === "") {
@@ -229,13 +230,13 @@ export async function recordReturn(
       try {
         refund = toPaise(input.refund.amount);
       } catch (error) {
-        if (error instanceof PricingError) throw new Error("Enter the refund amount.");
+        if (error instanceof PricingError) throw new UserFacingError("Enter the refund amount.");
         throw error;
       }
     }
-    if (!(refund > 0)) throw new Error("Enter the refund amount.");
+    if (!(refund > 0)) throw new UserFacingError("Enter the refund amount.");
     if (refund > totalValue) {
-      throw new Error(
+      throw new UserFacingError(
         `The refund can't be more than the ₹${money(totalValue)} the goods were worth.`,
       );
     }
@@ -245,9 +246,9 @@ export async function recordReturn(
   let accountId: string | null = null;
   if (mode === "money") {
     // A missing id must never reach the lookup: an undefined filter matches everything.
-    if (!input.refund.paymentMethodId) throw new Error("Choose how the refund is paid.");
+    if (!input.refund.paymentMethodId) throw new UserFacingError("Choose how the refund is paid.");
     if (!input.refund.paymentAccountId)
-      throw new Error("Choose the account the refund is paid from.");
+      throw new UserFacingError("Choose the account the refund is paid from.");
     const method = await tx.payment_methods.findFirst({
       where: {
         id: input.refund.paymentMethodId,
@@ -257,7 +258,7 @@ export async function recordReturn(
       },
       select: { id: true },
     });
-    if (!method) throw new Error("Choose how the refund is paid.");
+    if (!method) throw new UserFacingError("Choose how the refund is paid.");
     const account = await tx.payment_accounts.findFirst({
       where: {
         id: input.refund.paymentAccountId,
@@ -267,12 +268,12 @@ export async function recordReturn(
       },
       select: { id: true },
     });
-    if (!account) throw new Error("Choose the account the refund is paid from.");
+    if (!account) throw new UserFacingError("Choose the account the refund is paid from.");
     methodId = method.id;
     accountId = account.id;
   }
   if (mode === "credit") {
-    if (!sale.customer_id) throw new Error("Store credit needs a customer on the sale.");
+    if (!sale.customer_id) throw new UserFacingError("Store credit needs a customer on the sale.");
     await lockCustomer(tx, sale.customer_id);
   }
 

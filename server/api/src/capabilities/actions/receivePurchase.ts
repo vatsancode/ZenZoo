@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -32,7 +33,7 @@ export const receivePurchase = defineCapability<ReceivePurchaseInput, PurchaseDt
         where: { id: input.id, tenant_id: actor.tenantId },
         select: { store_id: true },
       });
-      if (!purchase) throw new Error("That purchase doesn't exist.");
+      if (!purchase) throw new UserFacingError("That purchase doesn't exist.");
       await assertStoreAccess(actor, purchase.store_id);
 
       await receiveLines(tx, actor, {

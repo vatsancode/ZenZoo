@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { Prisma } from "@prisma/client";
 import type { CapabilityActor } from "@zenzoo/types";
 import type { TenantTx } from "../../shared/tenantContext";
@@ -97,18 +98,18 @@ export function normalisePhone(value?: string): string | null {
 /** Checks and normalises a customer form - throws the message the person should see. */
 export function cleanCustomerInput(input: CustomerInput) {
   const name = input.name?.trim() ?? "";
-  if (!name) throw new Error("Enter the customer's name.");
-  if (name.length > 200) throw new Error("That name is too long.");
+  if (!name) throw new UserFacingError("Enter the customer's name.");
+  if (name.length > 200) throw new UserFacingError("That name is too long.");
 
   const phone = normalisePhone(input.phone);
   if (phone && (phone.replace("+", "").length < 6 || phone.length > 20)) {
-    throw new Error("That phone number doesn't look right.");
+    throw new UserFacingError("That phone number doesn't look right.");
   }
 
   // customers_email_lowercase_check
   const email = blankToNull(input.email)?.toLowerCase() ?? null;
   if (email && (email.length > 255 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
-    throw new Error("That email address doesn't look right.");
+    throw new UserFacingError("That email address doesn't look right.");
   }
 
   return {
@@ -137,13 +138,13 @@ export async function assertPhoneFree(
     },
     select: { name: true },
   });
-  if (owner) throw new Error(`This number belongs to ${owner.name}.`);
+  if (owner) throw new UserFacingError(`This number belongs to ${owner.name}.`);
 }
 
 /** The index catches the race assertPhoneFree can't (two saves at once) - same message, minus the name. */
 export function rethrowPhoneTaken(error: unknown): never {
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-    throw new Error("This number belongs to another customer.");
+    throw new UserFacingError("This number belongs to another customer.");
   }
   throw error;
 }

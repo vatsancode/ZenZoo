@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -17,9 +18,9 @@ export const payExpense = defineCapability<PayExpenseInput, ExpenseDto>({
   kind: "action",
   requiredPermission: "expenses:edit",
   async handler(actor, input) {
-    if (!input.accountId) throw new Error("Choose the account it was paid from.");
+    if (!input.accountId) throw new UserFacingError("Choose the account it was paid from.");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.paidDate ?? "")) {
-      throw new Error("Choose the date it was paid.");
+      throw new UserFacingError("Choose the date it was paid.");
     }
 
     try {
@@ -28,9 +29,9 @@ export const payExpense = defineCapability<PayExpenseInput, ExpenseDto>({
           where: { id: input.id, tenant_id: actor.tenantId },
           select: { store_id: true, status: true },
         });
-        if (!existing) throw new Error("That expense doesn't exist.");
+        if (!existing) throw new UserFacingError("That expense doesn't exist.");
         await assertStoreAccess(actor, existing.store_id);
-        if (existing.status === "paid") throw new Error("This bill is already paid.");
+        if (existing.status === "paid") throw new UserFacingError("This bill is already paid.");
 
         const updated = await tx.expenses.update({
           where: { id: input.id },

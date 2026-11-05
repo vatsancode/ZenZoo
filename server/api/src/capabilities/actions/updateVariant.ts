@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -22,8 +23,8 @@ export const updateVariant = defineCapability<UpdateVariantInput, ProductDto>({
   requiredPermission: "stocks:edit",
   async handler(actor, input) {
     const name = input.name.trim();
-    if (!name) throw new Error("Give the variant a name.");
-    if (input.basePrice < 0) throw new Error("Price can't be negative.");
+    if (!name) throw new UserFacingError("Give the variant a name.");
+    if (input.basePrice < 0) throw new UserFacingError("Price can't be negative.");
 
     // A variant never ends up without a SKU: clearing it (or editing an older variant that
     // never had one) generates one, the same way creating does.
@@ -36,7 +37,7 @@ export const updateVariant = defineCapability<UpdateVariantInput, ProductDto>({
             where: { id: input.id, tenant_id: actor.tenantId },
             select: { store_id: true, sellable_id: true, sellables: { select: { name: true } } },
           });
-          if (!existing) throw new Error("That variant doesn't exist.");
+          if (!existing) throw new UserFacingError("That variant doesn't exist.");
           await assertStoreAccess(actor, existing.store_id);
 
           await tx.variants.update({
@@ -59,7 +60,7 @@ export const updateVariant = defineCapability<UpdateVariantInput, ProductDto>({
       } catch (error) {
         if (isSkuClash(error)) {
           if (generatesSku && attempt < GENERATED_SKU_ATTEMPTS) continue;
-          throw new Error("That SKU is already used by another product.");
+          throw new UserFacingError("That SKU is already used by another product.");
         }
         throw error;
       }

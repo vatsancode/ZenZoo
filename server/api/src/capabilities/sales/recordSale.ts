@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { PricingError, toPaise, type Paise } from "@zenzoo/pricing";
 import type { CapabilityActor } from "@zenzoo/types";
 import type { TenantTx } from "../../shared/tenantContext";
@@ -57,11 +58,12 @@ export async function findSale(
 }
 
 function paiseOf(value: number | string | undefined, what: string): Paise {
-  if (value === undefined || value === null || value === "") throw new Error(`${what} is missing.`);
+  if (value === undefined || value === null || value === "")
+    throw new UserFacingError(`${what} is missing.`);
   try {
     return toPaise(value);
   } catch (error) {
-    if (error instanceof PricingError) throw new Error(`${what} isn't a valid amount.`);
+    if (error instanceof PricingError) throw new UserFacingError(`${what} isn't a valid amount.`);
     throw error;
   }
 }
@@ -153,7 +155,7 @@ export async function recordSale(
   input: RecordSaleInput,
 ): Promise<SaleDto> {
   if (typeof input.id !== "string" || !UUID.test(input.id))
-    throw new Error("We couldn't save this sale. Please try again.");
+    throw new UserFacingError("We couldn't save this sale. Please try again.");
 
   // A retry of a sale that already went through: hand back what was saved, change nothing.
   const already = await findSale(tx, actor, input.storeId, input.id);
@@ -164,14 +166,14 @@ export async function recordSale(
       where: { id: input.customerId, tenant_id: actor.tenantId, status: "active" },
       select: { id: true },
     });
-    if (!customer) throw new Error("That customer doesn't exist, or has been archived.");
+    if (!customer) throw new UserFacingError("That customer doesn't exist, or has been archived.");
   }
 
   const priced = await priceSale(tx, actor, input);
   const { cart } = priced;
 
   if (input.expectedTotal === undefined || input.expectedTotal === null) {
-    throw new Error("Send the total the cashier saw, so it can be checked.");
+    throw new UserFacingError("Send the total the cashier saw, so it can be checked.");
   }
   const expected = paiseOf(input.expectedTotal, "The total");
   if (expected !== cart.total) {
@@ -184,18 +186,19 @@ export async function recordSale(
   // account - together exactly the total.
   const payments = Array.isArray(input.payments) ? input.payments : [];
   const paid = payments.map((payment) => paiseOf(payment.amount, "A payment amount"));
-  if (paid.some((amount) => amount <= 0)) throw new Error("Every payment must be more than zero.");
+  if (paid.some((amount) => amount <= 0))
+    throw new UserFacingError("Every payment must be more than zero.");
   const optional = (value: number | string | undefined, what: string): Paise => {
     if (value === undefined || value === null || value === "" || Number(value) === 0) return 0;
     const amount = paiseOf(value, what);
-    if (amount < 0) throw new Error(`${what} can't be negative.`);
+    if (amount < 0) throw new UserFacingError(`${what} can't be negative.`);
     return amount;
   };
   const storeCredit = optional(input.storeCreditAmount, "The store credit amount");
   const onAccount = optional(input.onAccountAmount, "The pay-later amount");
   const paidTotal = paid.reduce((sum, amount) => sum + amount, 0) + storeCredit + onAccount;
   if (paidTotal !== cart.total) {
-    throw new Error(
+    throw new UserFacingError(
       `The payments add up to ₹${money(paidTotal)} but the bill is ₹${money(cart.total)}.`,
     );
   }
@@ -206,9 +209,11 @@ export async function recordSale(
     select: { id: true, is_customer_credit: true },
   });
   if (methods.length !== methodIds.length)
-    throw new Error("One of the payment methods isn't available.");
+    throw new UserFacingError("One of the payment methods isn't available.");
   if (methods.some((method) => method.is_customer_credit)) {
-    throw new Error("Use the store credit and pay-later amounts for those, not a payment method.");
+    throw new UserFacingError(
+      "Use the store credit and pay-later amounts for those, not a payment method.",
+    );
   }
   const accountIds = [...new Set(payments.map((payment) => payment.paymentAccountId))];
   const accounts = await tx.payment_accounts.findMany({
@@ -221,18 +226,18 @@ export async function recordSale(
     select: { id: true },
   });
   if (accounts.length !== accountIds.length)
-    throw new Error("One of the payment accounts isn't available.");
+    throw new UserFacingError("One of the payment accounts isn't available.");
 
   // Putting part of the bill on the customer's account: who, and how much they can.
   let credit: { storeCredit: string | null; onAccount: string | null } | undefined;
   if (storeCredit > 0 || onAccount > 0) {
     if (!input.customerId)
-      throw new Error("Choose a customer to put part of the bill on their account.");
+      throw new UserFacingError("Choose a customer to put part of the bill on their account.");
     credit = await creditMethods(tx, actor.tenantId);
     if (storeCredit > 0 && !credit.storeCredit)
-      throw new Error("Store credit is switched off in Settings.");
+      throw new UserFacingError("Store credit is switched off in Settings.");
     if (onAccount > 0 && !credit.onAccount)
-      throw new Error("Paying later is switched off in Settings.");
+      throw new UserFacingError("Paying later is switched off in Settings.");
     // Anything that changes this customer's balance takes turns, so two tills can't both spend the
     // same store credit.
     await lockCustomer(tx, input.customerId);
@@ -249,7 +254,7 @@ export async function recordSale(
     // while they hold credit would silently use it up. Make the till say so rather than label
     // that "pay later".
     if (onAccount > 0 && available - storeCredit > 0) {
-      throw new Error(
+      throw new UserFacingError(
         `This customer has ₹${money(available - storeCredit)} store credit left - use it before putting anything on account.`,
       );
     }
@@ -258,9 +263,9 @@ export async function recordSale(
   let soldAt = new Date();
   if (input.occurredAt !== undefined) {
     soldAt = new Date(input.occurredAt);
-    if (Number.isNaN(soldAt.getTime())) throw new Error("The sale time isn't valid.");
+    if (Number.isNaN(soldAt.getTime())) throw new UserFacingError("The sale time isn't valid.");
     if (soldAt.getTime() > Date.now() + 60 * 60 * 1000)
-      throw new Error("The sale time is in the future.");
+      throw new UserFacingError("The sale time is in the future.");
   }
 
   // Draft first: the line, batch and payment tables only accept rows for a draft sale.

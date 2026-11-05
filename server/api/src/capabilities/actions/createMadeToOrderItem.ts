@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -33,7 +34,8 @@ export const createMadeToOrderItem = defineCapability<CreateMadeToOrderItemInput
           where: { tenant_id: actor.tenantId, system_key: "pieces" },
           select: { id: true },
         });
-        if (!unit) throw new Error("The Pieces unit is missing - add it in Settings > Units.");
+        if (!unit)
+          throw new UserFacingError("The Pieces unit is missing - add it in Settings > Units.");
 
         const sellable = await tx.sellables.create({
           data: {

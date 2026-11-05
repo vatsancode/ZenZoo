@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -74,7 +75,7 @@ function validDay(value: string, name: string) {
     Number.isNaN(parsed.getTime()) ||
     parsed.toISOString().slice(0, 10) !== value
   ) {
-    throw new Error(`"${name}" must be a date like 2026-10-15.`);
+    throw new UserFacingError(`"${name}" must be a date like 2026-10-15.`);
   }
 }
 
@@ -89,7 +90,7 @@ function dayFormatter(timeZone: string): (at: Date) => string {
       day: "2-digit",
     });
   } catch {
-    throw new Error(`"${timeZone}" isn't a time zone I know.`);
+    throw new UserFacingError(`"${timeZone}" isn't a time zone I know.`);
   }
   return (at) => formatter.format(at);
 }
@@ -119,9 +120,9 @@ export const getDashboard = defineCapability<GetDashboardInput, DashboardDto>({
   async handler(actor, input) {
     validDay(input.from, "from");
     validDay(input.to, "to");
-    if (input.from > input.to) throw new Error("The start date is after the end date.");
+    if (input.from > input.to) throw new UserFacingError("The start date is after the end date.");
     const range: DateRange = { from: input.from, to: input.to };
-    if (rangeDays(range) > MAX_DAYS) throw new Error(`Pick ${MAX_DAYS} days or fewer.`);
+    if (rangeDays(range) > MAX_DAYS) throw new UserFacingError(`Pick ${MAX_DAYS} days or fewer.`);
     const before = previousRange(range);
     const dayOf = dayFormatter(input.timeZone ?? "UTC");
     await assertStoreAccess(actor, input.storeId);

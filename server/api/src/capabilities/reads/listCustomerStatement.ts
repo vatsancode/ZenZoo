@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { z } from "zod";
 import type { CapabilityActor } from "@zenzoo/types";
 import { defineCapability } from "../capability";
@@ -22,12 +23,12 @@ export async function listCustomerStatementInTx(
   actor: CapabilityActor,
   input: ListCustomerStatementInput,
 ): Promise<CustomerStatementEntryDto[]> {
-  if (!input.customerId) throw new Error("Choose a customer.");
+  if (!input.customerId) throw new UserFacingError("Choose a customer.");
   const customer = await tx.customers.findFirst({
     where: { id: input.customerId, tenant_id: actor.tenantId },
     select: { id: true },
   });
-  if (!customer) throw new Error("That customer doesn't exist.");
+  if (!customer) throw new UserFacingError("That customer doesn't exist.");
 
   // A customer is known at every store and their balance is across every store, so the statement is too.
   const [ledger, payments, refunds] = await Promise.all([

@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -20,7 +21,7 @@ export const addToCatalogue = defineCapability<AddToCatalogueInput, AddToCatalog
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);
     if (!Array.isArray(input.sellableIds) || input.sellableIds.length === 0) {
-      throw new Error("Choose at least one item to import.");
+      throw new UserFacingError("Choose at least one item to import.");
     }
 
     return runInTenantContext(actor, async (tx) => {

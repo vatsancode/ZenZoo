@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -57,7 +58,9 @@ export const recordReceivedPurchase = defineCapability<RecordReceivedPurchaseInp
     } catch (error) {
       // idx_purchases_supplier_reference_unique
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new Error("This supplier already has a purchase with that reference number.");
+        throw new UserFacingError(
+          "This supplier already has a purchase with that reference number.",
+        );
       }
       throw error;
     }

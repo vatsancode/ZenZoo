@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import {
@@ -25,7 +26,8 @@ export const setCustomerStatus = defineCapability<SetCustomerStatusInput, Custom
   kind: "action",
   requiredPermission: "customers:delete",
   async handler(actor, input) {
-    if (typeof input.archived !== "boolean") throw new Error("Say whether to archive or restore.");
+    if (typeof input.archived !== "boolean")
+      throw new UserFacingError("Say whether to archive or restore.");
 
     try {
       return await runInTenantContext(actor, async (tx) => {
@@ -33,7 +35,7 @@ export const setCustomerStatus = defineCapability<SetCustomerStatusInput, Custom
           where: { id: input.id, tenant_id: actor.tenantId },
           select: { phone: true },
         });
-        if (!existing) throw new Error("That customer doesn't exist.");
+        if (!existing) throw new UserFacingError("That customer doesn't exist.");
         if (!input.archived) await assertPhoneFree(tx, actor, existing.phone, input.id);
 
         const updated = await tx.customers.update({

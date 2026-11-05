@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import type { CapabilityActor } from "@zenzoo/types";
 import type { TenantTx } from "../../shared/tenantContext";
 import { computeTotals, type PurchaseLineInput } from "./totals";
@@ -27,10 +28,10 @@ export async function createDraftPurchase(
   actor: CapabilityActor,
   input: CreateDraftPurchaseInput,
 ): Promise<{ id: string; items: { id: string; variantId: string; quantity: number }[] }> {
-  if (input.items.length === 0) throw new Error("Add at least one line to the purchase.");
+  if (input.items.length === 0) throw new UserFacingError("Add at least one line to the purchase.");
   for (const item of input.items) {
-    if (item.quantity <= 0) throw new Error("Quantity must be more than zero.");
-    if (item.unitCost < 0) throw new Error("Cost can't be negative.");
+    if (item.quantity <= 0) throw new UserFacingError("Quantity must be more than zero.");
+    if (item.unitCost < 0) throw new UserFacingError("Cost can't be negative.");
   }
   await assertVariantQuantities(tx, input.items);
 
@@ -40,14 +41,14 @@ export async function createDraftPurchase(
     where: { id: input.supplierId, tenant_id: actor.tenantId },
     select: { id: true },
   });
-  if (!supplier) throw new Error("That supplier doesn't exist.");
+  if (!supplier) throw new UserFacingError("That supplier doesn't exist.");
 
   for (const line of totals.lines) {
     const variant = await tx.variants.findFirst({
       where: { id: line.variantId, tenant_id: actor.tenantId, store_id: input.storeId },
       select: { id: true },
     });
-    if (!variant) throw new Error("One of these products doesn't belong to this store.");
+    if (!variant) throw new UserFacingError("One of these products doesn't belong to this store.");
   }
 
   // Two steps, not a nested create - purchase_items' composite FK needs

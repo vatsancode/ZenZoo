@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { SUPPLIER_SELECT, toSupplierDto, type SupplierDto } from "../suppliers/dto";
@@ -20,7 +21,7 @@ export const createSupplier = defineCapability<CreateSupplierInput, SupplierDto>
   requiredPermission: "vendors:edit",
   async handler(actor, input) {
     if (typeof input.name !== "string" || !input.name.trim()) {
-      throw new Error("Give the supplier a name.");
+      throw new UserFacingError("Give the supplier a name.");
     }
     assertSupplierFields(input);
     const name = input.name.trim();

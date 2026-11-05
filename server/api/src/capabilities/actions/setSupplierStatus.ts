@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { SUPPLIER_SELECT, toSupplierDto, type SupplierDto } from "../suppliers/dto";
@@ -18,7 +19,7 @@ export const setSupplierStatus = defineCapability<SetSupplierStatusInput, Suppli
         where: { id: input.id, tenant_id: actor.tenantId },
         select: { id: true },
       });
-      if (!existing) throw new Error("That supplier doesn't exist.");
+      if (!existing) throw new UserFacingError("That supplier doesn't exist.");
 
       const updated = await tx.suppliers.update({
         where: { id: input.id },

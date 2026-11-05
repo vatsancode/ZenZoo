@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 interface SupplierFields {
   name: string;
   phone?: string;
@@ -44,23 +45,24 @@ export function assertSupplierFields(input: SupplierFields): void {
   for (const field of Object.keys(LIMITS) as (keyof typeof LIMITS)[]) {
     const value = input[field];
     if (value === undefined || value === null) continue;
-    if (typeof value !== "string") throw new Error(`${LABELS[field]} must be text.`);
+    if (typeof value !== "string") throw new UserFacingError(`${LABELS[field]} must be text.`);
     if (value.trim().length > LIMITS[field]) {
-      throw new Error(`${LABELS[field]} is too long (max ${LIMITS[field]} characters).`);
+      throw new UserFacingError(`${LABELS[field]} is too long (max ${LIMITS[field]} characters).`);
     }
   }
 
   const phone = input.phone?.trim();
   if (phone && !(PHONE_PATTERN.test(phone) && /\d/.test(phone))) {
-    throw new Error("Use digits only (spaces, + - ( ) allowed).");
+    throw new UserFacingError("Use digits only (spaces, + - ( ) allowed).");
   }
 
   const email = input.email?.trim();
-  if (email && !EMAIL_PATTERN.test(email)) throw new Error("Enter a valid email address.");
+  if (email && !EMAIL_PATTERN.test(email))
+    throw new UserFacingError("Enter a valid email address.");
 
   const mapUrl = input.mapUrl?.trim();
   if (mapUrl) {
     const problem = mapUrlProblem(mapUrl);
-    if (problem) throw new Error(problem);
+    if (problem) throw new UserFacingError(problem);
   }
 }

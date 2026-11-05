@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { hashPassword } from "../../shared/password";
@@ -35,11 +36,11 @@ export const createUser = defineCapability<CreateUserInput, UserDto>({
   async handler(actor, input) {
     const name = input.name.trim();
     const email = input.email.trim();
-    if (!name) throw new Error("Enter the person's name.");
-    if (!EMAIL_RE.test(email)) throw new Error("Enter a valid email address.");
-    if (!input.roleId) throw new Error("Choose a role.");
+    if (!name) throw new UserFacingError("Enter the person's name.");
+    if (!EMAIL_RE.test(email)) throw new UserFacingError("Enter a valid email address.");
+    if (!input.roleId) throw new UserFacingError("Choose a role.");
     const passwordProblem = passwordStrengthProblem(input.password);
-    if (passwordProblem) throw new Error(passwordProblem);
+    if (passwordProblem) throw new UserFacingError(passwordProblem);
 
     const [firstName, ...rest] = name.split(/\s+/);
     const lastName = rest.join(" ") || null;
@@ -49,13 +50,13 @@ export const createUser = defineCapability<CreateUserInput, UserDto>({
       email,
       phone: input.phone,
     });
-    if (lengthProblem) throw new Error(lengthProblem);
+    if (lengthProblem) throw new UserFacingError(lengthProblem);
     const passwordHash = await hashPassword(input.password);
 
     try {
       return await runInTenantContext(actor, async (tx) => {
         if (await isOwnerRole(tx, actor.tenantId, input.roleId)) {
-          throw new Error(OWNER_ROLE_TAKEN);
+          throw new UserFacingError(OWNER_ROLE_TAKEN);
         }
 
         const rows = await tx.$queryRaw<AddTenantUserRow[]>`
@@ -67,7 +68,7 @@ export const createUser = defineCapability<CreateUserInput, UserDto>({
         const created = rows[0];
         if (!created) {
           console.error("add_tenant_user returned no row");
-          throw new Error("We couldn't add this person. Please try again.");
+          throw new UserFacingError("We couldn't add this person. Please try again.");
         }
 
         if (input.phone?.trim()) {
@@ -91,10 +92,10 @@ export const createUser = defineCapability<CreateUserInput, UserDto>({
       // match on the underlying constraint name instead.
       const message = error instanceof Error ? error.message : "";
       if (/users_email_key|unique constraint|23505/i.test(message)) {
-        throw new Error("Someone with that email already exists.");
+        throw new UserFacingError("Someone with that email already exists.");
       }
       if (/tenant_memberships_role_fk/i.test(message)) {
-        throw new Error("Choose a role.");
+        throw new UserFacingError("Choose a role.");
       }
       throw error;
     }

@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 
@@ -19,13 +20,13 @@ export const deleteRole = defineCapability<DeleteRoleInput, { id: string }>({
       // the admin UI's prior mock behavior for this same case).
       if (!existing) return { id: input.id };
 
-      if (existing.is_owner_role) throw new Error("The Owner role can't be removed.");
+      if (existing.is_owner_role) throw new UserFacingError("The Owner role can't be removed.");
 
       const holders = await tx.tenant_memberships.count({
         where: { tenant_id: actor.tenantId, role_id: input.id, status: { not: "removed" } },
       });
       if (holders > 0) {
-        throw new Error(
+        throw new UserFacingError(
           `${holders} ${holders === 1 ? "person has" : "people have"} this role. Give them another role first.`,
         );
       }

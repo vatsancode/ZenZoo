@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -23,15 +24,17 @@ export const createAccount = defineCapability<CreateAccountInput, AccountDto>({
     await assertStoreAccess(actor, input.storeId);
 
     const name = cleanName(input.name);
-    if (!name) throw new Error("Give the account a name.");
+    if (!name) throw new UserFacingError("Give the account a name.");
     assertFits(name, 200, "The account name");
     // The code is only a hint: a name with no English letters sends none, and it is made
     // unique below, so it is never a reason to refuse an account.
     const requestedCode = input.code.trim().toLowerCase();
     if (requestedCode && !CODE_PATTERN.test(requestedCode)) {
-      throw new Error("Account code can only use lowercase letters, numbers, and dashes.");
+      throw new UserFacingError(
+        "Account code can only use lowercase letters, numbers, and dashes.",
+      );
     }
-    if (input.openingBalance < 0) throw new Error("Opening balance can't be negative.");
+    if (input.openingBalance < 0) throw new UserFacingError("Opening balance can't be negative.");
 
     try {
       return await runInTenantContext(actor, async (tx) => {
@@ -43,7 +46,7 @@ export const createAccount = defineCapability<CreateAccountInput, AccountDto>({
           },
           select: { id: true },
         });
-        if (clash) throw new Error("An account with this name already exists.");
+        if (clash) throw new UserFacingError("An account with this name already exists.");
 
         const code = await firstFreeCode(requestedCode || "account", "-", 50, async (candidate) => {
           const taken = await tx.payment_accounts.findFirst({
@@ -69,7 +72,7 @@ export const createAccount = defineCapability<CreateAccountInput, AccountDto>({
     } catch (error) {
       // payment_accounts_tenant_store_code_unique - only if the same account was added at the same moment
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new Error("An account with this name already exists.");
+        throw new UserFacingError("An account with this name already exists.");
       }
       throw error;
     }

@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import type { CapabilityActor } from "@zenzoo/types";
 import type { TenantTx } from "../../shared/tenantContext";
 
@@ -16,17 +17,17 @@ export const MAX_NAME_LENGTH = 200;
 /** Checks and normalises a made-to-order form - throws the message the person should see. */
 export function cleanMadeToOrderInput(input: MadeToOrderInput) {
   const name = input.name?.trim() ?? "";
-  if (!name) throw new Error("Enter a name.");
+  if (!name) throw new UserFacingError("Enter a name.");
   if (name.length > MAX_NAME_LENGTH) {
-    throw new Error(`Keep the name to ${MAX_NAME_LENGTH} characters or fewer.`);
+    throw new UserFacingError(`Keep the name to ${MAX_NAME_LENGTH} characters or fewer.`);
   }
-  if (!input.categoryId) throw new Error("Choose a category.");
+  if (!input.categoryId) throw new UserFacingError("Choose a category.");
   if (input.pricing !== "fixed" && input.pricing !== "custom") {
-    throw new Error("Choose how it is priced.");
+    throw new UserFacingError("Choose how it is priced.");
   }
   const price = input.pricing === "fixed" ? Number(input.price) : 0;
   if (input.pricing === "fixed" && (!Number.isFinite(price) || price <= 0)) {
-    throw new Error("Enter the price.");
+    throw new UserFacingError("Enter the price.");
   }
   return { name, categoryId: input.categoryId, pricing: input.pricing, price };
 }
@@ -47,7 +48,7 @@ export async function assertMadeToOrderWritable(
     where: { id: fields.categoryId, tenant_id: actor.tenantId, store_id: storeId },
     select: { id: true },
   });
-  if (!category) throw new Error("That category doesn't exist.");
+  if (!category) throw new UserFacingError("That category doesn't exist.");
 
   const clash = await tx.sellables.findFirst({
     where: {
@@ -60,5 +61,5 @@ export async function assertMadeToOrderWritable(
     },
     select: { id: true },
   });
-  if (clash) throw new Error("An item with this name is already in the catalogue.");
+  if (clash) throw new UserFacingError("An item with this name is already in the catalogue.");
 }

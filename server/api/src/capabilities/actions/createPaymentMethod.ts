@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
@@ -18,7 +19,7 @@ export const createPaymentMethod = defineCapability<CreatePaymentMethodInput, Pa
   requiredPermission: "settings:edit",
   async handler(actor, input) {
     const name = cleanName(input.name);
-    if (!name) throw new Error("Enter a name for the payment method.");
+    if (!name) throw new UserFacingError("Enter a name for the payment method.");
     assertFits(name, 100, "The payment method name");
 
     // payment_methods_code_format_check: upper-case, [A-Z0-9_]+ only. A name with no English
@@ -35,7 +36,7 @@ export const createPaymentMethod = defineCapability<CreatePaymentMethodInput, Pa
           where: { tenant_id: actor.tenantId, name: { equals: name, mode: "insensitive" } },
           select: { id: true },
         });
-        if (clash) throw new Error("There is already a payment method with that name.");
+        if (clash) throw new UserFacingError("There is already a payment method with that name.");
 
         // Two different names can boil down to one code ("Gift voucher" / "Gift-voucher").
         const code = await firstFreeCode(baseCode, "_", 30, async (candidate) => {
@@ -55,7 +56,7 @@ export const createPaymentMethod = defineCapability<CreatePaymentMethodInput, Pa
     } catch (error) {
       // payment_methods_tenant_code_unique
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new Error("There is already a payment method with that name.");
+        throw new UserFacingError("There is already a payment method with that name.");
       }
       throw error;
     }

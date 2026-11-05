@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -19,7 +20,7 @@ export const setVariantStatus = defineCapability<SetVariantStatusInput, ProductD
         where: { id: input.id, tenant_id: actor.tenantId },
         select: { store_id: true, sellable_id: true },
       });
-      if (!existing) throw new Error("That variant doesn't exist.");
+      if (!existing) throw new UserFacingError("That variant doesn't exist.");
       await assertStoreAccess(actor, existing.store_id);
 
       await tx.variants.update({

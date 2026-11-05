@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import type { CapabilityActor } from "@zenzoo/types";
 import { runInTenantContext, type TenantTx } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -30,12 +31,12 @@ export async function addVariant<T>(
   project: (tx: TenantTx, sellableId: string) => Promise<T>,
 ): Promise<T> {
   const name = input.name.trim();
-  if (!name) throw new Error("Give the variant a name.");
-  if (input.basePrice < 0) throw new Error("Price can't be negative.");
+  if (!name) throw new UserFacingError("Give the variant a name.");
+  if (input.basePrice < 0) throw new UserFacingError("Price can't be negative.");
   if (input.openingQuantity) {
-    if (input.openingQuantity < 0) throw new Error("Opening stock can't be negative.");
+    if (input.openingQuantity < 0) throw new UserFacingError("Opening stock can't be negative.");
     if (input.openingUnitCost == null || input.openingUnitCost < 0) {
-      throw new Error("Give the opening stock a cost per unit.");
+      throw new UserFacingError("Give the opening stock a cost per unit.");
     }
   }
 
@@ -48,7 +49,7 @@ export async function addVariant<T>(
           where: { id: input.sellableId, tenant_id: actor.tenantId },
           select: { store_id: true, name: true },
         });
-        if (!sellable) throw new Error("That product doesn't exist.");
+        if (!sellable) throw new UserFacingError("That product doesn't exist.");
         await assertStoreAccess(actor, sellable.store_id);
 
         // Every variant under a product shares one unit - a new variant
@@ -59,7 +60,7 @@ export async function addVariant<T>(
           where: { sellable_id: input.sellableId, tenant_id: actor.tenantId },
           select: { unit_id: true },
         });
-        if (!sibling) throw new Error("That product doesn't exist.");
+        if (!sibling) throw new UserFacingError("That product doesn't exist.");
 
         const created = await tx.variants.create({
           data: {
@@ -88,7 +89,7 @@ export async function addVariant<T>(
     } catch (error) {
       if (isSkuClash(error)) {
         if (generatesSku && attempt < GENERATED_SKU_ATTEMPTS) continue;
-        throw new Error("That SKU is already used by another product.");
+        throw new UserFacingError("That SKU is already used by another product.");
       }
       throw error;
     }

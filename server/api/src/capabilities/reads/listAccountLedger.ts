@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
@@ -29,7 +30,8 @@ const MAX_PAGE_SIZE = 100;
 function dateOrNull(value: string | undefined, what: string): Date | null {
   if (!value) return null;
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) throw new Error(`The ${what} date isn't a real date.`);
+  if (Number.isNaN(date.getTime()))
+    throw new UserFacingError(`The ${what} date isn't a real date.`);
   return date;
 }
 
@@ -65,9 +67,9 @@ export const listAccountLedger = defineCapability<ListAccountLedgerInput, Ledger
     const page = Math.max(1, Math.floor(Number(input.page) || 1));
     const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(Number(input.pageSize) || 25)));
     if (input.kind && !isLedgerKind(input.kind))
-      throw new Error("That isn't a kind of transaction.");
+      throw new UserFacingError("That isn't a kind of transaction.");
     if (input.direction && input.direction !== "in" && input.direction !== "out") {
-      throw new Error("Choose money in or money out.");
+      throw new UserFacingError("Choose money in or money out.");
     }
     const from = dateOrNull(input.from, "start");
     const to = dateOrNull(input.to, "end");

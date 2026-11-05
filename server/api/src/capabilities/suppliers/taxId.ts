@@ -1,3 +1,4 @@
+import { UserFacingError } from "../../shared/errors";
 import type { TenantTx } from "../../shared/tenantContext";
 
 /**
@@ -21,7 +22,7 @@ export async function assertTaxIdFree(
     select: { name: true, status: true },
   });
   if (clash) {
-    throw new Error(
+    throw new UserFacingError(
       `${clash.name}${clash.status === "archived" ? " (archived)" : ""} already has this GSTIN.`,
     );
   }
