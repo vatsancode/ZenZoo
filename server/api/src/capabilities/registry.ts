@@ -23,6 +23,7 @@ import { listPurchasePayments } from "./reads/listPurchasePayments";
 import { listPurchases } from "./reads/listPurchases";
 import { listSales } from "./reads/listSales";
 import { listStockMovements } from "./reads/listStockMovements";
+import { listStores } from "./reads/listStores";
 import { listSuppliers } from "./reads/listSuppliers";
 import { listTillCustomers } from "./reads/listTillCustomers";
 import { listTillItems } from "./reads/listTillItems";
@@ -62,7 +63,8 @@ export type CapabilityArea =
   | "customers"
   | "suppliers"
   | "finance"
-  | "dashboard";
+  | "dashboard"
+  | "stores";
 
 // Capabilities differ in Input/Output, so the list can't share one concrete type.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -126,4 +128,6 @@ export const capabilityRegistry: readonly RegistryEntry[] = [
   entry("finance", lookupPaymentMethods),
 
   entry("dashboard", getDashboard),
+
+  entry("stores", listStores),
 ];

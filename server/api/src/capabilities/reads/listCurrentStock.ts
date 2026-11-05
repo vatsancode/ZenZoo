@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -17,6 +18,11 @@ export interface ListCurrentStockInput {
 export const listCurrentStock = defineCapability<ListCurrentStockInput, CurrentStockDto[]>({
   name: "listCurrentStock",
   kind: "read",
+  description:
+    "How much of each product variant is in stock at one store right now. Each row is a variantId (an id only) and onHand, the quantity in that item's own unit. Get storeId from listStores.",
+  input: z.object({
+    storeId: z.string().describe("The store's id, from listStores."),
+  }),
   requiredPermission: "stocks:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);

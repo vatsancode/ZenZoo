@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -11,6 +12,11 @@ export interface ListStockMovementsInput {
 export const listStockMovements = defineCapability<ListStockMovementsInput, StockMovementDto[]>({
   name: "listStockMovements",
   kind: "read",
+  description:
+    "Every stock movement for one product variant, newest first: the movement type, quantity, batch, reason and when it happened. This is a log; nothing here can be changed.",
+  input: z.object({
+    variantId: z.string().describe("The product variant's id."),
+  }),
   requiredPermission: "stocks:view",
   async handler(actor, input) {
     return runInTenantContext(actor, async (tx) => {

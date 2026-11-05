@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import {
@@ -11,6 +12,9 @@ import {
 export const listExpenseCategories = defineCapability<void, ExpenseCategoryDto[]>({
   name: "listExpenseCategories",
   kind: "read",
+  description:
+    "List the headings expenses are filed under, such as Rent and Salaries, each with how many items and bills are filed under it and the total spent. Other is the catch-all heading and comes last. The same headings apply to every store. Takes no input. Money amounts are decimal text in rupees.",
+  input: z.void(),
   requiredPermission: "expenses:view",
   async handler(actor) {
     return runInTenantContext(actor, async (tx) => {

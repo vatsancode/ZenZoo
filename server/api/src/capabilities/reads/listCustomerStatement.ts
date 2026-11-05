@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { CapabilityActor } from "@zenzoo/types";
 import { defineCapability } from "../capability";
 import { runInTenantContext, type TenantTx } from "../../shared/tenantContext";
@@ -100,6 +101,11 @@ export const listCustomerStatement = defineCapability<
 >({
   name: "listCustomerStatement",
   kind: "read",
+  description:
+    "One customer's account statement across every store. Each entry has its type, its effect on the customer's balance (positive means they owe more, negative means credit), any cash that moved, and the running balance afterwards. Amounts are decimal text in rupees.",
+  input: z.object({
+    customerId: z.string().describe("The customer's id."),
+  }),
   requiredPermission: "customers:view",
   async handler(actor, input) {
     return runInTenantContext(actor, (tx) => listCustomerStatementInTx(tx, actor, input));

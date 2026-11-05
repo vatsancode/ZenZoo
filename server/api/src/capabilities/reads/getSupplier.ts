@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability, NotFoundError } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { SUPPLIER_SELECT, toSupplierDto, type SupplierDto } from "../suppliers/dto";
@@ -16,6 +17,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const getSupplier = defineCapability<GetSupplierInput, SupplierDto>({
   name: "getSupplier",
   kind: "read",
+  description:
+    "One supplier by id: name, phone, email, tax id, map link and status (active or archived). Archived suppliers are still returned. Get supplier ids from listSuppliers. The same suppliers serve every store.",
+  input: z.object({
+    id: z.string().describe("The supplier's id, from listSuppliers."),
+  }),
   requiredPermission: "vendors:view",
   async handler(actor, input) {
     // Checked first: the id column is a uuid, so "abc" would otherwise fail as a database error.

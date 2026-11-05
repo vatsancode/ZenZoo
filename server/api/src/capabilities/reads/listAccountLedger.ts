@@ -1,8 +1,15 @@
+import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
-import { LEDGER_SELECT, describeLedgerRows, isLedgerKind, type LedgerPageDto } from "../ledger/dto";
+import {
+  LEDGER_KINDS,
+  LEDGER_SELECT,
+  describeLedgerRows,
+  isLedgerKind,
+  type LedgerPageDto,
+} from "../ledger/dto";
 
 export interface ListAccountLedgerInput {
   storeId: string;
@@ -30,6 +37,27 @@ function dateOrNull(value: string | undefined, what: string): Date | null {
 export const listAccountLedger = defineCapability<ListAccountLedgerInput, LedgerPageDto>({
   name: "listAccountLedger",
   kind: "read",
+  description:
+    "Every money movement in and out of a store's accounts, newest first, one page at a time. Each row has its time, account, kind (such as sale_payment, expense_payment or transfer_in), amount (positive is money in, negative is money out), the balance afterwards, a plain description and who did it. The reply also gives the total number of matching rows and the sums of money in and money out across all pages. Filter by account, direction, kind or a date range (ISO date-times, such as 2026-11-01T00:00:00+05:30). pageSize is at most 100. Get storeId from listStores and accountId from listAccounts. Amounts are decimal text in rupees.",
+  input: z.object({
+    storeId: z.string().describe("The store's id, from listStores."),
+    accountId: z.string().optional().describe("Only this account; every account when left out."),
+    direction: z
+      .enum(["in", "out"])
+      .optional()
+      .describe("Only money coming in, or only money going out."),
+    kind: z.enum(LEDGER_KINDS).optional().describe("Only this kind of movement."),
+    from: z.string().optional().describe("From this ISO date-time (included)."),
+    to: z.string().optional().describe("Up to this ISO date-time (not included)."),
+    page: z.number().int().min(1).optional().describe("Page number, starting at 1."),
+    pageSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe("Rows per page, at most 100 (25 by default)."),
+  }),
   requiredPermission: "accounts:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);

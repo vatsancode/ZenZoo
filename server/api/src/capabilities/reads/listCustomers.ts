@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { CUSTOMER_SELECT, toCustomerDto, type CustomerDto } from "../customers/dto";
@@ -12,6 +13,11 @@ export interface ListCustomersInput {
 export const listCustomers = defineCapability<ListCustomersInput, CustomerDto[]>({
   name: "listCustomers",
   kind: "read",
+  description:
+    "All customers, by name, each with balance (above 0 they owe the shop, below 0 they hold store credit), number of purchases, total spent after refunds and last purchase date. Archived customers are left out unless includeArchived is true. Amounts are decimal text in rupees.",
+  input: z.object({
+    includeArchived: z.boolean().optional().describe("Include archived customers."),
+  }),
   requiredPermission: "customers:view",
   async handler(actor, input) {
     return runInTenantContext(actor, async (tx) => {

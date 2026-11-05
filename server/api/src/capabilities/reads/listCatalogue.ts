@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -11,6 +12,11 @@ export interface ListCatalogueInput {
 export const listCatalogue = defineCapability<ListCatalogueInput, CatalogueItemDto[]>({
   name: "listCatalogue",
   kind: "read",
+  description:
+    'List what the shop can sell at one store (its sales catalogue), by name. Each item has its kind (product, or made_to_order for services), category name, whether its price is fixed or agreed per order (custom), its lowest price in rupees as plain text such as "2300", and its variant count. Get storeId from listStores. This is the selling list; listProducts has the full variant details.',
+  input: z.object({
+    storeId: z.string().describe("The store's id, from listStores."),
+  }),
   requiredPermission: "catalogue:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);

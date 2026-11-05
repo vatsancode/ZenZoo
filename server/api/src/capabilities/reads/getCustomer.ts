@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { CUSTOMER_SELECT, toCustomerDto, type CustomerDto } from "../customers/dto";
@@ -12,6 +13,11 @@ export interface GetCustomerInput {
 export const getCustomer = defineCapability<GetCustomerInput, CustomerDto>({
   name: "getCustomer",
   kind: "read",
+  description:
+    "One customer by id: contact details, status, when they were added, balance (above 0 they owe the shop, below 0 they hold store credit), number of purchases, total spent after refunds, and last purchase date. Amounts are decimal text in rupees.",
+  input: z.object({
+    id: z.string().describe("The customer's id."),
+  }),
   requiredPermission: "customers:view",
   async handler(actor, input) {
     return runInTenantContext(actor, async (tx) => {

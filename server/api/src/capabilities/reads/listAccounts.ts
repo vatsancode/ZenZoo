@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -10,6 +11,11 @@ export interface ListAccountsInput {
 export const listAccounts = defineCapability<ListAccountsInput, AccountDto[]>({
   name: "listAccounts",
   kind: "read",
+  description:
+    "List the cash drawer and bank accounts at one store, each with its id, name, short code, status (active or disabled), opening balance and current balance. Get storeId from listStores. Money amounts are decimal text in rupees.",
+  input: z.object({
+    storeId: z.string().describe("The store's id, from listStores."),
+  }),
   requiredPermission: "accounts:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);

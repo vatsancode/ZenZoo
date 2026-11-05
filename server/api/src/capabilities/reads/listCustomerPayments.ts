@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { CapabilityActor } from "@zenzoo/types";
 import { defineCapability } from "../capability";
 import { runInTenantContext, type TenantTx } from "../../shared/tenantContext";
@@ -59,6 +60,12 @@ export const listCustomerPayments = defineCapability<
 >({
   name: "listCustomerPayments",
   kind: "read",
+  description:
+    "Payments received from customers at one store, newest first (at most 2000), optionally for one customer only. Get storeId from listStores. Amounts are positive decimal text in rupees.",
+  input: z.object({
+    storeId: z.string().describe("The store's id, from listStores."),
+    customerId: z.string().optional().describe("Only this customer's payments."),
+  }),
   requiredPermission: "customers:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -11,6 +12,11 @@ export interface ListInventoryBatchesInput {
 export const listInventoryBatches = defineCapability<ListInventoryBatchesInput, BatchDto[]>({
   name: "listInventoryBatches",
   kind: "read",
+  description:
+    "The batches of one product variant that still hold stock, oldest first. Each batch has its barcode, quantity received, quantity still available, unit cost (decimal text in rupees) and when it was received.",
+  input: z.object({
+    variantId: z.string().describe("The product variant's id."),
+  }),
   requiredPermission: "stocks:view",
   async handler(actor, input) {
     return runInTenantContext(actor, async (tx) => {

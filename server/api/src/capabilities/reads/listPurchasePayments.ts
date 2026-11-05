@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -17,6 +18,11 @@ export const listPurchasePayments = defineCapability<
 >({
   name: "listPurchasePayments",
   kind: "read",
+  description:
+    "List the payments made against one stock purchase, newest first: each with its amount (decimal text in rupees), date (YYYY-MM-DD), payment method id, account id, reference and notes. Get purchaseId from listPurchases. Method and account ids can be matched to listPaymentMethods and listAccounts.",
+  input: z.object({
+    purchaseId: z.string().describe("The purchase's id, from listPurchases."),
+  }),
   requiredPermission: "purchases:view",
   async handler(actor, input) {
     return runInTenantContext(actor, async (tx) => {

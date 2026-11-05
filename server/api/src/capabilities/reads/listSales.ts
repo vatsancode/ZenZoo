@@ -1,4 +1,5 @@
 import type { CapabilityActor } from "@zenzoo/types";
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext, type TenantTx } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -64,6 +65,16 @@ export async function listSalesInTx(
 export const listSales = defineCapability<ListSalesInput, SaleDto[]>({
   name: "listSales",
   kind: "read",
+  description:
+    "List sales for one store, newest first, each with its lines, payments and returns. Get storeId from listStores. Dates are the shop's own days (YYYY-MM-DD): for today's sales pass today's date as both from and to. Money amounts are decimal text in rupees, such as \"250.00\". Cancelled sales are left out unless includeVoided is true. Returns at most 1000 sales unless limit is set (maximum 5000).",
+  input: z.object({
+    storeId: z.string().describe("The store's id, from listStores."),
+    from: z.string().optional().describe("Sold on or after this day, YYYY-MM-DD."),
+    to: z.string().optional().describe("Sold on or before this day, YYYY-MM-DD."),
+    customerId: z.string().optional().describe("Only this customer's sales."),
+    includeVoided: z.boolean().optional().describe("Include cancelled sales."),
+    limit: z.number().int().min(1).max(5000).optional().describe("How many sales at most."),
+  }),
   requiredPermission: "sales:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);

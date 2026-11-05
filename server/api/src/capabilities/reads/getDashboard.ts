@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -106,6 +107,14 @@ const num = (value: { toNumber(): number }) => value.toNumber();
 export const getDashboard = defineCapability<GetDashboardInput, DashboardDto>({
   name: "getDashboard",
   kind: "read",
+  description:
+    "A summary of how one store is doing between two days: revenue, number of orders, profit, expenses and net for the range, the same figures for the equal stretch just before it, a daily revenue series, sales by category, top products, spending by category, items running low on stock (at 10 units or fewer, with name and quantity), what customers owe the shop, what the shop owes vendors, account balances and the most recent sales. Get storeId from listStores. from and to are shop days (YYYY-MM-DD, both included, at most 366 days apart): for today pass today's date as both. Pass timeZone as the shop's time zone, such as Asia/Kolkata, or days are worked out in UTC. All money figures here are plain numbers in rupees.",
+  input: z.object({
+    storeId: z.string().describe("The store's id, from listStores."),
+    from: z.string().describe("First day, YYYY-MM-DD."),
+    to: z.string().describe("Last day, YYYY-MM-DD (included)."),
+    timeZone: z.string().optional().describe("The shop's time zone, such as Asia/Kolkata."),
+  }),
   requiredPermission: "dashboard:view",
   async handler(actor, input) {
     validDay(input.from, "from");
