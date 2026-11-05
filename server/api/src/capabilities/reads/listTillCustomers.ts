@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { CUSTOMER_SELECT, toCustomerDto, type CustomerDto } from "../customers/dto";
@@ -11,6 +12,9 @@ import { customerSpends } from "../customers/spend";
 export const listTillCustomers = defineCapability<void, CustomerDto[]>({
   name: "listTillCustomers",
   kind: "read",
+  description:
+    "Active customers by name, as the till's customer picker shows them, each with balance (above 0 they owe the shop, below 0 they hold store credit). Archived customers are left out. Same data as listCustomers for people with POS access but not the Customers screen. Amounts are decimal text in rupees. Takes no input.",
+  input: z.void(),
   requiredPermission: "pos:view",
   async handler(actor) {
     return runInTenantContext(actor, async (tx) => {

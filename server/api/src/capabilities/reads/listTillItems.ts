@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -36,6 +37,11 @@ export interface TillItemDto {
 export const listTillItems = defineCapability<ListTillItemsInput, TillItemDto[]>({
   name: "listTillItems",
   kind: "read",
+  description:
+    "Everything a store can ring up at the till: one row per active variant of each sellable item, with price, unit, units on hand (null for made-to-order items, which are not counted) and the cost of the next batch a sale would draw from. Get storeId from listStores. Prices and costs are decimal text in rupees. Made-to-order items marked customPrice have their price entered at the till.",
+  input: z.object({
+    storeId: z.string().describe("The store's id, from listStores."),
+  }),
   requiredPermission: "pos:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);

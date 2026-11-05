@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -14,6 +15,11 @@ export const listCatalogueCandidates = defineCapability<
 >({
   name: "listCatalogueCandidates",
   kind: "read",
+  description:
+    "Active inventory products in a store that are not yet in its catalogue (not yet sellable at the till), by name. Get storeId from listStores. Prices are decimal text in rupees.",
+  input: z.object({
+    storeId: z.string().describe("The store's id, from listStores."),
+  }),
   requiredPermission: "catalogue:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);

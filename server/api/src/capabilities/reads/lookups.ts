@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -33,6 +34,9 @@ export interface SupplierLookup extends LookupStatus {
 export const lookupSuppliers = defineCapability<void, SupplierLookup[]>({
   name: "lookupSuppliers",
   kind: "read",
+  description:
+    "A short list of all suppliers: id, name and whether active or inactive, by name. Use it to find a supplier's id; for contact details and balances use listSuppliers. Takes no input.",
+  input: z.void(),
   // Expenses (payee), Purchases (vendor), Stocks (who a batch was bought from).
   requiredPermission: ["expenses:view", "purchases:view", "stocks:view"],
   async handler(actor) {
@@ -57,10 +61,17 @@ export interface LookupStoreInput {
   storeId: string;
 }
 
+const storeInput = z.object({
+  storeId: z.string().describe("The store's id, from listStores."),
+});
+
 /** The store's accounts, without opening or running balances. */
 export const lookupAccounts = defineCapability<LookupStoreInput, AccountLookup[]>({
   name: "lookupAccounts",
   kind: "read",
+  description:
+    "A short list of a store's payment accounts (such as cash drawer or bank): id, name, code and whether active or inactive. No balances; for those use listAccounts. Get storeId from listStores.",
+  input: storeInput,
   // Expenses (pay from), Purchases (pay from, and naming past payments).
   requiredPermission: ["expenses:view", "purchases:view"],
   async handler(actor, input) {
@@ -91,6 +102,9 @@ export interface PaymentMethodLookup extends LookupStatus {
 export const lookupPaymentMethods = defineCapability<void, PaymentMethodLookup[]>({
   name: "lookupPaymentMethods",
   kind: "read",
+  description:
+    "A short list of all payment methods (such as cash, UPI, card), including switched-off ones: id, name, code and whether active or inactive. Takes no input.",
+  input: z.void(),
   // Purchases (pay with, and naming past payments).
   requiredPermission: "purchases:view",
   async handler(actor) {
@@ -113,6 +127,9 @@ export const lookupPaymentMethods = defineCapability<void, PaymentMethodLookup[]
 export const lookupUnits = defineCapability<void, UnitDto[]>({
   name: "lookupUnits",
   kind: "read",
+  description:
+    "Units of measure products are counted in (such as kg or piece), each with a code, a name and whether quantities may have decimals. Takes no input.",
+  input: z.void(),
   // Stocks (product forms), Purchases (the "new product" sheet), Settings (the Units page).
   requiredPermission: ["stocks:view", "purchases:view", "settings:view"],
   async handler(actor) {
@@ -124,6 +141,9 @@ export const lookupUnits = defineCapability<void, UnitDto[]>({
 export const lookupCategories = defineCapability<LookupStoreInput, CategoryDto[]>({
   name: "lookupCategories",
   kind: "read",
+  description:
+    "Product categories for a store: id, name and parent category. Get storeId from listStores.",
+  input: storeInput,
   // Stocks (product forms), Purchases (the "new product" sheet), Settings (the Categories page),
   // Catalogue (the category on a made-to-order item).
   requiredPermission: ["stocks:view", "purchases:view", "settings:view", "catalogue:view"],
@@ -143,6 +163,9 @@ export interface CustomerLookup extends LookupStatus {
 export const lookupCustomers = defineCapability<void, CustomerLookup[]>({
   name: "lookupCustomers",
   kind: "read",
+  description:
+    "A short list of all customers, including archived ones: id, name, phone and whether active or inactive. No balances or addresses; for those use listCustomers. Takes no input.",
+  input: z.void(),
   // Sales (naming who a sale was for).
   requiredPermission: "sales:view",
   async handler(actor) {

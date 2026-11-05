@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import type { CapabilityActor } from "@zenzoo/types";
 import { runInTenantContext, type TenantTx } from "../../shared/tenantContext";
@@ -79,9 +80,38 @@ export async function previewSaleInTx(
  * nothing saved. The till can check its own total against this before taking payment, and an
  * AI can try "15% off the bill?" and read the answer before committing to anything.
  */
+const discountInput = z.object({
+  type: z
+    .enum(["amount", "percent"])
+    .describe('"amount" is rupees off; "percent" is a percentage.'),
+  value: z.union([z.number(), z.string()]).describe("The rupees or percentage, as typed."),
+});
+
 export const previewSale = defineCapability<PreviewSaleInput, PreviewSaleDto>({
   name: "previewSale",
   kind: "read",
+  description:
+    'Works out what a cart would come to, using the shop\'s real prices, without saving anything - safe for "what if I give 15% off the bill?". Get storeId from listStores and variantId from listTillItems. Returns each line (price, discounts, net, units on hand) plus subtotal, discounts and total. Money amounts are decimal text in rupees. It does not record a sale.',
+  input: z.object({
+    storeId: z.string().describe("The store's id, from listStores."),
+    lines: z
+      .array(
+        z.object({
+          variantId: z.string().describe("The item's variant id, from listTillItems."),
+          quantity: z
+            .number()
+            .describe("How many units; decimals only for weighed or measured items."),
+          discount: discountInput.optional().describe("A discount on this line only."),
+          customPrice: z
+            .union([z.number(), z.string()])
+            .optional()
+            .describe("Rupees. Only for items marked customPrice; ignored for all others."),
+        }),
+      )
+      .max(200)
+      .describe("The items in the cart."),
+    billDiscount: discountInput.optional().describe("A discount on the whole bill."),
+  }),
   requiredPermission: "pos:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);

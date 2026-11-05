@@ -1,4 +1,5 @@
 import type { CapabilityActor } from "@zenzoo/types";
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext, type TenantTx } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -7,6 +8,13 @@ import { sortByPlacement } from "../../shared/placement";
 export interface ListTillPaymentOptionsInput {
   storeId: string;
 }
+
+const storeInput = z.object({
+  storeId: z.string().describe("The store's id, from listStores."),
+});
+
+const PAYMENT_OPTIONS_NOTE =
+  "Returns two lists: the active ways to take money (methods, such as cash or UPI; customer credit is left out because it is not money received) and the store's active accounts the money can land in. Get storeId from listStores.";
 
 export interface TillPaymentOptionsDto {
   /** Ways to take money now. Customer credit ("on account") is left out - it isn't money received. */
@@ -46,6 +54,8 @@ export const listTillPaymentOptions = defineCapability<
 >({
   name: "listTillPaymentOptions",
   kind: "read",
+  description: `What the till offers at checkout. ${PAYMENT_OPTIONS_NOTE}`,
+  input: storeInput,
   requiredPermission: "pos:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);
@@ -60,6 +70,8 @@ export const listCustomerPaymentOptions = defineCapability<
 >({
   name: "listCustomerPaymentOptions",
   kind: "read",
+  description: `The same options, for receiving a payment from a customer. ${PAYMENT_OPTIONS_NOTE}`,
+  input: storeInput,
   requiredPermission: "customers:edit",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);
@@ -74,6 +86,8 @@ export const listSaleRefundOptions = defineCapability<
 >({
   name: "listSaleRefundOptions",
   kind: "read",
+  description: `The same options, for paying a sale's return back out of an account. ${PAYMENT_OPTIONS_NOTE}`,
+  input: storeInput,
   requiredPermission: "sales:edit",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);

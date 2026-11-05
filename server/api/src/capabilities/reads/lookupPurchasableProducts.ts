@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -22,6 +23,11 @@ export const lookupPurchasableProducts = defineCapability<
 >({
   name: "lookupPurchasableProducts",
   kind: "read",
+  description:
+    "Active products and their variants that can be bought from a supplier, by name, as the purchase form's picker lists them. Get storeId from listStores. For full product details use listProducts.",
+  input: z.object({
+    storeId: z.string().describe("The store's id, from listStores."),
+  }),
   requiredPermission: "purchases:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);

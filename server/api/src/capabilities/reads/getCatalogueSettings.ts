@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { defineCapability } from "../capability";
 import { runInTenantContext } from "../../shared/tenantContext";
 import { assertStoreAccess } from "../../shared/storeAccess";
@@ -13,6 +14,11 @@ export const getCatalogueSettings = defineCapability<
 >({
   name: "getCatalogueSettings",
   kind: "read",
+  description:
+    "Whether a store automatically adds new inventory products to its catalogue (autoImport true or false). Get storeId from listStores.",
+  input: z.object({
+    storeId: z.string().describe("The store's id, from listStores."),
+  }),
   requiredPermission: "catalogue:view",
   async handler(actor, input) {
     await assertStoreAccess(actor, input.storeId);
