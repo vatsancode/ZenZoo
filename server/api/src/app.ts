@@ -1,5 +1,13 @@
+// Must come before any route is registered: it makes Express 4 pass a failure from an async route
+// on to the error handler at the end of createApp(), instead of letting it stop the server.
+import "express-async-errors";
 import cors from "cors";
-import express, { type Express, type Request, type Response } from "express";
+import express, {
+  type ErrorRequestHandler,
+  type Express,
+  type Request,
+  type Response,
+} from "express";
 import type { CapabilityResult } from "@zenzoo/types";
 import { requirePlatformAdmin } from "./auth/platform-admin";
 import { requireTenantUser } from "./auth/requireTenantUser";
@@ -195,18 +203,27 @@ export function createApp(): Express {
       return;
     }
 
-    const result = await signIn(email, password);
-    if (!result) {
-      res.status(401).json({ error: "Invalid email or password" });
-      return;
-    }
+    try {
+      const result = await signIn(email, password);
+      if (!result) {
+        res.status(401).json({ error: "Invalid email or password" });
+        return;
+      }
 
-    res.cookie(SESSION_COOKIE_NAME, result.token, {
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: 12 * 60 * 60 * 1000,
-    });
-    res.json({ kind: result.payload.kind });
+      res.cookie(SESSION_COOKIE_NAME, result.token, {
+        httpOnly: true,
+        sameSite: "lax",
+        maxAge: 12 * 60 * 60 * 1000,
+      });
+      res.json({ kind: result.payload.kind });
+    } catch (error) {
+      // A database hiccup must not take the whole API down: log the real error, tell the
+      // person to try again.
+      console.error("[auth] sign-in failed:", error);
+      if (!res.headersSent) {
+        res.status(503).json({ error: "Temporary problem, please try again." });
+      }
+    }
   });
 
   app.post("/auth/sign-out", (_req, res) => {
@@ -216,8 +233,13 @@ export function createApp(): Express {
 
   app.get("/platform-admin/tenants", requirePlatformAdmin, async (req, res) => {
     const search = typeof req.query.search === "string" ? req.query.search : undefined;
-    const tenants = await listTenants(search);
-    res.json({ tenants });
+    try {
+      const tenants = await listTenants(search);
+      res.json({ tenants });
+    } catch (error) {
+      console.error("[platform-admin] listing tenants failed:", error);
+      res.status(503).json({ error: "Temporary problem, please try again." });
+    }
   });
 
   app.post("/platform-admin/tenants", requirePlatformAdmin, async (req, res) => {
@@ -299,13 +321,27 @@ export function createApp(): Express {
   });
 
   app.get("/me", requireTenantUser, async (req, res) => {
-    const me = await getCurrentUser(getActor(req));
-    res.json(me);
+    try {
+      const me = await getCurrentUser(getActor(req));
+      res.json(me);
+    } catch (error) {
+      console.error("[me] loading the signed-in user failed:", error);
+      if (!res.headersSent) {
+        res.status(503).json({ error: "Temporary problem, please try again." });
+      }
+    }
   });
 
   app.get("/stores", requireTenantUser, async (req, res) => {
-    const stores = await listMyStores(getActor(req));
-    res.json({ stores });
+    try {
+      const stores = await listMyStores(getActor(req));
+      res.json({ stores });
+    } catch (error) {
+      console.error("[stores] loading the shop list failed:", error);
+      if (!res.headersSent) {
+        res.status(503).json({ error: "Temporary problem, please try again." });
+      }
+    }
   });
 
   app.get("/categories", requireTenantUser, async (req, res) => {
@@ -1019,6 +1055,19 @@ export function createApp(): Express {
     const result = await recordStockMovement.execute(getActor(req), { ...req.body, variantId });
     sendCapabilityResult(res, result, 201);
   });
+
+  // Last stop for anything a route or its middleware let escape (a database failure, say). Must
+  // be registered after every route. Logs the real error and answers "try again" so one bad
+  // moment cannot stop the whole API.
+  const handleUnexpectedError: ErrorRequestHandler = (error, req, res, next) => {
+    console.error(`[api] ${req.method} ${req.path} failed:`, error);
+    if (res.headersSent) {
+      next(error);
+      return;
+    }
+    res.status(503).json({ error: "Temporary problem, please try again." });
+  };
+  app.use(handleUnexpectedError);
 
   return app;
 }

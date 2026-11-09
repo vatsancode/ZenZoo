@@ -59,7 +59,16 @@ export async function requirePlatformAdmin(
   const email = decoded.slice(0, separatorIndex);
   const password = decoded.slice(separatorIndex + 1);
 
-  const ok = await verifyPlatformAdmin(email, password);
+  let ok: boolean;
+  try {
+    ok = await verifyPlatformAdmin(email, password);
+  } catch (error) {
+    // The password check needs the database. If it is down, say so and keep the server running -
+    // never answer 401, which would wrongly tell a real admin their password is wrong.
+    console.error("[platform-admin] sign-in check failed:", error);
+    res.status(503).json({ error: "Temporary problem, please try again." });
+    return;
+  }
   if (!ok) {
     res.set("WWW-Authenticate", "Basic");
     res.status(401).json({ error: "Wrong email or password." });

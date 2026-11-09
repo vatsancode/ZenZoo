@@ -73,22 +73,29 @@ function buildServer(actor: CapabilityActor): McpServer {
 }
 
 export async function handleMcpPost(req: Request, res: Response): Promise<void> {
-  const actor = await actorFromToken(req.headers.authorization);
-  if (!actor) {
-    res.status(401).json({ error: "A valid agent token is required" });
-    return;
-  }
+  try {
+    const actor = await actorFromToken(req.headers.authorization);
+    if (!actor) {
+      res.status(401).json({ error: "A valid agent token is required" });
+      return;
+    }
 
-  // Stateless: each request gets its own server and transport, so nothing is remembered between
-  // calls and a token revoked a moment ago stops working on the very next one.
-  const server = buildServer(actor);
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  res.on("close", () => {
-    void transport.close();
-    void server.close();
-  });
-  await server.connect(transport);
-  await transport.handleRequest(req, res, req.body);
+    // Stateless: each request gets its own server and transport, so nothing is remembered between
+    // calls and a token revoked a moment ago stops working on the very next one.
+    const server = buildServer(actor);
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on("close", () => {
+      void transport.close();
+      void server.close();
+    });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (error) {
+    console.error("[mcp] request failed:", error);
+    if (!res.headersSent) {
+      res.status(503).json({ error: "Temporary problem, please try again." });
+    }
+  }
 }
 
 /** GET and DELETE are for sessions, which this server doesn't keep. */

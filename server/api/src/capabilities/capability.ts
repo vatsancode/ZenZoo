@@ -108,28 +108,35 @@ export function defineCapability<Input, Output>(
     description: definition.description,
     input: definition.input,
     async execute(actor, input) {
-      const required = [definition.requiredPermission].flat();
-      const allowed = await hasAnyPermission(actor, required);
-      if (!allowed) {
+      // The permission check and the policies read the database. If that fails (database down,
+      // slow, connection reset), come back with a plain error result instead of throwing - a throw
+      // here escapes the route and can stop the whole API.
+      try {
+        const required = [definition.requiredPermission].flat();
+        const allowed = await hasAnyPermission(actor, required);
+        if (!allowed) {
+          return {
+            ok: false,
+            error: {
+              code: "PERMISSION_DENIED",
+              // Plain words for the person on screen; the technical detail goes to the log.
+              message: "You don't have access to do this. Ask the owner to change your role.",
+            },
+          };
+        }
+
+        for (const policy of definition.policies ?? []) {
+          await policy({ actor, input });
+        }
+      } catch (error) {
+        if (error instanceof PolicyViolationError) {
+          return { ok: false, error: { code: "POLICY_VIOLATION", message: error.message } };
+        }
+        console.error(`[capability] ${definition.name}: permission or policy check failed:`, error);
         return {
           ok: false,
-          error: {
-            code: "PERMISSION_DENIED",
-            // Plain words for the person on screen; the technical detail goes to the log.
-            message: "You don't have access to do this. Ask the owner to change your role.",
-          },
+          error: { code: "INTERNAL_ERROR", message: "Temporary problem, please try again." },
         };
-      }
-
-      for (const policy of definition.policies ?? []) {
-        try {
-          await policy({ actor, input });
-        } catch (error) {
-          if (error instanceof PolicyViolationError) {
-            return { ok: false, error: { code: "POLICY_VIOLATION", message: error.message } };
-          }
-          throw error;
-        }
       }
 
       try {
