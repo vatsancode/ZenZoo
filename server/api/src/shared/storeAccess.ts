@@ -1,7 +1,9 @@
+import { UserFacingError } from "./errors";
 import { runInTenantContext } from "./tenantContext";
 import type { CapabilityActor } from "@zenzoo/types";
 
-export class StoreAccessError extends Error {}
+/** Its messages are plain sentences written for the person, so they are safe to show as they are. */
+export class StoreAccessError extends UserFacingError {}
 
 /**
  * Confirms the actor may act within `storeId`, per membership_store_access's

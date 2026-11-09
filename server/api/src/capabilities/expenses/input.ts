@@ -88,17 +88,20 @@ export function cleanExpense(input: ExpenseInput): CleanExpense {
   };
 }
 
-/** The database's own rejections, as sentences. */
+/**
+ * The database's own rejections, as sentences for the person. Anything not recognised is passed on
+ * untouched, so the capability layer logs it and shows the generic message instead.
+ */
 export function friendlyExpenseError(error: unknown): Error {
   const message = error instanceof Error ? error.message : "";
   if (/not enough balance/i.test(message)) {
-    return new Error("That account doesn't have enough balance to pay this bill.");
+    return new UserFacingError("That account doesn't have enough balance to pay this bill.");
   }
   if (/expense_lines_category_fk/i.test(message)) {
-    return new Error("One of the categories doesn't exist.");
+    return new UserFacingError("One of the categories doesn't exist.");
   }
   if (/expenses_account_fk/i.test(message)) {
-    return new Error("That account doesn't exist.");
+    return new UserFacingError("That account doesn't exist.");
   }
-  return error instanceof Error ? error : new Error("Something went wrong.");
+  return error instanceof Error ? error : new Error("Unknown error while saving an expense.");
 }

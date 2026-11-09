@@ -360,7 +360,7 @@ export async function recordReturn(
 
   const [slip] = await tx.$queryRaw<{ number: string }[]>`
     SELECT next_receipt_number(${actor.tenantId}::uuid, ${input.storeId}::uuid, ${RETURN_RECEIPT_PREFIX}) AS number`;
-  if (!slip) throw new Error("Couldn't number the credit slip.");
+  if (!slip) throw new UserFacingError("We couldn't save this return. Please try again.");
   try {
     await tx.sale_returns.update({
       where: { id: input.id },
@@ -375,6 +375,6 @@ export async function recordReturn(
   }
 
   const saved = await findSale(tx, actor, input.storeId, input.saleId);
-  if (!saved) throw new Error("The sale could not be read back after the return.");
+  if (!saved) throw new UserFacingError("We couldn't save this return. Please try again.");
   return saved;
 }

@@ -384,7 +384,7 @@ export async function recordSale(
   // Taken inside this transaction, so a sale that fails leaves no gap in the numbers.
   const [receipt] = await tx.$queryRaw<{ number: string }[]>`
     SELECT next_receipt_number(${actor.tenantId}::uuid, ${input.storeId}::uuid, ${ADMIN_RECEIPT_PREFIX}) AS number`;
-  if (!receipt) throw new Error("Couldn't number the receipt.");
+  if (!receipt) throw new UserFacingError("We couldn't save this sale. Please try again.");
   await tx.sales.update({
     where: { id: input.id },
     data: { sale_number: receipt.number, status: "completed" },
@@ -397,6 +397,6 @@ export async function recordSale(
   await tx.$executeRawUnsafe("SET CONSTRAINTS ALL DEFERRED");
 
   const saved = await findSale(tx, actor, input.storeId, input.id);
-  if (!saved) throw new Error("The sale could not be read back after saving.");
+  if (!saved) throw new UserFacingError("We couldn't save this sale. Please try again.");
   return saved;
 }

@@ -114,6 +114,6 @@ export async function recordVoid(
   }
 
   const saved = await findSale(tx, actor, input.storeId, input.saleId);
-  if (!saved) throw new Error("The sale could not be read back after cancelling.");
+  if (!saved) throw new UserFacingError("We couldn't cancel this sale. Please try again.");
   return saved;
 }

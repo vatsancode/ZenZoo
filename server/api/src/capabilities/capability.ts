@@ -1,5 +1,6 @@
 import type { ZodType } from "zod";
 import { hasAnyPermission } from "../auth/actor";
+import { UserFacingError } from "../shared/errors";
 import type { CapabilityActor, CapabilityResult } from "@zenzoo/types";
 
 /**
@@ -149,12 +150,18 @@ export function defineCapability<Input, Output>(
         if (error instanceof NotFoundError) {
           return { ok: false, error: { code: "NOT_FOUND", message: error.message } };
         }
+        // Only a message we wrote ourselves goes back as written. Anything else (a database or
+        // library error, a bug) can carry internal details, so it is logged and the caller gets
+        // a plain sentence.
+        if (error instanceof UserFacingError) {
+          return { ok: false, error: { code: "INTERNAL_ERROR", message: error.message } };
+        }
+        console.error(`[capability] ${definition.name}: handler failed:`, error);
         return {
           ok: false,
           error: {
             code: "INTERNAL_ERROR",
-            message:
-              error instanceof Error ? error.message : "Something went wrong. Please try again.",
+            message: "Something went wrong. Please try again.",
           },
         };
       }
