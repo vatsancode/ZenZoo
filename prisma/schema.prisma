@@ -619,6 +619,8 @@ model tenant_memberships {
   role_id                 String                    @db.Uuid
   membership_store_access membership_store_access[]
   agent_tokens            agent_tokens[]
+  agent_connections       agent_connections[]
+  oauth_codes             oauth_codes[]
   roles                   roles                     @relation(fields: [tenant_id, role_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "tenant_memberships_role_fk")
   tenants                 tenants                   @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                   users?                    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -649,6 +651,8 @@ model tenants {
   inventory_batches       inventory_batches[]
   membership_store_access membership_store_access[]
   agent_tokens            agent_tokens[]
+  agent_connections       agent_connections[]
+  oauth_codes             oauth_codes[]
   payment_accounts        payment_accounts[]
   account_ledger          account_ledger[]
   payment_methods         payment_methods[]
@@ -909,9 +913,67 @@ model agent_tokens {
   token_hash         String             @unique(map: "agent_tokens_token_hash_unique") @db.VarChar(64)
   created_at         DateTime           @default(now()) @db.Timestamptz(6)
   revoked_at         DateTime?          @db.Timestamptz(6)
+  /// "access" or "refresh" (CHECK in the database).
+  kind               String             @default("access") @db.VarChar(10)
+  expires_at         DateTime?          @db.Timestamptz(6)
+  connection_id      String?            @db.Uuid
+  replaced_at        DateTime?          @db.Timestamptz(6)
+  agent_connections  agent_connections? @relation(fields: [tenant_id, connection_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "agent_tokens_connection_fk")
   tenant_memberships tenant_memberships @relation(fields: [tenant_id, membership_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "agent_tokens_membership_fk")
   tenants            tenants            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
+  @@index([connection_id], map: "idx_agent_tokens_connection_id")
   @@index([membership_id], map: "idx_agent_tokens_membership_id")
   @@index([tenant_id], map: "idx_agent_tokens_tenant_id")
+}
+
+/// The apps that asked to connect (registered on the fly). Not tenant data, so no row-level security.
+model oauth_clients {
+  id                String              @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  name              String              @db.VarChar(100)
+  redirect_uris     String[]
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  agent_connections agent_connections[]
+  oauth_codes       oauth_codes[]
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// One approval = one connection; switching it off (revoked_at) cuts off every token it produced.
+model agent_connections {
+  id                 String             @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  tenant_id          String             @db.Uuid
+  membership_id      String             @db.Uuid
+  client_id          String             @db.Uuid
+  name               String             @db.VarChar(100)
+  created_at         DateTime           @default(now()) @db.Timestamptz(6)
+  last_used_at       DateTime?          @db.Timestamptz(6)
+  revoked_at         DateTime?          @db.Timestamptz(6)
+  agent_tokens       agent_tokens[]
+  oauth_clients      oauth_clients      @relation(fields: [client_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "agent_connections_client_id_fkey")
+  tenant_memberships tenant_memberships @relation(fields: [tenant_id, membership_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "agent_connections_membership_fk")
+  tenants            tenants            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "agent_connections_tenant_id_fkey")
+
+  @@unique([tenant_id, id], map: "agent_connections_tenant_id_id_unique")
+  @@index([membership_id], map: "idx_agent_connections_membership_id")
+  @@index([tenant_id], map: "idx_agent_connections_tenant_id")
+}
+
+/// One-time sign-in codes (60 s, single use). Looked up before the tenant is known, so no row-level security.
+model oauth_codes {
+  id                 String             @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  code_hash          String             @unique(map: "oauth_codes_code_hash_unique") @db.VarChar(64)
+  client_id          String             @db.Uuid
+  tenant_id          String             @db.Uuid
+  membership_id      String             @db.Uuid
+  user_id            String             @db.Uuid
+  redirect_uri       String
+  code_challenge     String             @db.VarChar(128)
+  expires_at         DateTime           @db.Timestamptz(6)
+  used_at            DateTime?          @db.Timestamptz(6)
+  created_at         DateTime           @default(now()) @db.Timestamptz(6)
+  oauth_clients      oauth_clients      @relation(fields: [client_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "oauth_codes_client_id_fkey")
+  tenant_memberships tenant_memberships @relation(fields: [tenant_id, membership_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "oauth_codes_membership_fk")
+  tenants            tenants            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "oauth_codes_tenant_id_fkey")
+
+  @@index([expires_at], map: "idx_oauth_codes_expires_at")
 }

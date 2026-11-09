@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/oauth/oauth.test.ts",
     "lint": "eslint ."
   },
   "dependencies": {

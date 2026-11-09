@@ -50,3 +50,21 @@ export function redirectToSignInIfUnauthorized(response: Response): void {
     window.location.href = "/sign-in";
   }
 }
+
+/**
+ * The page to return to after signing in, taken from ?next= - only a path on this site
+ * ("/connect?..."), never a full address, so a crafted link can't send someone elsewhere.
+ */
+export function safeNextPath(value: string | null): string | null {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) {
+    return null;
+  }
+  return value;
+}
+
+/** Sends a signed-out visitor to sign in, then back to the page they were on. */
+export function redirectToSignInThenBack(returnTo: string): void {
+  if (typeof window !== "undefined") {
+    window.location.href = `/sign-in?next=${encodeURIComponent(returnTo)}`;
+  }
+}

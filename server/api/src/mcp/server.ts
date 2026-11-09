@@ -5,6 +5,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { hashAgentToken } from "../auth/agentToken";
 import { capabilityRegistry, type AnyReadCapability } from "../capabilities/registry";
+import { publicApiUrl } from "../oauth/config";
 import { prisma } from "../shared/prisma";
 
 /**
@@ -76,6 +77,11 @@ export async function handleMcpPost(req: Request, res: Response): Promise<void> 
   try {
     const actor = await actorFromToken(req.headers.authorization);
     if (!actor) {
+      // Points Claude at the sign-in server so it can start the OAuth flow (RFC 9728).
+      res.set(
+        "WWW-Authenticate",
+        `Bearer resource_metadata="${publicApiUrl()}/.well-known/oauth-protected-resource"`,
+      );
       res.status(401).json({ error: "A valid agent token is required" });
       return;
     }

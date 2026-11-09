@@ -4,7 +4,7 @@ import { useTheme } from "@zenzoo/design-tokens";
 import { Button, Card, IconButton, Input, textStyle } from "@zenzoo/ui-web";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { signIn } from "../lib/auth";
+import { safeNextPath, signIn } from "../lib/auth";
 import { useSingleFlight } from "../lib/useSingleFlight";
 
 export default function SignInForm() {
@@ -29,7 +29,13 @@ export default function SignInForm() {
         setError(result.error);
         return;
       }
-      router.push(result.kind === "platform_admin" ? "/platform/tenants" : "/");
+      if (result.kind === "platform_admin") {
+        router.push("/platform/tenants");
+        return;
+      }
+      // Someone sent here from the "Allow Claude" page goes back to it after signing in.
+      const next = safeNextPath(new URLSearchParams(window.location.search).get("next"));
+      router.push(next ?? "/");
     });
   }
 

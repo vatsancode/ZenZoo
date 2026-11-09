@@ -14,6 +14,7 @@ import { requireTenantUser } from "./auth/requireTenantUser";
 import { getActor } from "./auth/actor";
 import { failedTokenLimiter, tokenLimiter } from "./mcp/rateLimit";
 import { handleMcpPost, methodNotAllowed } from "./mcp/server";
+import { registerOauthRoutes } from "./oauth/routes";
 import { signIn } from "./auth/signIn";
 import { SESSION_COOKIE_NAME } from "./auth/session";
 import { listTenants } from "./modules/platform/listTenants";
@@ -196,6 +197,7 @@ export function createApp(): Express {
   app.post("/mcp", failedTokenLimiter, tokenLimiter, handleMcpPost);
   app.get("/mcp", methodNotAllowed);
   app.delete("/mcp", methodNotAllowed);
+  registerOauthRoutes(app);
 
   app.post("/auth/sign-in", async (req, res) => {
     const { email, password } = req.body as Partial<{ email: string; password: string }>;
