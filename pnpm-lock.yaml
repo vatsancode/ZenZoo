@@ -289,6 +289,9 @@ importers:
       express-async-errors:
         specifier: ^3.1.1
         version: 3.1.1(express@4.22.3)
+      express-rate-limit:
+        specifier: ^8.7.3
+        version: 8.7.3(express@4.22.3)
       jsonwebtoken:
         specifier: ^9.0.3
         version: 9.0.3
@@ -9500,6 +9503,14 @@ snapshots:
   express-async-errors@3.1.1(express@4.22.3):
     dependencies:
       express: 4.22.3
+
+  express-rate-limit@8.7.3(express@4.22.3):
+    dependencies:
+      debug: 4.4.3
+      express: 4.22.3
+      ip-address: 10.7.6
+    transitivePeerDependencies:
+      - supports-color
 
   express-rate-limit@8.7.3(express@5.3.0):
     dependencies:

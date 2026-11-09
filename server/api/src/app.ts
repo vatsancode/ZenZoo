@@ -12,6 +12,7 @@ import type { CapabilityResult } from "@zenzoo/types";
 import { requirePlatformAdmin } from "./auth/platform-admin";
 import { requireTenantUser } from "./auth/requireTenantUser";
 import { getActor } from "./auth/actor";
+import { failedTokenLimiter, tokenLimiter } from "./mcp/rateLimit";
 import { handleMcpPost, methodNotAllowed } from "./mcp/server";
 import { signIn } from "./auth/signIn";
 import { SESSION_COOKIE_NAME } from "./auth/session";
@@ -192,7 +193,7 @@ export function createApp(): Express {
     res.json({ status: "ok" });
   });
 
-  app.post("/mcp", handleMcpPost);
+  app.post("/mcp", failedTokenLimiter, tokenLimiter, handleMcpPost);
   app.get("/mcp", methodNotAllowed);
   app.delete("/mcp", methodNotAllowed);
 
